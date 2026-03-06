@@ -22,7 +22,6 @@ const (
 )
 
 // Result 是最底层的输出方法
-// 虽然这里我们统一返回的 HTTP 状态码总是 http.StatusOK (200)，
 // 真正的业务逻辑成败是由 JSON 体里的 Code 决定的，这是业界的标准做法。
 func Result(c *gin.Context, code int, msg string, data interface{}) {
 	c.JSON(http.StatusOK, Response{

@@ -18,13 +18,13 @@ func InitDB() error {
 	var err error
 	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
-		return fmt.Errorf("连接数据库失败: %w", err)
+		return fmt.Errorf("[ERROR]连接数据库失败: %w", err)
 	}
 	sqlDB, err := DB.DB()
 	if err == nil {
 		sqlDB.SetMaxOpenConns(100)
 		sqlDB.SetMaxIdleConns(10)
 	}
-	logger.Log.Info("数据库连接成功")
+	logger.Log.Infof("[INFO]数据库连接成功")
 	return nil
 }
