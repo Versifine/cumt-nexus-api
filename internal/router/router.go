@@ -2,8 +2,11 @@ package router
 
 import (
 	"cumt-nexus-api/internal/config"
+	"cumt-nexus-api/internal/controller"
 	"cumt-nexus-api/internal/logger"
 	"cumt-nexus-api/internal/middleware"
+	"cumt-nexus-api/internal/repository"
+	"cumt-nexus-api/internal/service"
 	"fmt"
 	"strings"
 
@@ -25,7 +28,10 @@ func InitRouter() *gin.Engine {
 
 	v1 := r.Group("/api/v1")
 	{
-		InitUserRouter(v1)
+		userRepo := repository.NewUserRepository()
+		userSvc := service.NewUserService(userRepo)
+		userCtrl := controller.NewUserController(userSvc)
+		InitUserRouter(v1, userCtrl)
 	}
 	return r
 }

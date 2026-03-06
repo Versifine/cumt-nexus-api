@@ -26,6 +26,12 @@ func main() {
 	if err := repository.InitDB(); err != nil {
 		logger.Log.Fatalw("数据库连接初始化失败", "component", "mysql", "error", err)
 	}
+	if config.Conf.App.AutoMigrate {
+		if err := repository.AutoMigrate(); err != nil {
+			logger.Log.Fatalw("数据库自动迁移失败", "component", "mysql", "error", err)
+		}
+		logger.Log.Infow("数据库自动迁移完成", "component", "mysql")
+	}
 
 	// 4. 初始化 Redis 连接
 	if err := repository.InitRedis(); err != nil {

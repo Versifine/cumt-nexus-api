@@ -32,7 +32,7 @@ coverage/
 .DS_Store
 Thumbs.db
 AGENTS.md
-
+TODO.md
 # Database & Cache Data (Local dev)
 mysql_data/
 redis_data/

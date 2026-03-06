@@ -2,6 +2,7 @@
 app:
   port: 8080
   mode: debug
+  auto_migrate: true
 
 log:
   level: debug

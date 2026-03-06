@@ -9,8 +9,9 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Port int    `mapstructure:"port"` // 改成 int 比较标准
-	Mode string `mapstructure:"mode"`
+	Port        int    `mapstructure:"port"` // 改成 int 比较标准
+	Mode        string `mapstructure:"mode"`
+	AutoMigrate bool   `mapstructure:"auto_migrate"`
 }
 
 type LogConfig struct {

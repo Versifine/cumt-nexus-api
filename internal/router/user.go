@@ -6,8 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func InitUserRouter(rg *gin.RouterGroup) {
-	userCtrl := controller.NewUserController()
+func InitUserRouter(rg *gin.RouterGroup, userCtrl *controller.UserController) {
 
 	userRouter := rg.Group("/user")
 	{
