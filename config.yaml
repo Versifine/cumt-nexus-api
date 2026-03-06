@@ -1,0 +1,27 @@
+# CUMT-Nexus 静态配置默认值 (敏感密码留空，通过 .env 自动注入)
+app:
+  port: 8080
+  mode: debug
+
+log:
+  level: debug
+  filename: logs/nexus.log
+  max_size: 100 # MB
+  max_age: 30 # days
+  max_backups: 10
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  dbname: cumt_nexus_db
+  # password 会被 Viper 从 .env 的 DB_PASSWORD 覆盖注入
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  # password 会被 Viper 从 .env 的 REDIS_PASSWORD 覆盖注入
+
+jwt:
+  expire_hours: 24
+  # secret 会被 Viper 从 .env 的 JWT_SECRET 覆盖注入
