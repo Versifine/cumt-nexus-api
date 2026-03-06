@@ -12,10 +12,10 @@
 
 ## 阶段二：核心框架与中间件 (Core & Middleware)
 
-- [ ] **统一 API 响应格式**: 封装标准化的 JSON 响应体（如 `{ "code": 200, "msg": "success", "data": ... }`）
-- [ ] **Gin 引擎初始化**: 搭建 `cmd/server/main.go` 入口，整合配置、日志和路由
-- [ ] **全局异常捕获中间件**: 编写 Recovery 中间件，拦截 Panic 并转为 500 JSON 响应，防止程序崩溃
-- [ ] **CORS 跨域中间件**: 配置跨域策略，允许前端域名访问
+- [X] **统一 API 响应格式**: 封装标准化的 JSON 响应体（如 `{ "code": 200, "msg": "success", "data": ... }`）
+- [X] **Gin 引擎初始化**: 搭建 `cmd/server/main.go` 入口，整合配置、日志和路由
+- [X] **全局异常捕获中间件**: 编写 Recovery 中间件，拦截 Panic 并转为 500 JSON 响应，防止程序崩溃
+- [X] **CORS 跨域中间件**: 配置跨域策略，允许前端域名访问
 - [ ] **接口文档生成**: 引入 `swaggo/swag`，配置自动生成 Swagger 接口文档
 
 ## 阶段三：数据库设计与数据模型 (Database Models)

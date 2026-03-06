@@ -18,13 +18,25 @@ func InitDB() error {
 	var err error
 	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
-		return fmt.Errorf("[ERROR]连接数据库失败: %w", err)
+		return fmt.Errorf("连接 MySQL 失败: %w", err)
 	}
+
 	sqlDB, err := DB.DB()
-	if err == nil {
-		sqlDB.SetMaxOpenConns(100)
-		sqlDB.SetMaxIdleConns(10)
+	if err != nil {
+		return fmt.Errorf("获取原生 MySQL 连接池失败: %w", err)
 	}
-	logger.Log.Infof("[INFO]数据库连接成功")
+
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetMaxIdleConns(10)
+
+	logger.Log.Infow("MySQL 连接初始化成功",
+		"component", "mysql",
+		"host", c.Host,
+		"port", c.Port,
+		"dbname", c.DBName,
+		"max_open_conns", 100,
+		"max_idle_conns", 10,
+	)
+
 	return nil
 }
