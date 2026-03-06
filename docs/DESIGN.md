@@ -15,7 +15,7 @@
 | `password_hash` | VARCHAR(255)     | `string`    | 密码的哈希值（绝对不能存明文！）     |
 | `nickname`      | VARCHAR(64)      | `string`    | 社区昵称，默认可以与用户名相同       |
 | `avatar_url`    | VARCHAR(255)     | `string`    | 头像的链接地址                       |
-| `role`          | TINYINT          | `int`       | 权限角色：0-普通学生, 1-管理员       |
+| `role`          | TINYINT          | `int`       | 权限角色：0-普通用户, 1-管理员       |
 | `status`        | TINYINT          | `int`       | 账号状态：1-正常, 2-封禁             |
 | `created_at`    | DATETIME         | `time.Time` | 注册时间                             |
 | `updated_at`    | DATETIME         | `time.Time` | 最后修改时间                         |
@@ -65,20 +65,78 @@
 
 ---
 
-## 2. 全局错误码字典
+## 2. 统一 API 响应规范与全局错误码字典
 
-前后端统一使用 JSON 格式返回，包含 `code`, `msg`, `data` 三个字段。其中 `code` 为业务状态码。
+在前后端分离架构中，为了降低沟通成本、规范前端解析逻辑，本项目所有 RESTful API 的响应体 (Response Body) 必须严格遵循以下 JSON 结构。
+
+### 2.1 基础数据结构
+
+所有的 API 接口，无论是成功还是失败，无论是 GET 请求还是 POST 请求，其最外层必须是包含以下三个字段的 JSON 对象。
+**注意：HTTP 状态码我们统一返回 200 OK，真正的业务逻辑成败是由 JSON 体里的 `code` 决定的。**
+
+```json
+{
+  "code": 0,            // 业务状态码，0 代表完全成功，非 0 代表各种错误
+  "msg": "success",     // 提示信息，失败时通常显示给用户看的原因
+  "data": null          // 实际承载的业务数据
+}
+```
+
+#### 典型返回示例：
+
+**请求成功 (返回分页列表)**
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "total": 150,   
+    "list": [
+      { "id": 1, "title": "教二楼自习占座指南" },
+      { "id": 2, "title": "南湖一食堂新菜品评测" }
+    ]
+  }
+}
+```
+
+**请求失败 (参数错误)**
+
+```json
+{
+  "code": 10001,
+  "msg": "学号必须是纯数字且长度为8位",
+  "data": null
+}
+```
+
+### 2.2 全局业务状态码字典 (`code`)
 
 * `0`: 请求成功 (Success)
+
+**1xxxx: 客户端/参数级别错误**
+
 * `10001`: 参数错误/校验失败 (Invalid Parameter)
 * `10002`: 缺少必填参数 (Missing Parameter)
+
+**2xxxx: 用户业务逻辑错误**
+
 * `20001`: 用户不存在 (User Not Found)
 * `20002`: 密码错误 (Wrong Password)
 * `20003`: 用户名已存在 (Username Already Exists)
 * `20004`: 用户被封禁 (User Banned)
+
+**3xxxx: 鉴权与安全级别错误**
+
 * `30001`: 未登录或 Token 无效/过期 (Unauthorized / Invalid Token)
 * `30002`: 权限不足，无法访问该资源 (Forbidden)
+
+**4xxxx: 业务资源级别错误**
+
 * `40001`: 请求的资源不存在 (Resource Not Found)
+
+**5xxxx: 服务器底层错误**
+
 * `50000`: 服务器内部错误 (Internal Server Error)
 
 ## 3. 核心业务流程图
