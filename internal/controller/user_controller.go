@@ -24,8 +24,16 @@ func NewUserController(userSvc UserSvc) *UserController {
 
 func (uc *UserController) GetProfile(c *gin.Context) {
 	ctx := c.Request.Context()
-	userID := uint64(1) // 这里暂时写死，后续可以从 JWT 或者请求参数中获取
-
+	value, exists := c.Get("user_id")
+	if !exists {
+		response.Fail(c, 30001, "未登录或token无效")
+		return
+	}
+	userID, ok := value.(uint64)
+	if !ok {
+		response.Fail(c, 30001, "未登录或token无效")
+		return
+	}
 	//service层
 	out, err := uc.UserSvc.GetProfile(ctx, userID)
 	if err != nil {

@@ -26,9 +26,9 @@
 
 ## 阶段四：用户认证与鉴权模块 (User & Auth MVP)
 
-- [ ] **密码安全**: 引入 `bcrypt` 包实现密码的单向哈希加密存储
-- [ ] **JWT 签发**: 编写 JWT Token 的生成逻辑（包含用户的 UID 和过期时间）
-- [ ] **鉴权中间件**: 编写 `JWTAuthMiddleware`，拦截受保护的接口路由，校验 Token 有效性
+- [X] **密码安全**: 引入 `bcrypt` 包实现密码的单向哈希加密存储
+- [X] **JWT 签发**: 编写 JWT Token 的生成逻辑（包含用户的 UID 和过期时间）
+- [X] **鉴权中间件**: 编写 `JWTAuthMiddleware`，拦截受保护的接口路由，校验 Token 有效性
 - [ ] **核心接口开发**:
   - `POST /api/v1/user/register` (用户注册)
   - `POST /api/v1/user/login` (用户登录并返回 Token)
