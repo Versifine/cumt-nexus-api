@@ -24,15 +24,19 @@
 - [ ] **GORM 模型编写**: 在 `internal/model` 中编写 Go 结构体（User, Post, Comment 等），并配置表名和字段标签
 - [ ] **自动迁移工具**: 编写简单的自动建表脚手架脚本或在启动时使用 `AutoMigrate` 生成数据表
 
-## 阶段四：用户认证与鉴权模块 (User & Auth MVP)
+## 阶段四：认证模块与当前用户资源 MVP (Auth & Current User MVP)
 
 - [X] **密码安全**: 引入 `bcrypt` 包实现密码的单向哈希加密存储
 - [X] **JWT 签发**: 编写 JWT Token 的生成逻辑（包含用户的 UID 和过期时间）
 - [X] **鉴权中间件**: 编写 `JWTAuthMiddleware`，拦截受保护的接口路由，校验 Token 有效性
 - [ ] **核心接口开发**:
-  - `POST /api/v1/user/register` (用户注册)
-  - `POST /api/v1/user/login` (用户登录并返回 Token)
-  - `GET /api/v1/user/profile` (获取个人信息 - 需要 Token)
+  - `POST /api/v1/auth/register` (用户注册)
+  - `POST /api/v1/auth/login` (用户登录并返回 Token)
+  - `GET /api/v1/users/me` (获取当前登录用户信息 - 需要 Token)
+- [ ] **代码结构调整**:
+  - 新建 `auth_controller` / `auth_service`
+  - 保持 `user_controller` / `user_service` 聚焦用户资源查询
+  - 将“个人信息”接口统一命名为 `me`，而不是 `profile`
 
 ## 阶段五：矿大社区核心业务 (Community Business)
 

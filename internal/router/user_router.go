@@ -9,9 +9,9 @@ import (
 
 func InitUserRouter(rg *gin.RouterGroup, userCtrl *controller.UserController) {
 
-	userRouter := rg.Group("/user")
+	userRouter := rg.Group("/users")
 	{
-		userRouter.GET("/profile", middleware.Auth(), userCtrl.GetProfile)
+		userRouter.GET("/me", middleware.Auth(), userCtrl.GetMe)
 
 	}
 }

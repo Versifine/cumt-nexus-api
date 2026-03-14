@@ -38,3 +38,16 @@ cumt-nexus-api/
 ├── go.mod            # Go 依赖管理
 └── README.md         # 项目总览
 ```
+
+## 模块边界约定
+
+为保证接口语义清晰、后续扩展方便，项目接口按领域划分：
+
+* `auth`：负责认证相关接口，如 `register`、`login`、后续的 `refresh/logout`
+* `users`：负责用户资源相关接口，如 `GET /api/v1/users/me`
+
+当前推荐的用户认证 MVP 接口为：
+
+* `POST /api/v1/auth/register`
+* `POST /api/v1/auth/login`
+* `GET /api/v1/users/me`

@@ -145,13 +145,32 @@
 
 ### 3.1 用户注册与登录
 
-* **注册**：客户端提交 用户名 + 密码 -> Controller 校验格式（必填、长度） -> Service 校验用户名是否重复 -> bcrypt 库加密密码 -> 存入数据库 `users` 表 -> 返回注册成功。
-* **登录**：客户端提交 用户名 + 密码 -> Controller 校验格式 -> Service 查数据库获取用户信息 -> bcrypt 对比密码 -> 成功则生成 JWT Token 并下发 -> 客户端保存 Token 并在每次请求头上带上 `Authorization: Bearer <token>`。
+* **注册**：客户端调用 `POST /api/v1/auth/register`，提交 用户名 + 密码 -> Controller 校验格式（必填、长度） -> AuthService 校验用户名是否重复 -> bcrypt 库加密密码 -> 存入数据库 `users` 表 -> 返回注册成功。
+* **登录**：客户端调用 `POST /api/v1/auth/login`，提交 用户名 + 密码 -> Controller 校验格式 -> AuthService 查数据库获取用户信息 -> bcrypt 对比密码 -> 成功则生成 JWT Token 并下发 -> 客户端保存 Token 并在每次请求头上带上 `Authorization: Bearer <token>`。
 
-### 3.2 发帖与查看
+### 3.2 当前用户信息与帖子查看
+
+* **当前用户信息**：客户端调用 `GET /api/v1/users/me` 并携带 JWT -> Auth 中间件解析 Token 并提取 `user_id` -> UserService 查询当前用户资料 -> 返回用户基础信息 DTO（如 `id`、`username`、`nickname`、`avatar_url`、`role`）。
+
+### 3.3 发帖与查看
 
 * **发帖**：客户端带 Token 提交标题与内容 -> 中间件校验 Token 获取 user_id -> Service 创建记录存入 `posts` 表 -> 返回发帖成功。
 * **查看帖子列表**：客户端无 Token 也可以请求列表，支持分页 (offset, limit) -> 获取帖子集合，需要关联查询作者的基本信息（头像、昵称）。
+
+### 3.4 用户认证与用户资源的领域划分
+
+为保证接口语义清晰、后续扩展方便，本项目将“认证能力”和“用户资源”分域设计：
+
+* **Auth 域**：负责注册、登录、Token 签发与认证流程。
+  * `POST /api/v1/auth/register`：用户注册，公开接口。
+  * `POST /api/v1/auth/login`：用户登录，公开接口。
+* **User 域**：负责用户资源本身的读取与维护。
+  * `GET /api/v1/users/me`：获取当前登录用户信息，需携带 JWT。
+
+补充约定：
+
+* `me` 表示“当前登录主体”，比 `profile` 更稳定，也更利于后续扩展。
+* 后续若需要查看指定用户信息，可继续扩展 `GET /api/v1/users/:id`。
 
 ## 4. 权限与角色控制 (RBAC)
 
@@ -183,6 +202,8 @@
 3. **分层原则：**
    * **Controller 层**：只负责解析前端传来的 JSON，验证参数（比如用户名格式对不对），然后调用 Service。
    * **Service 层**：写具体的业务逻辑（比如查数据库看用户名存不存在，对比密码，生成 Token）。
+     * `AuthService`：处理注册、登录、JWT 签发等认证相关业务。
+     * `UserService`：处理当前用户信息查询、用户资料维护等资源相关业务。
    * **Repository/Dao 层**：专门负责封装对数据库（MySQL/Redis）的访问与增删改查操作（通过 GORM 等），以复用代码和解耦。
    * **Model 层**：定义数据库数据模型（实体类），如 `User`, `Post` 等。
 4. **日志记录：** 所有非预期的异常错误、接口请求入参及其重要状态变更（如登录、发帖、权限更改等），都应统一使用 Zap 记录，便于追踪问题。

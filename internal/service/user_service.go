@@ -14,6 +14,14 @@ type UserRepo interface {
 	Create(ctx context.Context, user *model.User) error
 }
 
+type ProfileDTO struct {
+	ID        uint64 `json:"id"`
+	Username  string `json:"username"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatar_url"`
+	Role      int8   `json:"role"`
+}
+
 type UserService struct {
 	UserRepo UserRepo
 }
@@ -24,13 +32,19 @@ func NewUserService(userRepo UserRepo) *UserService {
 	}
 }
 
-func (s *UserService) GetProfile(ctx context.Context, userID uint64) (string, error) {
+func (s *UserService) GetMe(ctx context.Context, userID uint64) (*ProfileDTO, error) {
 	user, err := s.UserRepo.FindByID(ctx, userID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", ErrUserNotFound
+		return nil, ErrUserNotFound
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return user.Username, nil
+	return &ProfileDTO{
+		ID:        user.ID,
+		Username:  user.Username,
+		Nickname:  user.Nickname,
+		AvatarURL: user.AvatarURL,
+		Role:      user.Role,
+	}, nil
 }

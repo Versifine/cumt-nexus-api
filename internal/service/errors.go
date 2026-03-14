@@ -34,6 +34,7 @@ func MapError(err error) (int, string) {
 		return 30002, "权限不足"
 	case errors.Is(err, ErrResourceNotFound):
 		return 40001, "资源不存在"
+
 	default:
 		return 50000, "系统繁忙，请稍后再试"
 	}

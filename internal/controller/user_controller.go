@@ -9,7 +9,7 @@ import (
 )
 
 type UserSvc interface {
-	GetProfile(ctx context.Context, userID uint64) (string, error)
+	GetMe(ctx context.Context, userID uint64) (*service.ProfileDTO, error)
 }
 
 type UserController struct {
@@ -22,20 +22,22 @@ func NewUserController(userSvc UserSvc) *UserController {
 	}
 }
 
-func (uc *UserController) GetProfile(c *gin.Context) {
+func (uc *UserController) GetMe(c *gin.Context) {
 	ctx := c.Request.Context()
 	value, exists := c.Get("user_id")
 	if !exists {
-		response.Fail(c, 30001, "未登录或token无效")
+		code, msg := service.MapError(service.ErrUnauthorized)
+		response.Fail(c, code, msg)
 		return
 	}
 	userID, ok := value.(uint64)
 	if !ok {
-		response.Fail(c, 30001, "未登录或token无效")
+		code, msg := service.MapError(service.ErrUnauthorized)
+		response.Fail(c, code, msg)
 		return
 	}
 	//service层
-	out, err := uc.UserSvc.GetProfile(ctx, userID)
+	out, err := uc.UserSvc.GetMe(ctx, userID)
 	if err != nil {
 		code, msg := service.MapError(err)
 		response.Fail(c, code, msg)

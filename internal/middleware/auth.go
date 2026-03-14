@@ -35,4 +35,3 @@ func Auth() gin.HandlerFunc {
 		c.Next()
 	}
 }
-
