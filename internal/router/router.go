@@ -36,6 +36,11 @@ func InitRouter() *gin.Engine {
 		authSvc := service.NewAuthService(userRepo)
 		authCtrl := controller.NewAuthController(authSvc)
 		InitAuthRouter(v1, authCtrl)
+
+		postRepo := repository.NewPostRepository()
+		postSvc := service.NewPostService(postRepo)
+		postCtrl := controller.NewPostController(postSvc)
+		InitPostRouter(v1, postCtrl)
 	}
 	return r
 }

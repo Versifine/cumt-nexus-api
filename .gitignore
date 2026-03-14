@@ -33,6 +33,7 @@ coverage/
 Thumbs.db
 AGENTS.md
 TODO.md
+/NEXT_STEPS.md
 # Database & Cache Data (Local dev)
 mysql_data/
 redis_data/
