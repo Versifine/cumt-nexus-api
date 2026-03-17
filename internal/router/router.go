@@ -41,6 +41,11 @@ func InitRouter() *gin.Engine {
 		postSvc := service.NewPostService(postRepo)
 		postCtrl := controller.NewPostController(postSvc)
 		InitPostRouter(v1, postCtrl)
+
+		commentRepo := repository.NewCommentRepository()
+		commentSvc := service.NewCommentService(commentRepo)
+		commentCtrl := controller.NewCommentController(commentSvc)
+		InitCommentRouter(v1, commentCtrl)
 	}
 	return r
 }
