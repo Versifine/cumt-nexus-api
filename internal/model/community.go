@@ -8,8 +8,8 @@ const (
 	SubredditVisibilityPrivate    int8 = 3
 )
 
-// Subreddit 是 Reddit clone 中的社区实体。
-type Subreddit struct {
+// Community 是 Reddit clone 中的社区实体。
+type Community struct {
 	ID               uint64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	Name             string    `gorm:"column:name;type:varchar(64);not null;uniqueIndex:uk_subreddits_name" json:"name"`
 	DisplayName      string    `gorm:"column:display_name;type:varchar(128);not null" json:"display_name"`
@@ -25,4 +25,4 @@ type Subreddit struct {
 	UpdatedAt        time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
 }
 
-func (Subreddit) TableName() string { return "subreddits" }
+func (c Community) TableName() string { return "communities" }
