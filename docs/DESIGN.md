@@ -1,211 +1,478 @@
-# CUMT-Nexus 核心设计与数据字典 (DESIGN)
+# CUMT-Nexus 单校校园论坛核心设计 (DESIGN)
 
-本文档用于指导后端的实际开发，包含数据库结构设计与核心开发规范。
+本文档是当前阶段的数据结构与领域设计基线。
 
-## 1. 数据库表结构设计 (MySQL)
+目标不是机械照搬 Reddit，而是做一个“类 Reddit 的单校校园论坛”：
 
-### 1.1 用户表 (`users`)
+- 讨论内容有明确板块归属
+- 评论支持楼中楼
+- 帖子和评论支持投票
+- 额外支持“用户创建词条 + 打分 + 点评”
 
-记录基本账号信息。
-
-| 字段名            | 数据类型 (MySQL) | Go 结构体类型 | 说明 / 约束                          |
-| :---------------- | :--------------- | :------------ | :----------------------------------- |
-| `id`            | BIGINT           | `uint`      | 主键，自增                           |
-| `username`      | VARCHAR(64)      | `string`    | 用户名，**唯一索引**，用于登录 |
-| `password_hash` | VARCHAR(255)     | `string`    | 密码的哈希值（绝对不能存明文！）     |
-| `nickname`      | VARCHAR(64)      | `string`    | 社区昵称，默认可以与用户名相同       |
-| `avatar_url`    | VARCHAR(255)     | `string`    | 头像的链接地址                       |
-| `role`          | TINYINT          | `int`       | 权限角色：0-普通用户, 1-管理员       |
-| `status`        | TINYINT          | `int`       | 账号状态：1-正常, 2-封禁             |
-| `created_at`    | DATETIME         | `time.Time` | 注册时间                             |
-| `updated_at`    | DATETIME         | `time.Time` | 最后修改时间                         |
-
-### 1.2 帖子表 (`posts`)
-
-记录社区内的讨论帖子。
-
-| 字段名         | 数据类型 (MySQL) | Go 结构体类型 | 说明 / 约束                        |
-| :------------- | :--------------- | :------------ | :--------------------------------- |
-| `id`         | BIGINT           | `uint`      | 主键，自增                         |
-| `user_id`    | BIGINT           | `uint`      | 作者 ID，关联 `users.id`         |
-| `title`      | VARCHAR(128)     | `string`    | 帖子标题                           |
-| `content`    | TEXT             | `string`    | 帖子正文（支持 Markdown 或富文本） |
-| `view_count` | INT              | `int`       | 浏览量，默认 0                     |
-| `created_at` | DATETIME         | `time.Time` | 发布时间                           |
-| `updated_at` | DATETIME         | `time.Time` | 最后修改时间                       |
-
-### 1.3 评论表 (`comments`)
-
-记录帖子下的用户评论。
-
-| 字段名         | 数据类型 (MySQL) | Go 结构体类型      | 说明 / 约束                     |
-| :------------- | :--------------- | :----------------- | :------------------------------ |
-| `id`         | BIGINT           | `uint`           | 主键，自增                      |
-| `post_id`    | BIGINT           | `uint`           | 所属帖子 ID，关联 `posts.id`  |
-| `user_id`    | BIGINT           | `uint`           | 评论者 ID，关联 `users.id`    |
-| `parent_id`  | BIGINT           | `uint`           | 父评论 ID，顶级评论为 0 或 NULL |
-| `content`    | TEXT             | `string`         | 评论内容                        |
-| `created_at` | DATETIME         | `time.Time`      | 评论时间                        |
-| `updated_at` | DATETIME         | `time.Time`      | 最后修改时间                    |
-| `deleted_at` | DATETIME         | `gorm.DeletedAt` | 逻辑删除标志                    |
-
-### 1.4 点赞表 (`likes`)
-
-记录用户对帖子或评论的点赞。
-
-| 字段名          | 数据类型 (MySQL) | Go 结构体类型 | 说明 / 约束                  |
-| :-------------- | :--------------- | :------------ | :--------------------------- |
-| `id`          | BIGINT           | `uint`      | 主键，自增                   |
-| `user_id`     | BIGINT           | `uint`      | 点赞者 ID，关联 `users.id` |
-| `target_id`   | BIGINT           | `uint`      | 目标 ID (帖子 ID 或 评论 ID) |
-| `target_type` | TINYINT          | `int`       | 目标类型：1-帖子, 2-评论     |
-| `created_at`  | DATETIME         | `time.Time` | 点赞时间                     |
-
-*(注意：需要建立联合唯一索引 `idx_user_target` (`user_id`, `target_id`, `target_type`)，防止重复点赞)*
+从现在开始，`subreddit` 不再作为正式命名使用，统一改为 `community`。
+对前台产品来说可以叫“板块”，但在后端模型、数据库表、接口命名里统一使用 `community/communities`。
 
 ---
 
-## 2. 统一 API 响应规范与全局错误码字典
+## 1. 产品定位与边界
 
-在前后端分离架构中，为了降低沟通成本、规范前端解析逻辑，本项目所有 RESTful API 的响应体 (Response Body) 必须严格遵循以下 JSON 结构。
+### 1.1 产品定位
 
-### 2.1 基础数据结构
+这是一个单校校园论坛，不做多校切换，不做跨校隔离。
 
-所有的 API 接口，无论是成功还是失败，无论是 GET 请求还是 POST 请求，其最外层必须是包含以下三个字段的 JSON 对象。
-**注意：HTTP 状态码我们统一返回 200 OK，真正的业务逻辑成败是由 JSON 体里的 `code` 决定的。**
+核心有两条内容线：
+
+1. **论坛线**：板块、帖子、评论、投票
+2. **词条线**：词条、评分、点评
+
+### 1.2 第一阶段不做的事
+
+为了避免模型过早失控，第一阶段明确不做：
+
+- 多校区 / 多学校模型
+- 用户自由创建板块
+- 板块关注 / 加入 / 订阅关系
+- 一个通用 `votes` 表靠 `target_type` 支撑所有投票
+- 为词条再单独做一套“评论树”
+
+### 1.3 当前产品判断
+
+对本项目来说，板块更接近“平台预置栏目”，不是 Reddit 那种用户自治小社区。
+
+因此：
+
+- 板块数量由平台设计和治理
+- 用户不需要先关注或加入板块才能浏览和发帖
+- 用户真正自然生长的是帖子、标签、评论、词条和点评
+
+---
+
+## 2. 统一命名
+
+### 2.1 领域命名
+
+- `User`：用户
+- `Community`：板块，数据库表为 `communities`
+- `CommunityModerator`：板块版主管理关系
+- `Post`：帖子
+- `Comment`：评论
+- `PostVote`：帖子投票
+- `CommentVote`：评论投票
+- `Entry`：词条
+- `EntryReview`：词条评分与点评
+
+### 2.2 命名迁移规则
+
+这份文档生效后，旧命名视为过渡状态：
+
+- `Subreddit` -> `Community`
+- `Subscription` -> 删除，不作为核心模型保留
+- `Vote(target_type)` -> 拆成 `PostVote` 和 `CommentVote`
+
+---
+
+## 3. 核心领域关系
+
+### 3.1 论坛线
+
+- 一个 `Community` 可以有很多 `Post`
+- 一个 `Post` 只能属于一个 `Community`
+- 一个 `Post` 由一个 `User` 创建
+- 一个 `Post` 可以有很多 `Comment`
+- 一个 `Comment` 只能属于一个 `Post`
+- 一个 `Comment` 可以回复另一个 `Comment`
+- 一个 `User` 可以对多个帖子投票
+- 一个 `User` 可以对多个评论投票
+
+### 3.2 词条线
+
+- 一个 `Entry` 由一个 `User` 发起创建
+- 一个 `Entry` 可以有很多 `EntryReview`
+- 一个 `User` 对同一个 `Entry` 只能有一条有效点评
+
+### 3.3 管理线
+
+- 一个 `Community` 可以有多个版主
+- 举报、审核、封禁属于后续治理能力，不进入第一阶段主闭环
+
+---
+
+## 4. 数据库表结构设计
+
+### 4.1 用户表 (`users`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `username` | VARCHAR(64) | 登录用户名，唯一索引 |
+| `password_hash` | VARCHAR(255) | 密码哈希 |
+| `nickname` | VARCHAR(64) | 显示昵称 |
+| `avatar_url` | VARCHAR(255) | 头像 |
+| `bio` | TEXT | 简介 |
+| `role` | TINYINT | 0-普通用户，1-管理员 |
+| `status` | TINYINT | 1-正常，2-封禁 |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+
+说明：
+
+- 单校场景下，先不要拆 `campus` 表
+- 以后如果要做实名、学号认证，应单独开认证表，不要直接混进主用户表
+
+### 4.2 板块表 (`communities`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `slug` | VARCHAR(64) | 稳定标识，唯一索引，例如 `study` |
+| `name` | VARCHAR(64) | 展示名称，例如“学习课程” |
+| `description` | TEXT | 板块简介 |
+| `icon_url` | VARCHAR(255) | 图标 |
+| `banner_url` | VARCHAR(255) | 横幅 |
+| `sort_order` | INT | 排序权重，越小越靠前 |
+| `post_permission` | TINYINT | 1-所有登录用户可发帖，2-仅版主可发帖 |
+| `allow_anonymous` | TINYINT | 0-不允许匿名，1-允许匿名 |
+| `status` | TINYINT | 1-正常，2-只读，3-隐藏 |
+| `post_count` | BIGINT | 帖子数，冗余统计 |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+
+说明：
+
+- 板块是平台预置数据，不走普通用户创建流程
+- 第一阶段默认所有板块都可浏览
+- 不保留 `member_count`，因为当前没有关注/加入模型
+
+### 4.3 板块版主表 (`community_moderators`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `community_id` | BIGINT | 板块 ID |
+| `user_id` | BIGINT | 用户 ID |
+| `role` | TINYINT | 1-owner，2-moderator |
+| `created_at` | DATETIME | 创建时间 |
+
+说明：
+
+- `community_id + user_id` 建联合唯一索引
+- 这张表解决“谁可以管理板块”的问题，不承担关注功能
+
+### 4.4 帖子表 (`posts`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `community_id` | BIGINT | 所属板块 |
+| `user_id` | BIGINT | 作者 ID |
+| `type` | TINYINT | 1-text，2-link，3-image |
+| `title` | VARCHAR(300) | 标题 |
+| `content` | LONGTEXT | 文本正文 |
+| `link_url` | VARCHAR(1024) | 链接帖地址 |
+| `is_anonymous` | TINYINT | 0-否，1-是 |
+| `score` | BIGINT | 投票分数 |
+| `comment_count` | BIGINT | 评论数 |
+| `view_count` | BIGINT | 浏览量 |
+| `status` | TINYINT | 1-正常，2-锁定，3-删除 |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+| `deleted_at` | DATETIME | 逻辑删除 |
+
+说明：
+
+- 第一阶段先支持 `text` 和 `link`，`image` 预留字段即可
+- 匿名发帖只影响展示，不影响数据库里保留真实 `user_id`
+- `community_id + created_at` 是列表查询重要索引
+
+### 4.5 评论表 (`comments`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `post_id` | BIGINT | 所属帖子 |
+| `user_id` | BIGINT | 评论作者 |
+| `parent_id` | BIGINT | 父评论 ID，顶级评论为 0 |
+| `root_id` | BIGINT | 根评论 ID，顶级评论为 0 |
+| `depth` | SMALLINT | 评论层级 |
+| `content` | LONGTEXT | 评论内容 |
+| `is_anonymous` | TINYINT | 0-否，1-是 |
+| `score` | BIGINT | 投票分数 |
+| `reply_count` | BIGINT | 子评论数 |
+| `status` | TINYINT | 1-正常，2-删除 |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+| `deleted_at` | DATETIME | 逻辑删除 |
+
+说明：
+
+- 第一阶段只要求 `parent_id + root_id + depth` 正确
+- 不强制在第一阶段引入 `path`
+- 查询评论列表时，先按帖子拉平，再在 Service 层组装树结构
+
+### 4.6 帖子投票表 (`post_votes`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `user_id` | BIGINT | 投票用户 |
+| `post_id` | BIGINT | 帖子 ID |
+| `value` | TINYINT | 只允许 `1` 或 `-1` |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+
+说明：
+
+- `user_id + post_id` 建联合唯一索引
+- 取消投票直接删除记录，先不要引入 `0`
+
+### 4.7 评论投票表 (`comment_votes`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `user_id` | BIGINT | 投票用户 |
+| `comment_id` | BIGINT | 评论 ID |
+| `value` | TINYINT | 只允许 `1` 或 `-1` |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+
+说明：
+
+- `user_id + comment_id` 建联合唯一索引
+- 分表设计优于一个通用 `votes` 表
+
+### 4.8 词条表 (`entries`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `entry_type` | VARCHAR(32) | 词条类型，如 `course`、`teacher`、`shop` |
+| `title` | VARCHAR(128) | 词条标题 |
+| `slug` | VARCHAR(128) | 稳定标识，可做唯一索引 |
+| `summary` | VARCHAR(255) | 摘要 |
+| `content` | LONGTEXT | 词条正文 |
+| `created_by` | BIGINT | 创建者 |
+| `status` | TINYINT | 1-pending，2-published，3-rejected，4-merged |
+| `merged_to_id` | BIGINT | 合并目标词条 ID，默认 0 |
+| `avg_score` | DECIMAL(3,2) | 平均分 |
+| `review_count` | BIGINT | 点评数 |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+
+说明：
+
+- 用户可以创建词条，但必须考虑重复词条问题
+- `status + merged_to_id` 用于后续处理合并、驳回、去重
+- 第一阶段先做通用词条，不急着拆 `course_entries`、`teacher_entries`
+
+### 4.9 词条点评表 (`entry_reviews`)
+
+| 字段名 | 类型 | 说明 |
+| :-- | :-- | :-- |
+| `id` | BIGINT | 主键，自增 |
+| `entry_id` | BIGINT | 所属词条 |
+| `user_id` | BIGINT | 点评用户 |
+| `score` | TINYINT | 1-5 分 |
+| `content` | TEXT | 点评内容 |
+| `is_anonymous` | TINYINT | 0-否，1-是 |
+| `status` | TINYINT | 1-正常，2-隐藏，3-删除 |
+| `created_at` | DATETIME | 创建时间 |
+| `updated_at` | DATETIME | 更新时间 |
+
+说明：
+
+- `user_id + entry_id` 建联合唯一索引
+- 一个用户对一个词条只保留一条有效点评
+- “打分”和“评论”合并在同一条 `review` 中，不再单独拆散表
+
+---
+
+## 5. 索引与约束建议
+
+至少应保证以下唯一索引：
+
+- `users.username`
+- `communities.slug`
+- `community_moderators(community_id, user_id)`
+- `post_votes(user_id, post_id)`
+- `comment_votes(user_id, comment_id)`
+- `entry_reviews(user_id, entry_id)`
+
+至少应保证以下常用查询索引：
+
+- `posts(community_id, created_at)`
+- `posts(user_id, created_at)`
+- `comments(post_id, created_at)`
+- `comments(parent_id, created_at)`
+- `entries(entry_type, status, created_at)`
+- `entry_reviews(entry_id, created_at)`
+
+---
+
+## 6. 板块初始化策略
+
+板块属于系统预置数据，不属于用户业务数据。
+
+因此应采用 `seed` 方式初始化：
+
+- 启动初始化或单独命令执行
+- 以 `slug` 为唯一键幂等插入
+- 存在则跳过，不存在则创建
+
+推荐第一批板块控制在 6~8 个：
+
+- `square`：综合广场
+- `study`：学习课程
+- `trade`：二手交易
+- `lost-found`：失物招领
+- `activity`：活动组队
+- `life`：校园生活
+- `treehole`：树洞匿名
+- `notice`：资讯通知
+
+---
+
+## 7. API 领域设计
+
+### 7.1 认证域 (`auth`)
+
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+
+### 7.2 当前用户域 (`users`)
+
+- `GET /api/v1/users/me`
+
+### 7.3 板块域 (`communities`)
+
+- `GET /api/v1/communities`
+- `GET /api/v1/communities/:slug`
+
+说明：
+
+- 第一阶段不提供普通用户创建板块接口
+- 如果后面需要后台创建板块，应走管理员接口
+
+### 7.4 帖子域 (`posts`)
+
+- `POST /api/v1/posts`
+- `GET /api/v1/communities/:slug/posts`
+- `GET /api/v1/posts/:id`
+
+发帖最小请求体建议包含：
 
 ```json
 {
-  "code": 0,            // 业务状态码，0 代表完全成功，非 0 代表各种错误
-  "msg": "success",     // 提示信息，失败时通常显示给用户看的原因
-  "data": null          // 实际承载的业务数据
+  "community_slug": "study",
+  "type": 1,
+  "title": "高数期中怎么复习？",
+  "content": "想问一下学长学姐有什么建议",
+  "is_anonymous": 0
 }
 ```
 
-#### 典型返回示例：
+### 7.5 评论域 (`comments`)
 
-**请求成功 (返回分页列表)**
+- `POST /api/v1/posts/:post_id/comments`
+- `GET /api/v1/posts/:post_id/comments`
+
+### 7.6 投票域 (`votes`)
+
+- `POST /api/v1/posts/:post_id/votes`
+- `POST /api/v1/comments/:comment_id/votes`
+
+说明：
+
+- 请求体最小只需要 `value`
+- `value = 1` 表示赞成，`value = -1` 表示反对
+
+### 7.7 词条域 (`entries`)
+
+- `POST /api/v1/entries`
+- `GET /api/v1/entries`
+- `GET /api/v1/entries/:id`
+
+推荐第一批词条类型：
+
+- `course`
+- `teacher`
+- `shop`
+
+### 7.8 点评域 (`entry_reviews`)
+
+- `POST /api/v1/entries/:entry_id/reviews`
+- `GET /api/v1/entries/:entry_id/reviews`
+- `PATCH /api/v1/entry-reviews/:id`
+
+---
+
+## 8. 统一错误设计
+
+建议继续沿用统一响应结构：
 
 ```json
 {
   "code": 0,
   "msg": "success",
-  "data": {
-    "total": 150,   
-    "list": [
-      { "id": 1, "title": "教二楼自习占座指南" },
-      { "id": 2, "title": "南湖一食堂新菜品评测" }
-    ]
-  }
-}
-```
-
-**请求失败 (参数错误)**
-
-```json
-{
-  "code": 10001,
-  "msg": "学号必须是纯数字且长度为8位",
   "data": null
 }
 ```
 
-### 2.2 全局业务状态码字典 (`code`)
+当前阶段至少补齐以下业务错误：
 
-* `0`: 请求成功 (Success)
+- `用户名已存在`
+- `用户不存在`
+- `板块不存在`
+- `帖子不存在`
+- `评论不存在`
+- `父评论不合法`
+- `词条不存在`
+- `词条已存在或重复`
+- `点评不存在`
+- `用户已经点评过该词条`
+- `权限不足`
 
-**1xxxx: 客户端/参数级别错误**
+---
 
-* `10001`: 参数错误/校验失败 (Invalid Parameter)
-* `10002`: 缺少必填参数 (Missing Parameter)
+## 9. 后端架构约束
 
-**2xxxx: 用户业务逻辑错误**
+### 9.1 分层原则
 
-* `20001`: 用户不存在 (User Not Found)
-* `20002`: 密码错误 (Wrong Password)
-* `20003`: 用户名已存在 (Username Already Exists)
-* `20004`: 用户被封禁 (User Banned)
+- `Controller`：HTTP 绑定、响应、鉴权上下文读取
+- `Service`：业务规则、DTO 组装、事务边界
+- `Repository`：数据库读写、联表查询、分页查询
 
-**3xxxx: 鉴权与安全级别错误**
+### 9.2 DTO 原则
 
-* `30001`: 未登录或 Token 无效/过期 (Unauthorized / Invalid Token)
-* `30002`: 权限不足，无法访问该资源 (Forbidden)
+- 不直接把 GORM Model 原样返回前端
+- 匿名内容要在 DTO 层处理展示名和头像
+- 列表 DTO 和详情 DTO 可以不同，不要强求一个结构走到底
 
-**4xxxx: 业务资源级别错误**
+### 9.3 事务原则
 
-* `40001`: 请求的资源不存在 (Resource Not Found)
+以下场景建议使用事务：
 
-**5xxxx: 服务器底层错误**
+- 创建评论并更新帖子评论数
+- 写入投票并更新帖子/评论分数
+- 写入点评并更新词条平均分与点评数
 
-* `50000`: 服务器内部错误 (Internal Server Error)
+### 9.4 迁移原则
 
-## 3. 核心业务流程图
+- `AutoMigrate` 只负责补表和补字段，不负责复杂重命名
+- `subreddits -> communities`、`votes -> post_votes/comment_votes` 这类变更要准备手动迁移方案
+- 如果数据库里已经有旧表，必须先想清楚旧数据保留、映射还是废弃
 
-由于是文字文档，这里用步骤来描述核心业务流：
+---
 
-### 3.1 用户注册与登录
+## 10. 当前阶段最重要的结论
 
-* **注册**：客户端调用 `POST /api/v1/auth/register`，提交 用户名 + 密码 -> Controller 校验格式（必填、长度） -> AuthService 校验用户名是否重复 -> bcrypt 库加密密码 -> 存入数据库 `users` 表 -> 返回注册成功。
-* **登录**：客户端调用 `POST /api/v1/auth/login`，提交 用户名 + 密码 -> Controller 校验格式 -> AuthService 查数据库获取用户信息 -> bcrypt 对比密码 -> 成功则生成 JWT Token 并下发 -> 客户端保存 Token 并在每次请求头上带上 `Authorization: Bearer <token>`。
+当前项目不应该继续沿着 `subreddit/subscription` 方向推进，而应该切换到下面这条主线：
 
-### 3.2 当前用户信息与帖子查看
+- 用 `community` 表达板块
+- 不做板块关注/加入
+- 帖子必须归属于板块
+- 评论先走 `parent_id + root_id + depth`
+- 投票拆成帖子投票和评论投票
+- 新增 `entry + entry_review` 作为校园词条能力
 
-* **当前用户信息**：客户端调用 `GET /api/v1/users/me` 并携带 JWT -> Auth 中间件解析 Token 并提取 `user_id` -> UserService 查询当前用户资料 -> 返回用户基础信息 DTO（如 `id`、`username`、`nickname`、`avatar_url`、`role`）。
-
-### 3.3 发帖与查看
-
-* **发帖**：客户端带 Token 提交标题与内容 -> 中间件校验 Token 获取 user_id -> Service 创建记录存入 `posts` 表 -> 返回发帖成功。
-* **查看帖子列表**：客户端无 Token 也可以请求列表，支持分页 (offset, limit) -> 获取帖子集合，需要关联查询作者的基本信息（头像、昵称）。
-
-### 3.4 用户认证与用户资源的领域划分
-
-为保证接口语义清晰、后续扩展方便，本项目将“认证能力”和“用户资源”分域设计：
-
-* **Auth 域**：负责注册、登录、Token 签发与认证流程。
-  * `POST /api/v1/auth/register`：用户注册，公开接口。
-  * `POST /api/v1/auth/login`：用户登录，公开接口。
-* **User 域**：负责用户资源本身的读取与维护。
-  * `GET /api/v1/users/me`：获取当前登录用户信息，需携带 JWT。
-
-补充约定：
-
-* `me` 表示“当前登录主体”，比 `profile` 更稳定，也更利于后续扩展。
-* 后续若需要查看指定用户信息，可继续扩展 `GET /api/v1/users/:id`。
-
-## 4. 权限与角色控制 (RBAC)
-
-系统目前采用简单的基于角色的访问控制（RBAC）：
-
-* **角色 (Role)**：在 `users` 表中用 `role` 字段表示。
-  * `0`: 普通用户 (Normal User) - 可浏览、发帖、评论、点赞。
-  * `1`: 管理员 (Admin) - 包含普通用户所有权限，且可以删除违规帖子/评论、封禁用户。
-* **实现方案**：
-  * 使用 Gin Auth 中间件验证 JWT Token，并将解析后的用户信息（如 ID、Role）放入 `gin.Context` 中。
-  * 对于需要管理员权限的接口（如 `/api/v1/admin/*`），额外增加 Admin 中间件，从上下文中提取用户信息判断 `role` 字段。
-  * 若 `role != 1`，则拦截并返回错误码 `30002 Forbidden`。
-
-## 5. 第三方依赖与基础设施
-
-* **Web 框架**: Gin (`github.com/gin-gonic/gin`)
-* **ORM**: GORM (`gorm.io/gorm`, `gorm.io/driver/mysql`)
-* **数据库**: MySQL 8.x
-* **缓存/NoSQL (可选)**: Redis (用于缓存热点数据、限制访问频率、存储点赞关系等，后期可引入)
-* **JWT**: `github.com/golang-jwt/jwt/v5`
-* **密码哈希**: `golang.org/x/crypto/bcrypt`
-* **配置管理**: Viper (`github.com/spf13/viper`)
-* **日志系统**: Zap (`go.uber.org/zap`) 与 Lumberjack (`gopkg.in/natefinch/lumberjack.v2` 解决日志文件切割)
-
-## 6. 后端开发核心规范
-
-1. **密码安全：** 必须使用 `golang.org/x/crypto/bcrypt` 库对密码进行哈希加密，无论如何不允许在数据库中裸奔明文密码。
-2. **逻辑删除：** 对于用户删除帖子，尽量使用 GORM 的 `DeletedAt` 软删除（逻辑删除），而不是真的从数据库 `DELETE` 掉，方便后期数据分析或恢复。
-3. **分层原则：**
-   * **Controller 层**：只负责解析前端传来的 JSON，验证参数（比如用户名格式对不对），然后调用 Service。
-   * **Service 层**：写具体的业务逻辑（比如查数据库看用户名存不存在，对比密码，生成 Token）。
-     * `AuthService`：处理注册、登录、JWT 签发等认证相关业务。
-     * `UserService`：处理当前用户信息查询、用户资料维护等资源相关业务。
-   * **Repository/Dao 层**：专门负责封装对数据库（MySQL/Redis）的访问与增删改查操作（通过 GORM 等），以复用代码和解耦。
-   * **Model 层**：定义数据库数据模型（实体类），如 `User`, `Post` 等。
-4. **日志记录：** 所有非预期的异常错误、接口请求入参及其重要状态变更（如登录、发帖、权限更改等），都应统一使用 Zap 记录，便于追踪问题。
-5. **统一响应：** 所有的返回结果都应封装在一个统一的响应体中（包含 `code`, `msg`, `data` 字段），禁止随意返回不一致的结构。
-6. **参数校验：** 建议使用 Gin 自带的 `binding` 与 `validator` 标签进行自动校验，减少在 Controller 里手工编写大量 `if-else` 的繁琐校验代码。
+这份文档是接下来模型重构、接口设计和代码重构的依据。
