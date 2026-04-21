@@ -7,30 +7,37 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 func Load() (*Config, error) {
+	if err := loadDotEnvIfPresent(); err != nil {
+		return nil, err
+	}
+
 	var cfg Config
 	var errs []error
 	cfg.App.Name = requiredString("APP_NAME", &errs)
 	cfg.App.Env = stringDefault("APP_ENV", "local")
 
-	cfg.DB.Host = requiredString("DB_HOST", &errs)
-	cfg.DB.Port = intDefault("DB_PORT", 5432, &errs)
-	cfg.DB.User = requiredString("DB_USER", &errs)
-	cfg.DB.Password = requiredString("DB_PASSWORD", &errs)
-	cfg.DB.Name = requiredString("DB_NAME", &errs)
-	cfg.DB.SSLMode = stringDefault("DB_SSLMODE", "disable")
-	cfg.DB.MaxOpenConns = intDefault("DB_MAX_OPEN_CONNS", 25, &errs)
-	cfg.DB.MaxIdleConns = intDefault("DB_MAX_IDLE_CONNS", 25, &errs)
+	cfg.Postgres.Host = requiredString("POSTGRES_HOST", &errs)
+	cfg.Postgres.Port = intDefault("POSTGRES_PORT", 5432, &errs)
+	cfg.Postgres.User = requiredString("POSTGRES_USER", &errs)
+	cfg.Postgres.Password = requiredString("POSTGRES_PASSWORD", &errs)
+	cfg.Postgres.Database = requiredString("POSTGRES_DATABASE", &errs)
+	cfg.Postgres.SSLMode = stringDefault("POSTGRES_SSL_MODE", "disable")
+	cfg.Postgres.MaxConns = intDefault("POSTGRES_MAX_CONNS", 25, &errs)
+	cfg.Postgres.MaxConnLifetime = durationDefault("POSTGRES_MAX_CONN_LIFETIME", 5*time.Minute, &errs)
+	cfg.Postgres.MaxConnIdleTime = durationDefault("POSTGRES_MAX_CONN_IDLE_TIME", 2*time.Minute, &errs)
 
 	cfg.HTTP.Addr = stringDefault("HTTP_ADDR", ":8080")
 	cfg.HTTP.ReadTimeout = durationDefault("HTTP_READ_TIMEOUT", 5*time.Second, &errs)
 	cfg.HTTP.WriteTimeout = durationDefault("HTTP_WRITE_TIMEOUT", 10*time.Second, &errs)
 	cfg.HTTP.ShutdownTimeout = durationDefault("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second, &errs)
 
-	cfg.Logger.Level = stringDefault("LOGGER_LEVEL", "info")
-	cfg.Logger.Format = stringDefault("LOGGER_FORMAT", "json")
+	cfg.Log.Level = stringDefault("LOG_LEVEL", "info")
+	cfg.Log.Format = stringDefault("LOG_FORMAT", "json")
 
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -82,4 +89,16 @@ func durationDefault(key string, defaultValue time.Duration, errs *[]error) time
 		return defaultValue
 	}
 	return d
+}
+
+func loadDotEnvIfPresent() error {
+	if _, err := os.Stat(".env"); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err := godotenv.Load(".env"); err != nil {
+		return fmt.Errorf("load .env: %w", err)
+	}
+
+	return nil
 }

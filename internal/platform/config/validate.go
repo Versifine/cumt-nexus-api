@@ -20,14 +20,14 @@ func validate(cfg *Config) error {
 	if cfg.HTTP.ReadTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("HTTP_READ_TIMEOUT must be > 0"))
 	}
-	if cfg.DB.MaxOpenConns <= 0 {
-		errs = append(errs, fmt.Errorf("DB_MAX_OPEN_CONNS must be > 0"))
+	if cfg.Postgres.MaxConns <= 0 {
+		errs = append(errs, fmt.Errorf("POSTGRES_MAX_CONNS must be > 0"))
 	}
-	if cfg.DB.MaxIdleConns < 0 {
-		errs = append(errs, fmt.Errorf("DB_MAX_IDLE_CONNS must be >= 0"))
+	if cfg.Postgres.MaxConnIdleTime < 0 {
+		errs = append(errs, fmt.Errorf("POSTGRES_MAX_CONN_IDLE_TIME must be >= 0"))
 	}
-	if cfg.DB.MaxIdleConns > cfg.DB.MaxOpenConns {
-		errs = append(errs, fmt.Errorf("DB_MAX_IDLE_CONNS cannot be greater than DB_MAX_OPEN_CONNS"))
+	if cfg.Postgres.MaxConnLifetime < 0 {
+		errs = append(errs, fmt.Errorf("POSTGRES_MAX_CONN_LIFETIME must be >= 0"))
 	}
 
 	if len(errs) > 0 {

@@ -1,0 +1,2 @@
+-- 000001_bootstrap.down.sql
+-- stage0 bootstrap rollback
