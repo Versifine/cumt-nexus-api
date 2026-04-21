@@ -3,24 +3,26 @@ package config
 import "time"
 
 type Config struct {
-	App    AppConfig
-	DB     DBConfig
-	HTTP   HTTPConfig
-	Logger LoggerConfig
+	App      AppConfig
+	Postgres PostgresConfig
+	HTTP     HTTPConfig
+	Log      LogConfig
 }
 type AppConfig struct {
 	Name string
 	Env  string
 }
-type DBConfig struct {
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	Name         string
-	SSLMode      string
-	MaxOpenConns int
-	MaxIdleConns int
+type PostgresConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Database string
+	SSLMode  string
+
+	MaxConns        int
+	MaxConnLifetime time.Duration
+	MaxConnIdleTime time.Duration
 }
 type HTTPConfig struct {
 	Addr            string
@@ -28,7 +30,7 @@ type HTTPConfig struct {
 	WriteTimeout    time.Duration
 	ShutdownTimeout time.Duration
 }
-type LoggerConfig struct {
+type LogConfig struct {
 	Level  string
 	Format string
 }
