@@ -58,24 +58,66 @@ func TestRecoveryMiddlewareReturnsInternalError(t *testing.T) {
 	}
 }
 
-func TestErrorMiddlewareMapsAppError(t *testing.T) {
+func TestErrorMiddlewareMapsAppErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := newMiddlewareTestRouter()
-	router.GET("/missing", func(c *gin.Context) {
-		_ = c.Error(apperr.New(apperr.CodeNotFound, "post not found"))
-		c.Abort()
-	})
-
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/missing", nil)
-
-	router.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("expected status %d, got %d", http.StatusNotFound, recorder.Code)
+	tests := []struct {
+		name       string
+		code       apperr.Code
+		message    string
+		wantStatus int
+	}{
+		{
+			name:       "invalid argument",
+			code:       apperr.CodeInvalidArgument,
+			message:    "invalid request",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "unauthenticated",
+			code:       apperr.CodeUnauthenticated,
+			message:    "login required",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "forbidden",
+			code:       apperr.CodeForbidden,
+			message:    "permission denied",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "not found",
+			code:       apperr.CodeNotFound,
+			message:    "post not found",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "conflict",
+			code:       apperr.CodeConflict,
+			message:    "state conflict",
+			wantStatus: http.StatusConflict,
+		},
 	}
-	assertErrorResponse(t, recorder, string(apperr.CodeNotFound), "post not found")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := newMiddlewareTestRouter()
+			router.GET("/error", func(c *gin.Context) {
+				_ = c.Error(apperr.New(tt.code, tt.message))
+				c.Abort()
+			})
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/error", nil)
+
+			router.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("expected status %d, got %d", tt.wantStatus, recorder.Code)
+			}
+			assertErrorResponse(t, recorder, string(tt.code), tt.message)
+		})
+	}
 }
 
 func TestErrorMiddlewareHidesUnknownError(t *testing.T) {

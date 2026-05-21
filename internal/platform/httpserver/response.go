@@ -15,7 +15,7 @@ func errorResponse(err *apperr.Error) ErrorResponse {
 	return ErrorResponse{
 		Error: ErrorBody{
 			Code:    string(err.Code()),
-			Message: err.Error(),
+			Message: err.Message(),
 		},
 	}
 }
