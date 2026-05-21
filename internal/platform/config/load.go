@@ -20,6 +20,7 @@ func Load() (*Config, error) {
 	var errs []error
 	cfg.App.Name = requiredString("APP_NAME", &errs)
 	cfg.App.Env = stringDefault("APP_ENV", "local")
+	cfg.App.StartupTimeout = durationDefault("APP_STARTUP_TIMEOUT", 10*time.Second, &errs)
 
 	cfg.Postgres.Host = requiredString("POSTGRES_HOST", &errs)
 	cfg.Postgres.Port = intDefault("POSTGRES_PORT", 5432, &errs)

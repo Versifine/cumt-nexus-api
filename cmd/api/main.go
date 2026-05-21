@@ -35,7 +35,7 @@ func main() {
 }
 
 func run(cfg *config.Config, log *slog.Logger) error {
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.App.StartupTimeout)
 	defer cancel()
 
 	pool, err := openDB(ctx, cfg.Postgres)

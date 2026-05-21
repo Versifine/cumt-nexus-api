@@ -13,6 +13,9 @@ func validate(cfg *Config) error {
 	default:
 		errs = append(errs, fmt.Errorf("APP_ENV must be one of local/dev/test/prod"))
 	}
+	if cfg.App.StartupTimeout <= 0 {
+		errs = append(errs, fmt.Errorf("APP_STARTUP_TIMEOUT must be > 0"))
+	}
 	switch cfg.Log.Level {
 	case "debug", "info", "warn", "error":
 	default:

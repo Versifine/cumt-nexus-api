@@ -9,8 +9,9 @@ type Config struct {
 	Log      LogConfig
 }
 type AppConfig struct {
-	Name string
-	Env  string
+	Name           string
+	Env            string
+	StartupTimeout time.Duration
 }
 type PostgresConfig struct {
 	Host     string
