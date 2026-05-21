@@ -3,6 +3,8 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +17,7 @@ import (
 func TestNewRouterHealthz(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter()
+	router := NewRouter(newDiscardLogger())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 
@@ -149,6 +151,10 @@ func newMiddlewareTestRouter() *gin.Engine {
 	router.Use(RecoveryMiddleware())
 	router.Use(ErrorMiddleware())
 	return router
+}
+
+func newDiscardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func assertErrorResponse(t *testing.T, recorder *httptest.ResponseRecorder, wantCode string, wantMessage string) {

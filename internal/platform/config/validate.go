@@ -13,6 +13,16 @@ func validate(cfg *Config) error {
 	default:
 		errs = append(errs, fmt.Errorf("APP_ENV must be one of local/dev/test/prod"))
 	}
+	switch cfg.Log.Level {
+	case "debug", "info", "warn", "error":
+	default:
+		errs = append(errs, fmt.Errorf("LOG_LEVEL must be one of debug/info/warn/error"))
+	}
+	switch cfg.Log.Format {
+	case "json", "text":
+	default:
+		errs = append(errs, fmt.Errorf("LOG_FORMAT must be one of json/text"))
+	}
 
 	if cfg.HTTP.Addr == "" {
 		errs = append(errs, fmt.Errorf("HTTP_ADDR cannot be empty"))
