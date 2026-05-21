@@ -40,7 +40,7 @@ func TestNewRouterHealthz(t *testing.T) {
 func TestRecoveryMiddlewareReturnsInternalError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := newMiddlewareTestRouter()
+	router := newMiddlewareTestRouter(newDiscardLogger())
 	router.GET("/panic", func(c *gin.Context) {
 		panic("secret panic detail")
 	})
@@ -103,7 +103,7 @@ func TestErrorMiddlewareMapsAppErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := newMiddlewareTestRouter()
+			router := newMiddlewareTestRouter(newDiscardLogger())
 			router.GET("/error", func(c *gin.Context) {
 				_ = c.Error(apperr.New(tt.code, tt.message))
 				c.Abort()
@@ -125,7 +125,7 @@ func TestErrorMiddlewareMapsAppErrors(t *testing.T) {
 func TestErrorMiddlewareHidesUnknownError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := newMiddlewareTestRouter()
+	router := newMiddlewareTestRouter(newDiscardLogger())
 	router.GET("/unknown", func(c *gin.Context) {
 		_ = c.Error(errors.New("database password leaked"))
 		c.Abort()
@@ -146,9 +146,9 @@ func TestErrorMiddlewareHidesUnknownError(t *testing.T) {
 	}
 }
 
-func newMiddlewareTestRouter() *gin.Engine {
+func newMiddlewareTestRouter(log *slog.Logger) *gin.Engine {
 	router := gin.New()
-	router.Use(RecoveryMiddleware())
+	router.Use(RecoveryMiddleware(log))
 	router.Use(ErrorMiddleware())
 	return router
 }

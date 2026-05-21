@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -11,15 +12,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func RecoveryMiddleware() gin.HandlerFunc {
+func RecoveryMiddleware(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				log.Error("panic recovered",
+					"request_id", RequestID(c),
+					"method", c.Request.Method,
+					"path", c.Request.URL.Path,
+					"status", http.StatusInternalServerError,
+					"panic", recovered,
+				)
 				if c.Writer.Written() {
 					c.Abort()
 					return
 				}
-				writeError(c, apperr.New(apperr.CodeInternal, "internal server error"))
+				err := apperr.New(apperr.CodeInternal, "internal server error")
+				writeError(c, err)
+
 				c.Abort()
 			}
 		}()
@@ -46,13 +56,13 @@ func ErrorMiddleware() gin.HandlerFunc {
 	}
 }
 
-func RequestLoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
+func RequestLoggerMiddleware(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
 		duration := time.Since(start)
 
-		logger.Info(
+		log.Info(
 			"http request",
 			"request_id", RequestID(c),
 			"method", c.Request.Method,
