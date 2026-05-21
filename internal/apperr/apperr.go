@@ -20,6 +20,10 @@ func (e *Error) Error() string {
 	return e.message
 }
 
+func (e *Error) Message() string {
+	return e.message
+}
+
 func (e *Error) Code() Code {
 	return e.code
 }
