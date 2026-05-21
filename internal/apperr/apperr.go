@@ -24,7 +24,7 @@ func (e *Error) Code() Code {
 	return e.code
 }
 
-func (e *Error) New(code Code, message string) error {
+func New(code Code, message string) error {
 	return &Error{
 		code:    code,
 		message: message,

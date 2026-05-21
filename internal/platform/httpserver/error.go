@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func writeErrpr(c *gin.Context, err error) {
+func writeError(c *gin.Context, err error) {
 	c.JSON(mapError(err))
 }
 
