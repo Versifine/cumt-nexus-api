@@ -59,8 +59,8 @@ func validate(cfg *Config) error {
 	if cfg.Auth.TokenSecret == "" {
 		errs = append(errs, fmt.Errorf("AUTH_TOKEN_SECRET cannot be empty"))
 	}
-	if cfg.Auth.AccessTokenTTL < 0 {
-		errs = append(errs, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be >= 0"))
+	if cfg.Auth.AccessTokenTTL <= 0 {
+		errs = append(errs, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be > 0"))
 	}
 
 	if len(errs) > 0 {

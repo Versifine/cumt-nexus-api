@@ -40,5 +40,5 @@ type CacheConfig struct {
 }
 type AuthConfig struct {
 	TokenSecret    string
-	AccessTokenTTL int
+	AccessTokenTTL time.Duration
 }
