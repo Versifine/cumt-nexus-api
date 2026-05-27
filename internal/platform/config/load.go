@@ -40,6 +40,9 @@ func Load() (*Config, error) {
 	cfg.Log.Level = stringDefault("LOG_LEVEL", "info")
 	cfg.Log.Format = stringDefault("LOG_FORMAT", "json")
 
+	cfg.Auth.TokenSecret = requiredString("AUTH_TOKEN_SECRET", &errs)
+	cfg.Auth.AccessTokenTTL = intDefault("AUTH_ACCESS_TOKEN_TTL", 24, &errs)
+
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
