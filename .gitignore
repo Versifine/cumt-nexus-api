@@ -51,3 +51,6 @@ TASKS.md
 # OS files
 .DS_Store
 Thumbs.db
+
+.tmp/*
+.tmp

@@ -1,0 +1,2 @@
+-- 000001_bootstrap.up.sql
+-- stage0 bootstrap migration
