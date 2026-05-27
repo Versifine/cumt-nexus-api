@@ -66,9 +66,13 @@ Copy-Item .env.example .env
 当前最小必需配置见 [`.env.example`](./.env.example)，包括：
 
 - `APP_NAME`
+- `APP_ENV`
+- `APP_STARTUP_TIMEOUT`
 - `POSTGRES_*`
 - `HTTP_*`
 - `LOG_*`
+
+内部配置项说明见 [`docs/internal/engineering/configuration.md`](./docs/internal/engineering/configuration.md)。
 
 ### 启动 PostgreSQL
 
@@ -112,13 +116,16 @@ go run ./cmd/migrate version
 go run ./cmd/migrate down
 ```
 
-### 验证数据库连通性
+### 启动 API 服务
 
-当前 `cmd/api` 还不是完整 HTTP 服务入口，现阶段主要用于：
+当前 `cmd/api` 是阶段 0 的 API 服务入口，启动时会：
 
 - 加载配置
 - 初始化 PostgreSQL 连接池
 - 执行数据库连通性检查
+- 初始化结构化日志
+- 启动 HTTP 服务
+- 响应 `GET /healthz`
 
 执行：
 
@@ -126,13 +133,25 @@ go run ./cmd/migrate down
 go run ./cmd/api
 ```
 
-如果配置和数据库都正常，当前会输出数据库连接成功信息。
+如果配置和数据库都正常，服务会监听 `.env` 中的 `HTTP_ADDR`，默认是 `:8080`。
+
+健康检查：
+
+```bash
+curl http://localhost:8080/healthz
+```
+
+预期响应：
+
+```json
+{"status":"ok"}
+```
 
 ### 当前限制
 
-- 当前阶段尚未完成 Gin HTTP 服务骨架
-- `/healthz` 还未接入
-- `cmd/api` 目前不会常驻启动服务，只做启动期基础设施检查
+- `/healthz` 当前只表示进程存活，不做数据库 readiness 检查
+- 当前还没有业务 API
+- 本地运行文档和完整冒烟检查将在 T0-007 收口
 
 ## 测试说明
 
