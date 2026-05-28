@@ -9,11 +9,17 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	authhttp "github.com/Versifine/cumt-nexus-api/internal/auth/delivery/http"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/password"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/token"
+	authusecase "github.com/Versifine/cumt-nexus-api/internal/auth/usecase"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
 	loggerpkg "github.com/Versifine/cumt-nexus-api/internal/platform/logger"
+	userrepository "github.com/Versifine/cumt-nexus-api/internal/user/repository"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -44,8 +50,14 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	}
 	defer db.Close(pool)
 	log.Info("database connected")
+	userRepo := userrepository.NewPostgresUserRepository(pool)
+	passwordHasher := password.NewBcryptHasher()
+	tokenIssuer := token.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.Auth.AccessTokenTTL)
+	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
+	authHandler := authhttp.NewHandler(registerUC)
 
 	router := httpserver.NewRouter(log)
+	authhttp.RegisterRoutes(router.Group("/api/v1/auth"), authHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
@@ -56,6 +57,24 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Version: %d, Dirty: %t\n", version, dirty)
+	case "force":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: go run ./cmd/migrate force <version>")
+			os.Exit(1)
+		}
+		version, err := strconv.Atoi(os.Args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid version %q: %v\n", os.Args[2], err)
+			os.Exit(1)
+		}
+
+		if err := m.Force(version); err != nil {
+			fmt.Fprintf(os.Stderr, "Error forcing migration version: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Forced migration version to %d\n", version)
+
 	default:
 		usage()
 		os.Exit(1)
@@ -64,5 +83,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: go run ./cmd/migrate [up|down|version]")
+	fmt.Fprintln(os.Stderr, "usage: go run ./cmd/migrate [up|down|version|force <version>]")
 }

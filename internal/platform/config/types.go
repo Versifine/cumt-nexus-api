@@ -7,6 +7,7 @@ type Config struct {
 	Postgres PostgresConfig
 	HTTP     HTTPConfig
 	Log      LogConfig
+	Auth     AuthConfig
 }
 type AppConfig struct {
 	Name           string
@@ -38,4 +39,6 @@ type LogConfig struct {
 type CacheConfig struct {
 }
 type AuthConfig struct {
+	TokenSecret    string
+	AccessTokenTTL time.Duration
 }
