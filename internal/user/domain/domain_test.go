@@ -45,10 +45,10 @@ func TestNewUsername(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "normalizes trim and case", raw: " Alice_123 ", want: "alice_123"},
-		{name: "allows max length", raw: strings.Repeat("a", 20), want: strings.Repeat("a", 20)},
+		{name: "allows max length", raw: strings.Repeat("a", 32), want: strings.Repeat("a", 32)},
 		{name: "rejects empty", raw: "   ", wantErr: true},
 		{name: "rejects too short", raw: "ab", wantErr: true},
-		{name: "rejects too long", raw: strings.Repeat("a", 21), wantErr: true},
+		{name: "rejects too long", raw: strings.Repeat("a", 33), wantErr: true},
 		{name: "rejects illegal character", raw: "alice!", wantErr: true},
 	}
 
