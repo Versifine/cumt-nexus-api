@@ -44,7 +44,6 @@ func (ur *PostgresUserRepository) Create(ctx context.Context, user domain.User) 
 		user.CreatedAt(),
 		user.UpdatedAt(),
 	)
-	//错误判断和映射怎么写?
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
@@ -54,7 +53,7 @@ func (ur *PostgresUserRepository) Create(ctx context.Context, user domain.User) 
 		}
 		return fmt.Errorf("create user: %w", err)
 	}
-	return err
+	return nil
 }
 func (ur *PostgresUserRepository) FindByID(ctx context.Context, id domain.UserID) (*domain.User, error) {
 	const query = `
@@ -133,7 +132,7 @@ func scanUser(row pgx.Row) (*domain.User, error) {
 		return nil, fmt.Errorf("rehydrate user status: %v", err)
 	}
 
-	return domain.RehydrateUser(
+	user, err := domain.RehydrateUser(
 		userID,
 		username,
 		passwordHash,
@@ -141,4 +140,9 @@ func scanUser(row pgx.Row) (*domain.User, error) {
 		createdAt,
 		updatedAt,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate user: %v", err)
+	}
+
+	return user, nil
 }

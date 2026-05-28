@@ -16,7 +16,6 @@ func (p PasswordHash) Raw() string {
 	return string(p)
 }
 
-// 究竟要不要trim空格?我倾向不trim,但是怎么判断空密码?
 func NewPlainPassword(raw string) (PlainPassword, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", apperr.New(apperr.CodeInvalidArgument, "password is required")
@@ -28,7 +27,7 @@ func NewPlainPassword(raw string) (PlainPassword, error) {
 }
 
 func NewPasswordHash(hash string) (PasswordHash, error) {
-	if hash == "" {
+	if strings.TrimSpace(hash) == "" {
 		return "", apperr.New(apperr.CodeInvalidArgument, "password hash can't be empty")
 	}
 

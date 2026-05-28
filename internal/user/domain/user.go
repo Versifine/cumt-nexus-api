@@ -15,7 +15,6 @@ type User struct {
 	updatedAt    time.Time
 }
 
-// 这里要不要做检验???
 func NewUser(id UserID, username Username, passwordHash PasswordHash, now time.Time) (*User, error) {
 	if now.IsZero() {
 		return nil, apperr.New(apperr.CodeInvalidArgument, "user created time can't be zero")

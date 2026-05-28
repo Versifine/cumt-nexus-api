@@ -1,8 +1,6 @@
 package domain
 
-import (
-	"errors"
-)
+import "github.com/Versifine/cumt-nexus-api/internal/apperr"
 
 type UserStatus string
 
@@ -22,7 +20,7 @@ func NewUserStatus(status string) (UserStatus, error) {
 	case "disabled":
 		return disabled, nil
 	default:
-		return "", errors.New("invalid status")
+		return "", apperr.New(apperr.CodeInvalidArgument, "invalid user status")
 	}
 }
 
