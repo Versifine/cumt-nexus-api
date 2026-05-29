@@ -1,62 +1,50 @@
 # CUMT Nexus API
 
-`cumt-nexus-api` 是一个社区内容平台后端项目。
-
-当前仓库已完成阶段 0 项目底座，当前已明确的基础方向如下：
-
-- 技术栈以 Go 为主
-- 架构采用模块化单体
-- 主数据库使用 PostgreSQL
+`cumt-nexus-api` 是一个社区内容平台后端。当前采用 Go + Gin + PostgreSQL，架构形态是模块化单体。
 
 ## 当前状态
 
-目前仓库已经具备：
+阶段：`阶段 1 认证与用户基础闭环`
 
-- Go 项目骨架
+已具备：
+
 - 配置加载与校验
-- PostgreSQL 连接初始化
+- PostgreSQL 连接池初始化
 - migration 执行入口
-- HTTP 服务启动链路
-- `/healthz` 健康检查
-- 统一错误响应
-- recovery、request id 和请求日志中间件
+- HTTP 服务启动、优雅关闭和 `/healthz`
+- 统一错误响应、recovery、request id、请求日志
+- 用户领域模型、密码哈希、用户仓储
+- `POST /api/v1/auth/register`
+- JWT access token 签发
 
-## 近期目标
+下一步：
 
-下一阶段聚焦认证与用户基础闭环，包括：
-
-- 用户注册
-- 用户登录
-- 密码哈希与校验
-- 访问凭证签发与校验
+- `POST /api/v1/auth/login`
 - 认证中间件
-- 当前用户接口 `GET /me`
+- `GET /api/v1/me`
 
-## 目录说明
+## 接口
 
-当前关键目录约定如下：
+当前可用接口：
 
-- `cmd/`：程序入口与依赖组装
-- `internal/`：业务模块与平台基础设施
-- `docs/public/`：对外公开的说明文档
-- `docs/internal/`：内部设计与规划文档
-- `pkg/`：无业务语义的公共工具包
+```text
+GET  /healthz
+POST /api/v1/auth/register
+```
 
-## 本地开发
+注册请求：
 
-以下命令默认都在仓库根目录执行。
+```bash
+curl -i -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"alice\",\"password\":\"password123\"}"
+```
 
-### 前置依赖
+成功响应返回 `access_token`、`token_type`、`expires_in` 和用户公开信息。响应不会包含 `password_hash`。
 
-- Go
-- Docker
-- Docker Compose
+## 本地运行
 
-### 环境变量
-
-本地开发使用 `.env` 文件，生产环境仍以真实环境变量为准。
-
-先复制示例配置：
+### 1. 准备配置
 
 ```bash
 cp .env.example .env
@@ -68,104 +56,66 @@ Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-当前最小必需配置见 [`.env.example`](./.env.example)，包括：
-
-- `APP_NAME`
-- `APP_ENV`
-- `APP_STARTUP_TIMEOUT`
-- `POSTGRES_*`
-- `HTTP_*`
-- `LOG_*`
-
-内部配置项说明见 [`docs/internal/engineering/configuration.md`](./docs/internal/engineering/configuration.md)。
-
-### 启动 PostgreSQL
-
-项目根目录提供了 [compose.yaml](./compose.yaml)，当前只用于启动本地 PostgreSQL：
+### 2. 启动 PostgreSQL
 
 ```bash
 docker compose up -d postgres
 ```
 
-查看状态：
-
-```bash
-docker compose ps
-```
-
-查看日志：
-
-```bash
-docker compose logs -f postgres
-```
-
-### 执行 migration
-
-当前 migration 入口为 `cmd/migrate`，SQL 文件位于 `migrations/` 目录。
-
-执行升级：
+### 3. 执行 migration
 
 ```bash
 go run ./cmd/migrate up
 ```
 
-查看当前版本：
+查看版本：
 
 ```bash
 go run ./cmd/migrate version
 ```
 
-执行回滚：
-
-```bash
-go run ./cmd/migrate down
-```
-
-### 启动 API 服务
-
-当前 `cmd/api` 是阶段 0 的 API 服务入口，启动时会：
-
-- 加载配置
-- 初始化 PostgreSQL 连接池
-- 执行数据库连通性检查
-- 初始化结构化日志
-- 启动 HTTP 服务
-- 响应 `GET /healthz`
-
-执行：
+### 4. 启动 API
 
 ```bash
 go run ./cmd/api
 ```
 
-如果配置和数据库都正常，服务会监听 `.env` 中的 `HTTP_ADDR`，默认是 `:8080`。
+默认监听 `.env` 中的 `HTTP_ADDR`，当前示例配置是 `:8080`。
 
-健康检查：
+### 5. 健康检查
 
 ```bash
 curl http://localhost:8080/healthz
 ```
 
-预期响应：
+预期：
 
 ```json
 {"status":"ok"}
 ```
 
-### 当前限制
-
-- `/healthz` 当前只表示进程存活，不做数据库 readiness 检查
-- 当前还没有业务 API，下一阶段会先补认证与用户接口
-- 阶段 1 暂不计划第三方登录、复杂 RBAC、refresh token、多端会话和找回密码
-
-## 测试说明
-
-当前可执行的基础检查：
+## 测试
 
 ```bash
 go test ./...
+go build -buildvcs=false ./...
 ```
+
+普通 `go build ./...` 在部分本机环境可能受 Git safe.directory / VCS stamping 影响，可用 `-buildvcs=false` 验证代码构建。
+
+## 文档
+
+- `tasks.md`：当前阶段工单板
+- `docs/internal/README.md`：内部文档索引
+- `docs/internal/architecture/project-baseline.md`：架构基线
+- `docs/internal/architecture/auth-user-v1.md`：阶段 1 认证设计
+- `docs/internal/engineering/stage-1-auth-playbook.md`：阶段 1 认证实现手册
+
+## 当前限制
+
+- 阶段 1 暂不做 refresh token、多端会话、第三方登录、邮箱验证、找回密码和复杂 RBAC。
+- `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License
 
-本项目当前采用 [MIT License](./LICENSE)。
+[MIT License](./LICENSE)

@@ -1,4 +1,4 @@
-package usecase
+package authusecase
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
-	userdomain "github.com/Versifine/cumt-nexus-api/internal/user/domain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
 const testTokenTypeBearer = "Bearer"

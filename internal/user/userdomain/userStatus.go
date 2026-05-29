@@ -1,4 +1,4 @@
-package domain
+package userdomain
 
 import "github.com/Versifine/cumt-nexus-api/internal/apperr"
 

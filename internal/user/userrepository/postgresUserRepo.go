@@ -1,4 +1,4 @@
-package repository
+package userrepository
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
-	"github.com/Versifine/cumt-nexus-api/internal/user/domain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,7 +22,7 @@ func NewPostgresUserRepository(pool *pgxpool.Pool) *PostgresUserRepository {
 		pool: pool,
 	}
 }
-func (ur *PostgresUserRepository) Create(ctx context.Context, user domain.User) error {
+func (ur *PostgresUserRepository) Create(ctx context.Context, user userdomain.User) error {
 	const query = `
 		INSERT INTO users (
 			id,
@@ -55,7 +55,7 @@ func (ur *PostgresUserRepository) Create(ctx context.Context, user domain.User) 
 	}
 	return nil
 }
-func (ur *PostgresUserRepository) FindByID(ctx context.Context, id domain.UserID) (*domain.User, error) {
+func (ur *PostgresUserRepository) FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error) {
 	const query = `
 		SELECT 
 			id::text,
@@ -72,7 +72,7 @@ func (ur *PostgresUserRepository) FindByID(ctx context.Context, id domain.UserID
 
 	return scanUser(row)
 }
-func (ur *PostgresUserRepository) FindByUsername(ctx context.Context, username domain.Username) (*domain.User, error) {
+func (ur *PostgresUserRepository) FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error) {
 	const query = `
 		SELECT 
 			id::text,
@@ -90,7 +90,7 @@ func (ur *PostgresUserRepository) FindByUsername(ctx context.Context, username d
 	return scanUser(row)
 }
 
-func scanUser(row pgx.Row) (*domain.User, error) {
+func scanUser(row pgx.Row) (*userdomain.User, error) {
 	var rawID string
 	var rawUsername string
 	var rawPasswordHash string
@@ -112,27 +112,27 @@ func scanUser(row pgx.Row) (*domain.User, error) {
 		return nil, fmt.Errorf("scan user row: %w", err)
 	}
 
-	userID, err := domain.NewUserID(rawID)
+	userID, err := userdomain.NewUserID(rawID)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate user id: %v", err)
 	}
 
-	username, err := domain.NewUsername(rawUsername)
+	username, err := userdomain.NewUsername(rawUsername)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate username: %v", err)
 	}
 
-	passwordHash, err := domain.NewPasswordHash(rawPasswordHash)
+	passwordHash, err := userdomain.NewPasswordHash(rawPasswordHash)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate password hash: %v", err)
 	}
 
-	status, err := domain.NewUserStatus(rawStatus)
+	status, err := userdomain.NewUserStatus(rawStatus)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate user status: %v", err)
 	}
 
-	user, err := domain.RehydrateUser(
+	user, err := userdomain.RehydrateUser(
 		userID,
 		username,
 		passwordHash,

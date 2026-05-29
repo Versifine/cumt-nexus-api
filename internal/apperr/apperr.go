@@ -1,5 +1,9 @@
 package apperr
 
+import (
+	"errors"
+)
+
 type Code string
 
 const (
@@ -33,4 +37,11 @@ func New(code Code, message string) error {
 		code:    code,
 		message: message,
 	}
+}
+func IsCode(err error, code Code) bool {
+	var appErr *Error
+	if !errors.As(err, &appErr) {
+		return false
+	}
+	return appErr.Code() == code
 }

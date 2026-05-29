@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
-	authusecase "github.com/Versifine/cumt-nexus-api/internal/auth/usecase"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/authusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
 	"github.com/gin-gonic/gin"
 )

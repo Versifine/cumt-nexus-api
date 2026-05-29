@@ -1,9 +1,9 @@
-package password
+package authpassword
 
 import (
 	"testing"
 
-	userdomain "github.com/Versifine/cumt-nexus-api/internal/user/domain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"golang.org/x/crypto/bcrypt"
 )
 

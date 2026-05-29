@@ -5,13 +5,10 @@ import (
 	"net/http"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
-	authusecase "github.com/Versifine/cumt-nexus-api/internal/auth/usecase"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/authusecase"
 	"github.com/gin-gonic/gin"
 )
 
-type RegisterUseCase interface {
-	Register(ctx context.Context, input authusecase.RegisterInput) (authusecase.RegisterResult, error)
-}
 type Handler struct {
 	register RegisterUseCase
 }
@@ -20,6 +17,10 @@ func NewHandler(register RegisterUseCase) *Handler {
 	return &Handler{
 		register: register,
 	}
+}
+
+type RegisterUseCase interface {
+	Register(ctx context.Context, input authusecase.RegisterInput) (authusecase.RegisterResult, error)
 }
 
 func (h *Handler) Register(c *gin.Context) {
