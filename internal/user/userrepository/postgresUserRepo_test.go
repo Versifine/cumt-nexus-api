@@ -1,4 +1,4 @@
-package repository
+package userrepository
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
-	"github.com/Versifine/cumt-nexus-api/internal/user/domain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -59,7 +59,7 @@ func TestPostgresUserRepositoryDuplicateUsernameReturnsConflict(t *testing.T) {
 func TestPostgresUserRepositoryFindNotFound(t *testing.T) {
 	ctx, repo, _ := newTestRepository(t)
 
-	missingID := domain.NewGeneratedUserID()
+	missingID := userdomain.NewGeneratedUserID()
 	if _, err := repo.FindByID(ctx, missingID); !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for missing id, got %v", err)
 	}
@@ -138,33 +138,33 @@ func envInt(key string, fallback int) int {
 	return parsed
 }
 
-func newTestUser(t *testing.T, username domain.Username) *domain.User {
+func newTestUser(t *testing.T, username userdomain.Username) *userdomain.User {
 	t.Helper()
 
-	hash, err := domain.NewPasswordHash("hashed-password-" + username.String())
+	hash, err := userdomain.NewPasswordHash("hashed-password-" + username.String())
 	if err != nil {
 		t.Fatalf("NewPasswordHash returned error: %v", err)
 	}
 
-	user, err := domain.NewUser(domain.NewGeneratedUserID(), username, hash, time.Now().UTC().Truncate(time.Microsecond))
+	user, err := userdomain.NewUser(userdomain.NewGeneratedUserID(), username, hash, time.Now().UTC().Truncate(time.Microsecond))
 	if err != nil {
 		t.Fatalf("NewUser returned error: %v", err)
 	}
 	return user
 }
 
-func newTestUsername(t *testing.T) domain.Username {
+func newTestUsername(t *testing.T) userdomain.Username {
 	t.Helper()
 
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
-	username, err := domain.NewUsername("repo_" + suffix)
+	username, err := userdomain.NewUsername("repo_" + suffix)
 	if err != nil {
 		t.Fatalf("NewUsername returned error: %v", err)
 	}
 	return username
 }
 
-func cleanupUserByUsername(ctx context.Context, t *testing.T, pool *pgxpool.Pool, username domain.Username) {
+func cleanupUserByUsername(ctx context.Context, t *testing.T, pool *pgxpool.Pool, username userdomain.Username) {
 	t.Helper()
 
 	if _, err := pool.Exec(ctx, `DELETE FROM users WHERE username = $1`, username.String()); err != nil {
@@ -172,7 +172,7 @@ func cleanupUserByUsername(ctx context.Context, t *testing.T, pool *pgxpool.Pool
 	}
 }
 
-func assertSameUser(t *testing.T, got *domain.User, want *domain.User) {
+func assertSameUser(t *testing.T, got *userdomain.User, want *userdomain.User) {
 	t.Helper()
 
 	if got.ID() != want.ID() {

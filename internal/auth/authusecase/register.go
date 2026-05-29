@@ -1,11 +1,11 @@
-package usecase
+package authusecase
 
 import (
 	"context"
 	"fmt"
 	"time"
 
-	userdomain "github.com/Versifine/cumt-nexus-api/internal/user/domain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
 type UserCreator interface {

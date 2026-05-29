@@ -1,7 +1,7 @@
-package password
+package authpassword
 
 import (
-	userdomain "github.com/Versifine/cumt-nexus-api/internal/user/domain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
 type Hasher interface {
