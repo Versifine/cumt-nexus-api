@@ -54,7 +54,8 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
-	authHandler := authhttp.NewHandler(registerUC)
+	loginUC := authusecase.NewLoginUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
+	authHandler := authhttp.NewHandler(registerUC, loginUC)
 
 	router := httpserver.NewRouter(log)
 	authhttp.RegisterRoutes(router.Group("/api/v1/auth"), authHandler)

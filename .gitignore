@@ -38,6 +38,7 @@ vendor/
 # Local planning / assistant files
 AGENTS.md
 TASKS.md
+.ai/
 
 # Internal design docs
 /docs/internal/
