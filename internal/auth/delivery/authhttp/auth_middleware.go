@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/authcontext"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authtoken"
 	"github.com/gin-gonic/gin"
 )
@@ -26,7 +27,8 @@ func RequireAuth(parser AccessTokenParser) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		SetCurrentUserID(c, claims.UserID)
+		ctx := authcontext.WithCurrentUserID(c.Request.Context(), claims.UserID)
+		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
 }

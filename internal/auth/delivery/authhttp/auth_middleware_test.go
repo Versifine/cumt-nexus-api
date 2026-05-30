@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/authcontext"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authtoken"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
@@ -86,7 +87,7 @@ func TestRequireAuthStoresCurrentUserID(t *testing.T) {
 	router := newRequireAuthTestRouter(parser, func(c *gin.Context) {
 		nextCalled = true
 
-		gotUserID, ok := CurrentUserID(c)
+		gotUserID, ok := authcontext.CurrentUserID(c.Request.Context())
 		if !ok {
 			t.Fatal("expected current user id in context")
 		}

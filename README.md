@@ -15,13 +15,15 @@
 - 统一错误响应、recovery、request id、请求日志
 - 用户领域模型、密码哈希、用户仓储
 - `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
 - JWT access token 签发
+- Bearer JWT 认证中间件
+- `GET /api/v1/me`
 
 下一步：
 
-- `POST /api/v1/auth/login`
-- 认证中间件
-- `GET /api/v1/me`
+- 执行 `T1-007`：阶段 1 复盘与阶段 2 方向选择
+- 阶段 1 复盘后生成下一阶段工单
 
 ## 接口
 
@@ -30,6 +32,8 @@
 ```text
 GET  /healthz
 POST /api/v1/auth/register
+POST /api/v1/auth/login
+GET  /api/v1/me
 ```
 
 注册请求：
@@ -41,6 +45,36 @@ curl -i -X POST http://localhost:8080/api/v1/auth/register \
 ```
 
 成功响应返回 `access_token`、`token_type`、`expires_in` 和用户公开信息。响应不会包含 `password_hash`。
+
+登录请求：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"alice\",\"password\":\"password123\"}"
+```
+
+成功响应结构与注册一致。
+
+当前用户请求：
+
+```bash
+curl -i http://localhost:8080/api/v1/me \
+  -H "Authorization: Bearer <access_token>"
+```
+
+成功响应返回当前用户公开信息：
+
+```json
+{
+  "id": "uuid",
+  "username": "alice",
+  "status": "active",
+  "created_at": "2026-05-30T00:00:00Z"
+}
+```
+
+未带 token、token 格式错误、token 无效或 token 对应用户不存在时，统一返回 `401 unauthenticated`。
 
 ## 本地运行
 
@@ -114,6 +148,8 @@ go build -buildvcs=false ./...
 ## 当前限制
 
 - 阶段 1 暂不做 refresh token、多端会话、第三方登录、邮箱验证、找回密码和复杂 RBAC。
+- `/me` 只返回当前用户基础公开信息，不做资料编辑、头像、邮箱和权限列表。
+- 认证中间件只验证 Bearer access token 并写入当前用户 ID，不查询数据库。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License

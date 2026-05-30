@@ -19,7 +19,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/logger"
+	"github.com/Versifine/cumt-nexus-api/internal/user/delivery/userhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,10 +57,16 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
 	loginUC := authusecase.NewLoginUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
+	currentUserUC := userusecase.NewCurrentUserUseCase(userRepo)
 	authHandler := authhttp.NewHandler(registerUC, loginUC)
+	userHandler := userhttp.NewHandler(currentUserUC)
 
 	router := httpserver.NewRouter(log)
-	authhttp.RegisterRoutes(router.Group("/api/v1/auth"), authHandler)
+	apiV1 := router.Group("/api/v1")
+	authhttp.RegisterRoutes(apiV1.Group("/auth"), authHandler)
+	protectedV1 := apiV1.Group("")
+	protectedV1.Use(authhttp.RequireAuth(tokenIssuer))
+	userhttp.RegisterRoutes(protectedV1, userHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)
