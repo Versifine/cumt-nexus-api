@@ -20,6 +20,7 @@ type Handler struct {
 type PostUseCase interface {
 	PublishPost(ctx context.Context, input postusecase.PublishPostInput) (postusecase.PublishPostResult, error)
 	ListCommunityPosts(ctx context.Context, input postusecase.ListCommunityPostsInput) (postusecase.ListCommunityPostsResult, error)
+	ListLatestPosts(ctx context.Context, input postusecase.ListLatestPostsInput) (postusecase.ListLatestPostsResult, error)
 	GetPost(ctx context.Context, input postusecase.GetPostInput) (postusecase.GetPostResult, error)
 }
 
@@ -29,14 +30,18 @@ type publishPostRequest struct {
 }
 
 type postResponse struct {
-	ID          string    `json:"id"`
-	CommunityID string    `json:"community_id"`
-	AuthorID    string    `json:"author_id"`
-	Title       string    `json:"title"`
-	Body        string    `json:"body"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	CommunityID   string    `json:"community_id"`
+	AuthorID      string    `json:"author_id"`
+	Title         string    `json:"title"`
+	Body          string    `json:"body"`
+	Status        string    `json:"status"`
+	UpvoteCount   int       `json:"upvote_count"`
+	DownvoteCount int       `json:"downvote_count"`
+	Score         int       `json:"score"`
+	MyVote        int       `json:"my_vote"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type publishPostResponse struct {
@@ -62,6 +67,7 @@ func NewHandler(posts PostUseCase) *Handler {
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/communities/:slug/posts", handler.PublishPost)
 	group.GET("/communities/:slug/posts", handler.ListCommunityPosts)
+	group.GET("/posts", handler.ListLatestPosts)
 	group.GET("/posts/:id", handler.GetPost)
 }
 
@@ -98,6 +104,13 @@ func (h *Handler) PublishPost(c *gin.Context) {
 }
 
 func (h *Handler) ListCommunityPosts(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
 	limit, err := parseOptionalIntQuery(c, "limit")
 	if err != nil {
 		_ = c.Error(err)
@@ -113,6 +126,7 @@ func (h *Handler) ListCommunityPosts(c *gin.Context) {
 
 	result, err := h.posts.ListCommunityPosts(c.Request.Context(), postusecase.ListCommunityPostsInput{
 		CommunitySlug: c.Param("slug"),
+		ViewerID:      userID,
 		Limit:         limit,
 		Offset:        offset,
 	})
@@ -134,9 +148,61 @@ func (h *Handler) ListCommunityPosts(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+func (h *Handler) ListLatestPosts(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.posts.ListLatestPosts(c.Request.Context(), postusecase.ListLatestPostsInput{
+		ViewerID: userID,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityPostsResponse{
+		Posts:  make([]postResponse, 0, len(result.Posts)),
+		Limit:  result.Limit,
+		Offset: result.Offset,
+	}
+	for _, post := range result.Posts {
+		response.Posts = append(response.Posts, toPostResponse(post))
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 func (h *Handler) GetPost(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
 	result, err := h.posts.GetPost(c.Request.Context(), postusecase.GetPostInput{
-		PostID: c.Param("id"),
+		PostID:   c.Param("id"),
+		ViewerID: userID,
 	})
 	if err != nil {
 		_ = c.Error(err)
@@ -163,13 +229,17 @@ func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
 
 func toPostResponse(post postusecase.Post) postResponse {
 	return postResponse{
-		ID:          post.ID,
-		CommunityID: post.CommunityID,
-		AuthorID:    post.AuthorID,
-		Title:       post.Title,
-		Body:        post.Body,
-		Status:      post.Status,
-		CreatedAt:   post.CreatedAt,
-		UpdatedAt:   post.UpdatedAt,
+		ID:            post.ID,
+		CommunityID:   post.CommunityID,
+		AuthorID:      post.AuthorID,
+		Title:         post.Title,
+		Body:          post.Body,
+		Status:        post.Status,
+		UpvoteCount:   post.UpvoteCount,
+		DownvoteCount: post.DownvoteCount,
+		Score:         post.Score,
+		MyVote:        post.MyVote,
+		CreatedAt:     post.CreatedAt,
+		UpdatedAt:     post.UpdatedAt,
 	}
 }

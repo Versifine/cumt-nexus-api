@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 func validate(cfg *Config) error {
@@ -43,6 +44,11 @@ func validate(cfg *Config) error {
 	}
 	if cfg.HTTP.ReadTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("HTTP_READ_TIMEOUT must be > 0"))
+	}
+	for _, origin := range cfg.HTTP.CORSAllowedOrigins {
+		if strings.TrimSpace(origin) == "" {
+			errs = append(errs, fmt.Errorf("HTTP_CORS_ALLOWED_ORIGINS cannot contain empty origins"))
+		}
 	}
 	if cfg.Postgres.MaxConns <= 0 {
 		errs = append(errs, fmt.Errorf("POSTGRES_MAX_CONNS must be > 0"))

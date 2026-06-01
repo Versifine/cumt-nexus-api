@@ -11,6 +11,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
 
 func TestPublishPostCreatesVisiblePost(t *testing.T) {
@@ -102,22 +103,38 @@ func TestPublishPostPropagatesCommunityPermissionError(t *testing.T) {
 
 func TestListCommunityPostsNormalizesPagination(t *testing.T) {
 	communityID := communitydomain.NewGeneratedCommunityID()
+	viewerID := userdomain.NewGeneratedUserID()
+	authorID := userdomain.NewGeneratedUserID()
+	post := mustPost(t, communityID, authorID, "Hello", time.Now().UTC())
 	var gotLimit int
 	var gotOffset int
 	posts := &fakePostRepository{
 		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error) {
 			gotLimit = limit
 			gotOffset = offset
-			return []postdomain.Post{*mustPost(t, communityID, userdomain.NewGeneratedUserID(), "Hello", time.Now().UTC())}, nil
+			return []postdomain.Post{*post}, nil
 		},
 	}
 	communities := &fakeCommunityPolicy{
 		getResult: communityusecase.GetCommunityResult{Community: newCommunityDTO(communityID, "campus")},
 	}
-	uc := NewPostUseCase(posts, communities, time.Now)
+	votes := &fakeVoteRepository{
+		summaries: map[postdomain.PostID]votedomain.PostVoteSummary{
+			post.ID(): {
+				PostID:        post.ID(),
+				UpvoteCount:   2,
+				DownvoteCount: 1,
+			},
+		},
+		myVotes: map[postdomain.PostID]votedomain.VoteValue{
+			post.ID(): votedomain.VoteValueUp,
+		},
+	}
+	uc := NewPostUseCase(posts, communities, time.Now, votes)
 
 	result, err := uc.ListCommunityPosts(context.Background(), ListCommunityPostsInput{
 		CommunitySlug: "campus",
+		ViewerID:      viewerID,
 		Limit:         100,
 		Offset:        5,
 	})
@@ -133,6 +150,12 @@ func TestListCommunityPostsNormalizesPagination(t *testing.T) {
 	if len(result.Posts) != 1 {
 		t.Fatalf("expected one post, got %d", len(result.Posts))
 	}
+	if result.Posts[0].UpvoteCount != 2 || result.Posts[0].DownvoteCount != 1 || result.Posts[0].Score != 1 || result.Posts[0].MyVote != 1 {
+		t.Fatalf("unexpected vote view: %#v", result.Posts[0])
+	}
+	if !votes.summarizeCalled || !votes.findByUserCalled {
+		t.Fatal("expected vote summary and viewer vote lookups")
+	}
 }
 
 func TestListCommunityPostsRejectsInvalidPagination(t *testing.T) {
@@ -147,8 +170,58 @@ func TestListCommunityPostsRejectsInvalidPagination(t *testing.T) {
 	}
 }
 
+func TestListLatestPostsReturnsVoteView(t *testing.T) {
+	viewerID := userdomain.NewGeneratedUserID()
+	communityID := communitydomain.NewGeneratedCommunityID()
+	post := mustPost(t, communityID, userdomain.NewGeneratedUserID(), "Latest", time.Now().UTC())
+	var gotLimit int
+	var gotOffset int
+	posts := &fakePostRepository{
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
+			gotLimit = limit
+			gotOffset = offset
+			return []postdomain.Post{*post}, nil
+		},
+	}
+	votes := &fakeVoteRepository{
+		summaries: map[postdomain.PostID]votedomain.PostVoteSummary{
+			post.ID(): {
+				PostID:        post.ID(),
+				UpvoteCount:   4,
+				DownvoteCount: 2,
+			},
+		},
+		myVotes: map[postdomain.PostID]votedomain.VoteValue{
+			post.ID(): votedomain.VoteValueUp,
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now, votes)
+
+	result, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{
+		ViewerID: viewerID,
+		Limit:    100,
+		Offset:   3,
+	})
+	if err != nil {
+		t.Fatalf("ListLatestPosts returned error: %v", err)
+	}
+	if gotLimit != MaxPostListLimit || result.Limit != MaxPostListLimit {
+		t.Fatalf("expected clamped limit %d, got repo=%d result=%d", MaxPostListLimit, gotLimit, result.Limit)
+	}
+	if gotOffset != 3 || result.Offset != 3 {
+		t.Fatalf("expected offset 3, got repo=%d result=%d", gotOffset, result.Offset)
+	}
+	if len(result.Posts) != 1 {
+		t.Fatalf("expected one post, got %d", len(result.Posts))
+	}
+	if result.Posts[0].UpvoteCount != 4 || result.Posts[0].DownvoteCount != 2 || result.Posts[0].Score != 2 || result.Posts[0].MyVote != 1 {
+		t.Fatalf("unexpected vote view: %#v", result.Posts[0])
+	}
+}
+
 func TestGetPostReturnsVisiblePost(t *testing.T) {
 	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), userdomain.NewGeneratedUserID(), "Hello", time.Now().UTC())
+	viewerID := userdomain.NewGeneratedUserID()
 	posts := &fakePostRepository{
 		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
 			if id != post.ID() {
@@ -157,21 +230,59 @@ func TestGetPostReturnsVisiblePost(t *testing.T) {
 			return post, nil
 		},
 	}
-	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now)
+	votes := &fakeVoteRepository{
+		summaries: map[postdomain.PostID]votedomain.PostVoteSummary{
+			post.ID(): {
+				PostID:        post.ID(),
+				UpvoteCount:   3,
+				DownvoteCount: 1,
+			},
+		},
+		myVotes: map[postdomain.PostID]votedomain.VoteValue{
+			post.ID(): votedomain.VoteValueDown,
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now, votes)
 
-	result, err := uc.GetPost(context.Background(), GetPostInput{PostID: post.ID().String()})
+	result, err := uc.GetPost(context.Background(), GetPostInput{PostID: post.ID().String(), ViewerID: viewerID})
 	if err != nil {
 		t.Fatalf("GetPost returned error: %v", err)
 	}
 	if result.Post.ID != post.ID().String() {
 		t.Fatalf("expected post id %q, got %q", post.ID().String(), result.Post.ID)
 	}
+	if result.Post.UpvoteCount != 3 || result.Post.DownvoteCount != 1 || result.Post.Score != 2 || result.Post.MyVote != -1 {
+		t.Fatalf("unexpected vote view: %#v", result.Post)
+	}
+}
+
+func TestGetPostDefaultsEmptyVoteView(t *testing.T) {
+	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), userdomain.NewGeneratedUserID(), "Hello", time.Now().UTC())
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	votes := &fakeVoteRepository{}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now, votes)
+
+	result, err := uc.GetPost(context.Background(), GetPostInput{
+		PostID:   post.ID().String(),
+		ViewerID: userdomain.NewGeneratedUserID(),
+	})
+	if err != nil {
+		t.Fatalf("GetPost returned error: %v", err)
+	}
+	if result.Post.UpvoteCount != 0 || result.Post.DownvoteCount != 0 || result.Post.Score != 0 || result.Post.MyVote != 0 {
+		t.Fatalf("expected zero vote view, got %#v", result.Post)
+	}
 }
 
 type fakePostRepository struct {
-	createFunc                 func(ctx context.Context, post postdomain.Post) error
-	findVisibleByIDFunc        func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
-	listVisibleByCommunityFunc func(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error)
+	createFunc                         func(ctx context.Context, post postdomain.Post) error
+	findVisibleByIDFunc                func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
+	listVisibleByCommunityFunc         func(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error)
+	listVisibleInPublicCommunitiesFunc func(ctx context.Context, limit int, offset int) ([]postdomain.Post, error)
 }
 
 func (f *fakePostRepository) Create(ctx context.Context, post postdomain.Post) error {
@@ -193,6 +304,44 @@ func (f *fakePostRepository) ListVisibleByCommunity(ctx context.Context, communi
 		return f.listVisibleByCommunityFunc(ctx, communityID, limit, offset)
 	}
 	return nil, nil
+}
+
+func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
+	if f.listVisibleInPublicCommunitiesFunc != nil {
+		return f.listVisibleInPublicCommunitiesFunc(ctx, limit, offset)
+	}
+	return nil, nil
+}
+
+type fakeVoteRepository struct {
+	summarizeCalled  bool
+	findByUserCalled bool
+	summaries        map[postdomain.PostID]votedomain.PostVoteSummary
+	myVotes          map[postdomain.PostID]votedomain.VoteValue
+	summarizeErr     error
+	findByUserErr    error
+}
+
+func (f *fakeVoteRepository) SummarizeByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]votedomain.PostVoteSummary, error) {
+	f.summarizeCalled = true
+	if f.summarizeErr != nil {
+		return nil, f.summarizeErr
+	}
+	if f.summaries == nil {
+		return map[postdomain.PostID]votedomain.PostVoteSummary{}, nil
+	}
+	return f.summaries, nil
+}
+
+func (f *fakeVoteRepository) FindByPostIDsAndUser(ctx context.Context, postIDs []postdomain.PostID, userID userdomain.UserID) (map[postdomain.PostID]votedomain.VoteValue, error) {
+	f.findByUserCalled = true
+	if f.findByUserErr != nil {
+		return nil, f.findByUserErr
+	}
+	if f.myVotes == nil {
+		return map[postdomain.PostID]votedomain.VoteValue{}, nil
+	}
+	return f.myVotes, nil
 }
 
 type fakeCommunityPolicy struct {

@@ -69,6 +69,48 @@ func TestPostgresPostRepositoryCreateFindListAndNotFound(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryListVisibleInPublicCommunities(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "latest-"+randomSuffix())
+	otherCommunityID := insertTestCommunity(ctx, t, pool, authorID, "latest-"+randomSuffix())
+	suspendedCommunityID := insertTestCommunityWithStatus(ctx, t, pool, authorID, "latest-"+randomSuffix(), "suspended")
+
+	olderPost := mustPost(t, communityID, authorID, "Older latest", now)
+	newerPost := mustPost(t, otherCommunityID, authorID, "Newer latest", now.Add(time.Minute))
+	suspendedPost := mustPost(t, suspendedCommunityID, authorID, "Suspended latest", now.Add(2*time.Minute))
+	removedPost := mustPostWithStatus(t, communityID, authorID, "Removed latest", postdomain.PostStatusRemoved, now.Add(3*time.Minute))
+
+	for _, post := range []*postdomain.Post{olderPost, newerPost, suspendedPost, removedPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+
+	posts, err := repo.ListVisibleInPublicCommunities(ctx, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleInPublicCommunities returned error: %v", err)
+	}
+
+	var gotIDs []postdomain.PostID
+	for _, post := range posts {
+		if post.ID() == newerPost.ID() || post.ID() == olderPost.ID() || post.ID() == suspendedPost.ID() || post.ID() == removedPost.ID() {
+			gotIDs = append(gotIDs, post.ID())
+		}
+	}
+
+	if len(gotIDs) != 2 {
+		t.Fatalf("expected two visible public posts from this test, got %#v", gotIDs)
+	}
+	if gotIDs[0] != newerPost.ID() || gotIDs[1] != olderPost.ID() {
+		t.Fatalf("expected newest-first visible public posts, got %#v", gotIDs)
+	}
+}
+
 func TestPostgresPostRepositoryMapsForeignKeyFailure(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)
@@ -189,6 +231,10 @@ func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool) userd
 }
 
 func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, createdBy userdomain.UserID, rawSlug string) communitydomain.CommunityID {
+	return insertTestCommunityWithStatus(ctx, t, pool, createdBy, rawSlug, "active")
+}
+
+func insertTestCommunityWithStatus(ctx context.Context, t *testing.T, pool *pgxpool.Pool, createdBy userdomain.UserID, rawSlug string, status string) communitydomain.CommunityID {
 	t.Helper()
 
 	id := communitydomain.NewGeneratedCommunityID()
@@ -205,8 +251,8 @@ func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, 
 			created_at,
 			updated_at
 		)
-		VALUES ($1::uuid, $2, $3, '', 'user_created', 'active', 'public', $4::uuid, $5, $5)
-	`, id.String(), rawSlug, "Post Repo "+rawSlug, createdBy.String(), testNow())
+		VALUES ($1::uuid, $2, $3, '', 'user_created', $4, 'public', $5::uuid, $6, $6)
+	`, id.String(), rawSlug, "Post Repo "+rawSlug, status, createdBy.String(), testNow())
 	if err != nil {
 		t.Fatalf("insert test community: %v", err)
 	}
@@ -231,6 +277,10 @@ func cleanupPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id postd
 }
 
 func mustPost(t *testing.T, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, now time.Time) *postdomain.Post {
+	return mustPostWithStatus(t, communityID, authorID, title, postdomain.PostStatusVisible, now)
+}
+
+func mustPostWithStatus(t *testing.T, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, status postdomain.PostStatus, now time.Time) *postdomain.Post {
 	t.Helper()
 
 	postTitle, err := postdomain.NewPostTitle(title)
@@ -241,7 +291,7 @@ func mustPost(t *testing.T, communityID communitydomain.CommunityID, authorID us
 	if err != nil {
 		t.Fatalf("NewPostBody returned error: %v", err)
 	}
-	post, err := postdomain.NewPost(postdomain.NewGeneratedPostID(), communityID, authorID, postTitle, body, now)
+	post, err := postdomain.RehydratePost(postdomain.NewGeneratedPostID(), communityID, authorID, postTitle, body, status, now, now)
 	if err != nil {
 		t.Fatalf("NewPost returned error: %v", err)
 	}

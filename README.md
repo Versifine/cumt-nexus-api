@@ -4,9 +4,11 @@
 
 ## 当前状态
 
-阶段：`阶段 5 已完成`
+阶段：`阶段 8 审核台最小闭环`
 
-代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环，并完成阶段 5 完整真实冒烟、文档收口和最终 review packet。
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础，以及阶段 7 轻量举报与平台 staff 移除内容闭环。
+
+当前推进阶段 8：补齐平台 staff 的最小审核处理入口，包括举报列表、举报详情、dismiss 举报，以及基于举报移除目标内容。
 
 已具备：
 
@@ -37,10 +39,22 @@
 - 阶段 4 评论 schema、domain、repository
 - `POST /api/v1/posts/:id/comments`
 - `GET /api/v1/posts/:id/comments`
+- 阶段 6 帖子投票 schema、domain、repository
+- `PUT /api/v1/posts/:id/vote`
+- `DELETE /api/v1/posts/:id/vote`
+- `GET /api/v1/posts`
+- 阶段 7 举报和审核 schema、domain、repository
+- `POST /api/v1/posts/:id/reports`
+- `POST /api/v1/comments/:id/reports`
+- `POST /api/v1/posts/:id/moderation/remove`
+- `POST /api/v1/comments/:id/moderation/remove`
+- 移除内容和审核动作写入同一 PostgreSQL 事务
+- HTTP CORS 基础配置：`HTTP_CORS_ALLOWED_ORIGINS`
 
 下一步：
 
-- 下一阶段如继续推进，应新开产品语义阶段并优先明确范围；本目标不进入 feed、vote、moderation。
+- 阶段 8 正在推进审核台最小闭环；优先实现 staff 可操作的举报处理主链路。
+- 当前仍不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理、hot feed 或评论投票。
 
 ## 接口
 
@@ -58,9 +72,16 @@ POST /api/v1/community-applications/:id/approve
 POST /api/v1/community-applications/:id/reject
 POST /api/v1/communities/:slug/posts
 GET  /api/v1/communities/:slug/posts
+GET  /api/v1/posts
 GET  /api/v1/posts/:id
 POST /api/v1/posts/:id/comments
 GET  /api/v1/posts/:id/comments
+PUT  /api/v1/posts/:id/vote
+DELETE /api/v1/posts/:id/vote
+POST /api/v1/posts/:id/reports
+POST /api/v1/comments/:id/reports
+POST /api/v1/posts/:id/moderation/remove
+POST /api/v1/comments/:id/moderation/remove
 ```
 
 注册请求：
@@ -164,6 +185,15 @@ curl -i "http://localhost:8080/api/v1/communities/public/posts?limit=20&offset=0
   -H "Authorization: Bearer <access_token>"
 ```
 
+全站最新帖子流：
+
+```bash
+curl -i "http://localhost:8080/api/v1/posts?limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+帖子列表、帖子详情和全站最新流都会返回 `upvote_count`、`downvote_count`、`score`、`my_vote`。`my_vote` 为 `1`、`-1` 或 `0`。
+
 帖子详情：
 
 ```bash
@@ -185,6 +215,73 @@ curl -i -X POST http://localhost:8080/api/v1/posts/<post_id>/comments \
 ```bash
 curl -i "http://localhost:8080/api/v1/posts/<post_id>/comments?limit=20&offset=0" \
   -H "Authorization: Bearer <access_token>"
+```
+
+帖子 upvote：
+
+```bash
+curl -i -X PUT http://localhost:8080/api/v1/posts/<post_id>/vote \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"value\":1}"
+```
+
+帖子 downvote：
+
+```bash
+curl -i -X PUT http://localhost:8080/api/v1/posts/<post_id>/vote \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"value\":-1}"
+```
+
+取消帖子投票：
+
+```bash
+curl -i -X DELETE http://localhost:8080/api/v1/posts/<post_id>/vote \
+  -H "Authorization: Bearer <access_token>"
+```
+
+举报帖子：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/posts/<post_id>/reports \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"reason\":\"spam or abuse\"}"
+```
+
+举报评论：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/comments/<comment_id>/reports \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"reason\":\"spam or abuse\"}"
+```
+
+移除帖子：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/posts/<post_id>/moderation/remove \
+  -H "Authorization: Bearer <staff_access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"reason\":\"policy violation\"}"
+```
+
+移除评论：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/comments/<comment_id>/moderation/remove \
+  -H "Authorization: Bearer <staff_access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"reason\":\"policy violation\"}"
+```
+
+阶段 7 暂不提供 staff 管理接口。本地 demo 可以继续通过 SQL 设置平台 staff：
+
+```sql
+UPDATE users SET is_platform_staff = true WHERE username = 'reviewer';
 ```
 
 ## 本地运行
@@ -227,6 +324,14 @@ go run ./cmd/api
 
 默认监听 `.env` 中的 `HTTP_ADDR`，当前示例配置是 `:8080`。
 
+浏览器前端跨域访问可配置 `HTTP_CORS_ALLOWED_ORIGINS`，例如：
+
+```env
+HTTP_CORS_ALLOWED_ORIGINS=http://localhost:5173
+```
+
+多个 origin 用英文逗号分隔。空值表示不启用 CORS，`*` 表示允许任意来源。
+
 ### 5. 健康检查
 
 ```bash
@@ -264,8 +369,11 @@ go build -buildvcs=false ./...
 - `/me` 只返回当前用户基础公开信息，不做资料编辑、头像、邮箱和权限列表。
 - 认证中间件只验证 Bearer access token 并写入当前用户 ID，不查询数据库。
 - 阶段 2 已落地社区申请与审批闭环，但暂不做 staff 管理接口、申请列表、申请取消、私密社区、邀请制和复杂成员加入/退出流程。
-- 阶段 3 帖子主链路暂不做图片上传、标签、编辑、删除、草稿、vote、hot feed、全站 feed、搜索和审核台。
-- 阶段 4 评论主链路暂不做评论树优化、评论编辑、删除、投票、审核台和通知。
+- 阶段 3 帖子主链路暂不做图片上传、标签、编辑、删除、草稿、搜索和审核台。
+- 阶段 4 评论主链路暂不做评论树优化、评论编辑、删除、评论投票、审核台和通知。
+- 阶段 6 已完成帖子 upvote/downvote 和全站最新流；暂不做 hot feed、推荐排序、评论投票、投票通知和防刷策略。
+- 阶段 7 已完成轻量举报与平台 staff 移除内容闭环。
+- 阶段 8 正在推进审核台最小闭环；暂不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理或 target 内容预览增强。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License

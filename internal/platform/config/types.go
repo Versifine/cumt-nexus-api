@@ -27,10 +27,11 @@ type PostgresConfig struct {
 	MaxConnIdleTime time.Duration
 }
 type HTTPConfig struct {
-	Addr            string
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	ShutdownTimeout time.Duration
+	Addr               string
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	ShutdownTimeout    time.Duration
+	CORSAllowedOrigins []string
 }
 type LogConfig struct {
 	Level  string

@@ -11,13 +11,14 @@ import (
 	"testing"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/gin-gonic/gin"
 )
 
 func TestNewRouterHealthz(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(newDiscardLogger())
+	router := NewRouter(newDiscardLogger(), config.HTTPConfig{})
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 
@@ -143,6 +144,62 @@ func TestErrorMiddlewareHidesUnknownError(t *testing.T) {
 
 	if strings.Contains(recorder.Body.String(), "database password leaked") {
 		t.Fatal("response body leaked unknown error detail")
+	}
+}
+
+func TestCORSMiddlewareAllowsConfiguredOrigin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := NewRouter(newDiscardLogger(), config.HTTPConfig{
+		CORSAllowedOrigins: []string{"http://localhost:5173"},
+	})
+	router.GET("/cors-test", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/cors-test", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, recorder.Code)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Fatalf("expected allowed origin header, got %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != RequestIDHeader {
+		t.Fatalf("expected expose request id header, got %q", got)
+	}
+}
+
+func TestCORSMiddlewareHandlesPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := NewRouter(newDiscardLogger(), config.HTTPConfig{
+		CORSAllowedOrigins: []string{"*"},
+	})
+	router.OPTIONS("/cors-test", func(c *gin.Context) {
+		t.Fatal("preflight should be handled by cors middleware")
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodOptions, "/cors-test", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	request.Header.Set("Access-Control-Request-Method", http.MethodPut)
+	request.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, recorder.Code)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected wildcard origin header, got %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodPut) {
+		t.Fatalf("expected PUT in allow methods, got %q", got)
 	}
 }
 

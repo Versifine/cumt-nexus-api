@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
@@ -86,6 +87,51 @@ func RequestIDMiddleware() gin.HandlerFunc {
 		c.Header(RequestIDHeader, requestID)
 		c.Next()
 	}
+}
+
+func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
+	allowed := newOriginAllowList(allowedOrigins)
+
+	return func(c *gin.Context) {
+		origin := strings.TrimSpace(c.GetHeader("Origin"))
+		if origin == "" || len(allowed) == 0 {
+			c.Next()
+			return
+		}
+
+		if allowed["*"] || allowed[origin] {
+			c.Header("Access-Control-Allow-Origin", corsAllowOrigin(origin, allowed["*"]))
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+			c.Header("Access-Control-Expose-Headers", RequestIDHeader)
+			c.Header("Vary", "Origin")
+		}
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+func newOriginAllowList(origins []string) map[string]bool {
+	allowed := make(map[string]bool, len(origins))
+	for _, origin := range origins {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowed[origin] = true
+		}
+	}
+	return allowed
+}
+
+func corsAllowOrigin(origin string, allowWildcard bool) string {
+	if allowWildcard {
+		return "*"
+	}
+	return origin
 }
 
 func generateRequestID() string {
