@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-阶段：`阶段 5 已完成`
+阶段：`阶段 6 内容分发与投票基础`
 
-代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环，并完成阶段 5 完整真实冒烟、文档收口和最终 review packet。
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟，以及阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础。
 
 已具备：
 
@@ -37,10 +37,16 @@
 - 阶段 4 评论 schema、domain、repository
 - `POST /api/v1/posts/:id/comments`
 - `GET /api/v1/posts/:id/comments`
+- 阶段 6 帖子投票 schema、domain、repository
+- `PUT /api/v1/posts/:id/vote`
+- `DELETE /api/v1/posts/:id/vote`
+- `GET /api/v1/posts`
+- HTTP CORS 基础配置：`HTTP_CORS_ALLOWED_ORIGINS`
 
 下一步：
 
-- 下一阶段如继续推进，应新开产品语义阶段并优先明确范围；本目标不进入 feed、vote、moderation。
+- 阶段 6 已收口；下一阶段先讨论产品边界，再决定进入 hot feed、审核台、搜索或通知。
+- 当前仍不做 hot 排序、评论投票、审核台联动、通知或防刷策略。
 
 ## 接口
 
@@ -58,9 +64,12 @@ POST /api/v1/community-applications/:id/approve
 POST /api/v1/community-applications/:id/reject
 POST /api/v1/communities/:slug/posts
 GET  /api/v1/communities/:slug/posts
+GET  /api/v1/posts
 GET  /api/v1/posts/:id
 POST /api/v1/posts/:id/comments
 GET  /api/v1/posts/:id/comments
+PUT  /api/v1/posts/:id/vote
+DELETE /api/v1/posts/:id/vote
 ```
 
 注册请求：
@@ -164,6 +173,15 @@ curl -i "http://localhost:8080/api/v1/communities/public/posts?limit=20&offset=0
   -H "Authorization: Bearer <access_token>"
 ```
 
+全站最新帖子流：
+
+```bash
+curl -i "http://localhost:8080/api/v1/posts?limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+帖子列表、帖子详情和全站最新流都会返回 `upvote_count`、`downvote_count`、`score`、`my_vote`。`my_vote` 为 `1`、`-1` 或 `0`。
+
 帖子详情：
 
 ```bash
@@ -184,6 +202,31 @@ curl -i -X POST http://localhost:8080/api/v1/posts/<post_id>/comments \
 
 ```bash
 curl -i "http://localhost:8080/api/v1/posts/<post_id>/comments?limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+帖子 upvote：
+
+```bash
+curl -i -X PUT http://localhost:8080/api/v1/posts/<post_id>/vote \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"value\":1}"
+```
+
+帖子 downvote：
+
+```bash
+curl -i -X PUT http://localhost:8080/api/v1/posts/<post_id>/vote \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"value\":-1}"
+```
+
+取消帖子投票：
+
+```bash
+curl -i -X DELETE http://localhost:8080/api/v1/posts/<post_id>/vote \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -227,6 +270,14 @@ go run ./cmd/api
 
 默认监听 `.env` 中的 `HTTP_ADDR`，当前示例配置是 `:8080`。
 
+浏览器前端跨域访问可配置 `HTTP_CORS_ALLOWED_ORIGINS`，例如：
+
+```env
+HTTP_CORS_ALLOWED_ORIGINS=http://localhost:5173
+```
+
+多个 origin 用英文逗号分隔。空值表示不启用 CORS，`*` 表示允许任意来源。
+
 ### 5. 健康检查
 
 ```bash
@@ -264,8 +315,9 @@ go build -buildvcs=false ./...
 - `/me` 只返回当前用户基础公开信息，不做资料编辑、头像、邮箱和权限列表。
 - 认证中间件只验证 Bearer access token 并写入当前用户 ID，不查询数据库。
 - 阶段 2 已落地社区申请与审批闭环，但暂不做 staff 管理接口、申请列表、申请取消、私密社区、邀请制和复杂成员加入/退出流程。
-- 阶段 3 帖子主链路暂不做图片上传、标签、编辑、删除、草稿、vote、hot feed、全站 feed、搜索和审核台。
-- 阶段 4 评论主链路暂不做评论树优化、评论编辑、删除、投票、审核台和通知。
+- 阶段 3 帖子主链路暂不做图片上传、标签、编辑、删除、草稿、搜索和审核台。
+- 阶段 4 评论主链路暂不做评论树优化、评论编辑、删除、评论投票、审核台和通知。
+- 阶段 6 已进入帖子 upvote/downvote 和全站最新流；暂不做 hot feed、推荐排序、评论投票、投票通知、审核台联动和防刷策略。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License
