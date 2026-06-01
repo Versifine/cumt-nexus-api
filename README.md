@@ -4,7 +4,9 @@
 
 ## 当前状态
 
-阶段：`阶段 1 认证与用户基础闭环`
+阶段：`阶段 2 社区/板块基础管理`
+
+代码已完成阶段 1 认证与用户基础闭环，当前开始推进社区模块。
 
 已具备：
 
@@ -19,11 +21,13 @@
 - JWT access token 签发
 - Bearer JWT 认证中间件
 - `GET /api/v1/me`
+- 阶段 2 社区 schema migration
+- 社区领域模型与 PostgreSQL repository
 
 下一步：
 
-- 执行 `T1-007`：阶段 1 复盘与阶段 2 方向选择
-- 阶段 1 复盘后生成下一阶段工单
+- 执行 `T2-004`：公共总版与社区读取接口
+- 初始化公共总版并提供社区列表、社区详情读取能力
 
 ## 接口
 
@@ -143,6 +147,7 @@ go build -buildvcs=false ./...
 - `docs/internal/README.md`：内部文档索引
 - `docs/internal/architecture/project-baseline.md`：架构基线
 - `docs/internal/architecture/auth-user-v1.md`：阶段 1 认证设计
+- `docs/internal/architecture/community-v1.md`：V1 社区业务架构与阶段 2 社区边界
 - `docs/internal/engineering/stage-1-auth-playbook.md`：阶段 1 认证实现手册
 
 ## 当前限制
@@ -150,6 +155,7 @@ go build -buildvcs=false ./...
 - 阶段 1 暂不做 refresh token、多端会话、第三方登录、邮箱验证、找回密码和复杂 RBAC。
 - `/me` 只返回当前用户基础公开信息，不做资料编辑、头像、邮箱和权限列表。
 - 认证中间件只验证 Bearer access token 并写入当前用户 ID，不查询数据库。
+- 阶段 2 已落地社区 schema、domain 和 repository，但公共总版初始化、社区读取、申请和审批接口尚未实现。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License
