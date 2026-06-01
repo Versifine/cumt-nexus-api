@@ -11,6 +11,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
 
 const (
@@ -26,6 +27,7 @@ type CommunityPolicy interface {
 type PostUseCase struct {
 	posts       PostRepository
 	communities CommunityPolicy
+	votes       VoteRepository
 	now         func() time.Time
 }
 
@@ -38,12 +40,20 @@ type PublishPostInput struct {
 
 type ListCommunityPostsInput struct {
 	CommunitySlug string
+	ViewerID      userdomain.UserID
 	Limit         int
 	Offset        int
 }
 
+type ListLatestPostsInput struct {
+	ViewerID userdomain.UserID
+	Limit    int
+	Offset   int
+}
+
 type GetPostInput struct {
-	PostID string
+	PostID   string
+	ViewerID userdomain.UserID
 }
 
 type PublishPostResult struct {
@@ -56,29 +66,45 @@ type ListCommunityPostsResult struct {
 	Offset int
 }
 
+type ListLatestPostsResult struct {
+	Posts  []Post
+	Limit  int
+	Offset int
+}
+
 type GetPostResult struct {
 	Post Post
 }
 
 type Post struct {
-	ID          string
-	CommunityID string
-	AuthorID    string
-	Title       string
-	Body        string
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID            string
+	CommunityID   string
+	AuthorID      string
+	Title         string
+	Body          string
+	Status        string
+	UpvoteCount   int
+	DownvoteCount int
+	Score         int
+	MyVote        int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
-func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func() time.Time) *PostUseCase {
+func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func() time.Time, votes ...VoteRepository) *PostUseCase {
 	if now == nil {
 		now = time.Now
+	}
+
+	var voteRepo VoteRepository
+	if len(votes) > 0 {
+		voteRepo = votes[0]
 	}
 
 	return &PostUseCase{
 		posts:       posts,
 		communities: communities,
+		votes:       voteRepo,
 		now:         now,
 	}
 }
@@ -126,7 +152,7 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	}
 
 	return PublishPostResult{
-		Post: toPostDTO(*post),
+		Post: toPostDTO(*post, postVoteView{}),
 	}, nil
 }
 
@@ -157,8 +183,41 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 		Limit:  limit,
 		Offset: offset,
 	}
+	voteViews, err := uc.loadVoteViews(ctx, posts, input.ViewerID)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
+
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()]))
+	}
+
+	return result, nil
+}
+
+func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPostsInput) (ListLatestPostsResult, error) {
+	limit, offset, err := normalizePagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
+
+	posts, err := uc.posts.ListVisibleInPublicCommunities(ctx, limit, offset)
+	if err != nil {
+		return ListLatestPostsResult{}, fmt.Errorf("list latest posts: %w", err)
+	}
+
+	voteViews, err := uc.loadVoteViews(ctx, posts, input.ViewerID)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
+
+	result := ListLatestPostsResult{
+		Posts:  make([]Post, 0, len(posts)),
+		Limit:  limit,
+		Offset: offset,
+	}
+	for _, post := range posts {
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()]))
 	}
 
 	return result, nil
@@ -175,8 +234,13 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 		return GetPostResult{}, fmt.Errorf("find post: %w", err)
 	}
 
+	voteViews, err := uc.loadVoteViews(ctx, []postdomain.Post{*post}, input.ViewerID)
+	if err != nil {
+		return GetPostResult{}, err
+	}
+
 	return GetPostResult{
-		Post: toPostDTO(*post),
+		Post: toPostDTO(*post, voteViews[post.ID()]),
 	}, nil
 }
 
@@ -197,15 +261,66 @@ func normalizePagination(limit int, offset int) (int, int, error) {
 	return limit, offset, nil
 }
 
-func toPostDTO(post postdomain.Post) Post {
+type postVoteView struct {
+	upvoteCount   int
+	downvoteCount int
+	myVote        int
+}
+
+func (uc *PostUseCase) loadVoteViews(ctx context.Context, posts []postdomain.Post, viewerID userdomain.UserID) (map[postdomain.PostID]postVoteView, error) {
+	views := make(map[postdomain.PostID]postVoteView, len(posts))
+	if len(posts) == 0 || uc.votes == nil {
+		return views, nil
+	}
+
+	postIDs := make([]postdomain.PostID, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID())
+	}
+
+	summaries, err := uc.votes.SummarizeByPostIDs(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("summarize post votes: %w", err)
+	}
+
+	myVotes := map[postdomain.PostID]votedomain.VoteValue{}
+	if strings.TrimSpace(viewerID.String()) != "" {
+		myVotes, err = uc.votes.FindByPostIDsAndUser(ctx, postIDs, viewerID)
+		if err != nil {
+			return nil, fmt.Errorf("find post votes by viewer: %w", err)
+		}
+	}
+
+	for _, postID := range postIDs {
+		summary := summaries[postID]
+		myVote := 0
+		if value, ok := myVotes[postID]; ok {
+			myVote = value.Int()
+		}
+		views[postID] = postVoteView{
+			upvoteCount:   summary.UpvoteCount,
+			downvoteCount: summary.DownvoteCount,
+			myVote:        myVote,
+		}
+	}
+
+	return views, nil
+}
+
+func toPostDTO(post postdomain.Post, voteView postVoteView) Post {
+	score := voteView.upvoteCount - voteView.downvoteCount
 	return Post{
-		ID:          post.ID().String(),
-		CommunityID: post.CommunityID().String(),
-		AuthorID:    post.AuthorID().String(),
-		Title:       post.Title().String(),
-		Body:        post.Body().String(),
-		Status:      post.Status().String(),
-		CreatedAt:   post.CreatedAt(),
-		UpdatedAt:   post.UpdatedAt(),
+		ID:            post.ID().String(),
+		CommunityID:   post.CommunityID().String(),
+		AuthorID:      post.AuthorID().String(),
+		Title:         post.Title().String(),
+		Body:          post.Body().String(),
+		Status:        post.Status().String(),
+		UpvoteCount:   voteView.upvoteCount,
+		DownvoteCount: voteView.downvoteCount,
+		Score:         score,
+		MyVote:        voteView.myVote,
+		CreatedAt:     post.CreatedAt(),
+		UpdatedAt:     post.UpdatedAt(),
 	}
 }

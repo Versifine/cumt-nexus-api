@@ -130,6 +130,48 @@ func (repo *PostgresPostRepository) ListVisibleByCommunity(ctx context.Context, 
 	return posts, nil
 }
 
+func (repo *PostgresPostRepository) ListVisibleInPublicCommunities(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
+	const query = `
+		SELECT
+			posts.id::text,
+			posts.community_id::text,
+			posts.author_id::text,
+			posts.title,
+			posts.body,
+			posts.status,
+			posts.created_at,
+			posts.updated_at
+		FROM posts
+		INNER JOIN communities ON communities.id = posts.community_id
+		WHERE posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+		ORDER BY posts.created_at DESC, posts.id DESC
+		LIMIT $1
+		OFFSET $2
+	`
+
+	rows, err := repo.pool.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list visible posts in public communities: %w", err)
+	}
+	defer rows.Close()
+
+	var posts []postdomain.Post
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, *post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate visible posts in public communities: %w", err)
+	}
+
+	return posts, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

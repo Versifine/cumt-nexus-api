@@ -191,6 +191,10 @@ func (f *fakePostRepository) ListVisibleByCommunity(ctx context.Context, communi
 	return nil, nil
 }
 
+func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
+	return nil, nil
+}
+
 func mustPost(t *testing.T, now time.Time) *postdomain.Post {
 	t.Helper()
 
