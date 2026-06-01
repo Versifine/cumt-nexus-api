@@ -21,6 +21,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/community/delivery/communityhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/delivery/moderationhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
@@ -72,6 +75,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	postRepo := postrepository.NewPostgresPostRepository(pool)
 	commentRepo := commentrepository.NewPostgresCommentRepository(pool)
 	voteRepo := voterepository.NewPostgresPostVoteRepository(pool)
+	moderationRepo := moderationrepository.NewPostgresModerationRepository(pool)
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
@@ -89,6 +93,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	postUC := postusecase.NewPostUseCase(postRepo, communityReadUC, time.Now, voteRepo)
 	commentUC := commentusecase.NewCommentUseCase(commentRepo, postRepo, time.Now)
 	voteUC := voteusecase.NewPostVoteUseCase(postRepo, voteRepo, time.Now)
+	reportUC := moderationusecase.NewReportUseCase(moderationRepo, postRepo, commentRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
@@ -98,6 +103,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	postHandler := posthttp.NewHandler(postUC)
 	commentHandler := commenthttp.NewHandler(commentUC)
 	voteHandler := votehttp.NewHandler(voteUC)
+	moderationHandler := moderationhttp.NewHandler(reportUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	apiV1 := router.Group("/api/v1")
@@ -109,6 +115,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	posthttp.RegisterRoutes(protectedV1, postHandler)
 	commenthttp.RegisterRoutes(protectedV1, commentHandler)
 	votehttp.RegisterRoutes(protectedV1, voteHandler)
+	moderationhttp.RegisterRoutes(protectedV1, moderationHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)
