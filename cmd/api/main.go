@@ -22,6 +22,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/logger"
+	"github.com/Versifine/cumt-nexus-api/internal/post/delivery/posthttp"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/delivery/userhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
@@ -60,6 +63,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	communityApplicationRepo := communityrepository.NewPostgresApplicationRepository(pool)
 	platformStaffRepo := communityrepository.NewPostgresPlatformStaffRepository(pool)
 	communityTxManager := communityrepository.NewPostgresCommunityTransactionManager(pool)
+	postRepo := postrepository.NewPostgresPostRepository(pool)
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
@@ -74,12 +78,14 @@ func run(cfg *config.Config, log *slog.Logger) error {
 		communityTxManager,
 		time.Now,
 	)
+	postUC := postusecase.NewPostUseCase(postRepo, communityReadUC, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
 	authHandler := authhttp.NewHandler(registerUC, loginUC)
 	userHandler := userhttp.NewHandler(currentUserUC)
 	communityHandler := communityhttp.NewHandler(communityReadUC, communityApplicationUC)
+	postHandler := posthttp.NewHandler(postUC)
 
 	router := httpserver.NewRouter(log)
 	apiV1 := router.Group("/api/v1")
@@ -88,6 +94,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	protectedV1.Use(authhttp.RequireAuth(tokenIssuer))
 	userhttp.RegisterRoutes(protectedV1, userHandler)
 	communityhttp.RegisterRoutes(protectedV1, communityHandler)
+	posthttp.RegisterRoutes(protectedV1, postHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)
