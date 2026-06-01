@@ -11,6 +11,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
@@ -180,6 +181,138 @@ func TestPostgresPlatformStaffRepository(t *testing.T) {
 	}
 }
 
+func TestPostgresCommunityTransactionManagerApprovesApplicationWithCommunityAndOwner(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	manager := NewPostgresCommunityTransactionManager(pool)
+	applicationRepo := NewPostgresApplicationRepository(pool)
+	now := testNow()
+
+	applicantID := insertTestUser(ctx, t, pool, false)
+	reviewerID := insertTestUser(ctx, t, pool, true)
+	application := mustApplication(t, applicantID, mustCommunitySlug(t, "repo-"+randomSuffix()), now)
+	if err := applicationRepo.Create(ctx, *application); err != nil {
+		t.Fatalf("Create application returned error: %v", err)
+	}
+	cleanupApplication(ctx, t, pool, application.ID())
+
+	var createdCommunityID communitydomain.CommunityID
+	if err := manager.WithinTx(ctx, func(txCtx context.Context, repositories communityusecase.CommunityRepositories) error {
+		lockedApplication, err := repositories.Applications().FindByIDForUpdate(txCtx, application.ID())
+		if err != nil {
+			return err
+		}
+		reviewedAt := now.Add(time.Minute)
+		if err := lockedApplication.Approve(reviewerID, reviewedAt); err != nil {
+			return err
+		}
+		community, err := communitydomain.NewUserCreatedCommunity(
+			communitydomain.NewGeneratedCommunityID(),
+			lockedApplication.RequestedSlug(),
+			lockedApplication.RequestedName(),
+			communitydomain.NewCommunityDescription(""),
+			lockedApplication.ApplicantID(),
+			reviewedAt,
+		)
+		if err != nil {
+			return err
+		}
+		membership, err := communitydomain.NewCommunityMembership(
+			community.ID(),
+			lockedApplication.ApplicantID(),
+			communitydomain.MembershipRoleOwner,
+			reviewedAt,
+		)
+		if err != nil {
+			return err
+		}
+		if err := repositories.Applications().Save(txCtx, *lockedApplication); err != nil {
+			return err
+		}
+		if err := repositories.Communities().Create(txCtx, *community); err != nil {
+			return err
+		}
+		if err := repositories.Memberships().Create(txCtx, *membership); err != nil {
+			return err
+		}
+		createdCommunityID = community.ID()
+		return nil
+	}); err != nil {
+		t.Fatalf("WithinTx returned error: %v", err)
+	}
+	cleanupCommunity(ctx, t, pool, createdCommunityID)
+
+	approved, err := applicationRepo.FindByID(ctx, application.ID())
+	if err != nil {
+		t.Fatalf("FindByID approved returned error: %v", err)
+	}
+	if approved.Status() != communitydomain.ApplicationStatusApproved {
+		t.Fatalf("expected approved application, got %q", approved.Status().String())
+	}
+	if !membershipExists(ctx, t, pool, createdCommunityID, applicantID) {
+		t.Fatal("expected owner membership to be created")
+	}
+}
+
+func TestPostgresCommunityTransactionManagerRollsBackApprovalWhenCommunityCreateFails(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	manager := NewPostgresCommunityTransactionManager(pool)
+	communityRepo := NewPostgresCommunityRepository(pool)
+	applicationRepo := NewPostgresApplicationRepository(pool)
+	now := testNow()
+
+	applicantID := insertTestUser(ctx, t, pool, false)
+	reviewerID := insertTestUser(ctx, t, pool, true)
+	requestedSlug := mustCommunitySlug(t, "repo-"+randomSuffix())
+	existingCommunity := mustSystemCommunity(t, requestedSlug, now)
+	if err := communityRepo.Create(ctx, *existingCommunity); err != nil {
+		t.Fatalf("Create existing community returned error: %v", err)
+	}
+	cleanupCommunity(ctx, t, pool, existingCommunity.ID())
+
+	application := mustApplication(t, applicantID, requestedSlug, now)
+	if err := applicationRepo.Create(ctx, *application); err != nil {
+		t.Fatalf("Create application returned error: %v", err)
+	}
+	cleanupApplication(ctx, t, pool, application.ID())
+
+	err := manager.WithinTx(ctx, func(txCtx context.Context, repositories communityusecase.CommunityRepositories) error {
+		lockedApplication, err := repositories.Applications().FindByIDForUpdate(txCtx, application.ID())
+		if err != nil {
+			return err
+		}
+		reviewedAt := now.Add(time.Minute)
+		if err := lockedApplication.Approve(reviewerID, reviewedAt); err != nil {
+			return err
+		}
+		conflictingCommunity, err := communitydomain.NewUserCreatedCommunity(
+			communitydomain.NewGeneratedCommunityID(),
+			lockedApplication.RequestedSlug(),
+			lockedApplication.RequestedName(),
+			communitydomain.NewCommunityDescription(""),
+			lockedApplication.ApplicantID(),
+			reviewedAt,
+		)
+		if err != nil {
+			return err
+		}
+		if err := repositories.Applications().Save(txCtx, *lockedApplication); err != nil {
+			return err
+		}
+		return repositories.Communities().Create(txCtx, *conflictingCommunity)
+	})
+	if !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict from duplicate community slug, got %v", err)
+	}
+
+	pending, err := applicationRepo.FindByID(ctx, application.ID())
+	if err != nil {
+		t.Fatalf("FindByID pending returned error: %v", err)
+	}
+	if pending.Status() != communitydomain.ApplicationStatusPending {
+		t.Fatalf("expected transaction rollback to keep pending status, got %q", pending.Status().String())
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -217,7 +350,7 @@ func requireCommunitySchema(ctx context.Context, t *testing.T, pool *pgxpool.Poo
 			t.Fatalf("check table %s exists: %v", table, err)
 		}
 		if !exists {
-			t.Fatalf("%s table does not exist; run go run ./cmd/migrate up before repository tests", table)
+			t.Skipf("%s table does not exist; run go run ./cmd/migrate up before repository tests", table)
 		}
 	}
 
@@ -234,7 +367,7 @@ func requireCommunitySchema(ctx context.Context, t *testing.T, pool *pgxpool.Poo
 		t.Fatalf("check users.is_platform_staff exists: %v", err)
 	}
 	if !staffColumnExists {
-		t.Fatal("users.is_platform_staff column does not exist; run go run ./cmd/migrate up before repository tests")
+		t.Skip("users.is_platform_staff column does not exist; run go run ./cmd/migrate up before repository tests")
 	}
 }
 
@@ -335,6 +468,25 @@ func cleanupApplication(ctx context.Context, t *testing.T, pool *pgxpool.Pool, i
 			t.Fatalf("cleanup application %q: %v", id.String(), err)
 		}
 	})
+}
+
+func membershipExists(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, userID userdomain.UserID) bool {
+	t.Helper()
+
+	var exists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM community_memberships
+			WHERE community_id = $1::uuid
+				AND user_id = $2::uuid
+				AND role = 'owner'
+				AND status = 'active'
+		)
+	`, communityID.String(), userID.String()).Scan(&exists); err != nil {
+		t.Fatalf("check membership exists: %v", err)
+	}
+	return exists
 }
 
 func testNow() time.Time {

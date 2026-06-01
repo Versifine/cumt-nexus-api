@@ -57,6 +57,9 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	log.Info("database connected")
 	userRepo := userrepository.NewPostgresUserRepository(pool)
 	communityRepo := communityrepository.NewPostgresCommunityRepository(pool)
+	communityApplicationRepo := communityrepository.NewPostgresApplicationRepository(pool)
+	platformStaffRepo := communityrepository.NewPostgresPlatformStaffRepository(pool)
+	communityTxManager := communityrepository.NewPostgresCommunityTransactionManager(pool)
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
@@ -64,12 +67,19 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	currentUserUC := userusecase.NewCurrentUserUseCase(userRepo)
 	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
 	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
+	communityApplicationUC := communityusecase.NewCommunityApplicationUseCase(
+		communityRepo,
+		communityApplicationRepo,
+		platformStaffRepo,
+		communityTxManager,
+		time.Now,
+	)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
 	authHandler := authhttp.NewHandler(registerUC, loginUC)
 	userHandler := userhttp.NewHandler(currentUserUC)
-	communityHandler := communityhttp.NewHandler(communityReadUC)
+	communityHandler := communityhttp.NewHandler(communityReadUC, communityApplicationUC)
 
 	router := httpserver.NewRouter(log)
 	apiV1 := router.Group("/api/v1")

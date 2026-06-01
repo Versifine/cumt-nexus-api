@@ -8,6 +8,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
 func TestEnsurePublicCommunityCreatesMissingCommunity(t *testing.T) {
@@ -206,8 +207,52 @@ func TestGetCommunityBySlugHidesNonReadableCommunity(t *testing.T) {
 	}
 }
 
+func TestCanPostInCommunityAllowsActivePublicCommunity(t *testing.T) {
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findByIDFunc: func(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error) {
+			if id != community.ID() {
+				t.Fatalf("expected community id %q, got %q", community.ID().String(), id.String())
+			}
+			return community, nil
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+
+	result, err := uc.CanPostInCommunity(context.Background(), CanPostInCommunityInput{
+		UserID:      userdomain.NewGeneratedUserID().String(),
+		CommunityID: community.ID().String(),
+	})
+	if err != nil {
+		t.Fatalf("CanPostInCommunity returned error: %v", err)
+	}
+	if result.Community.ID != community.ID().String() {
+		t.Fatalf("expected community %q, got %q", community.ID().String(), result.Community.ID)
+	}
+}
+
+func TestCanPostInCommunityRejectsNonPostableCommunity(t *testing.T) {
+	community := mustCommunity(t, "campus", communitydomain.CommunityStatusSuspended, time.Now().UTC())
+	repo := &fakeCommunityRepository{
+		findByIDFunc: func(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error) {
+			return community, nil
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+
+	_, err := uc.CanPostInCommunity(context.Background(), CanPostInCommunityInput{
+		UserID:      userdomain.NewGeneratedUserID().String(),
+		CommunityID: community.ID().String(),
+	})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden for non-postable community, got %v", err)
+	}
+}
+
 type fakeCommunityRepository struct {
 	createFunc           func(ctx context.Context, community communitydomain.Community) error
+	findByIDFunc         func(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error)
 	findBySlugFunc       func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error)
 	listActivePublicFunc func(ctx context.Context) ([]communitydomain.Community, error)
 }
@@ -217,6 +262,13 @@ func (f *fakeCommunityRepository) Create(ctx context.Context, community communit
 		return f.createFunc(ctx, community)
 	}
 	return nil
+}
+
+func (f *fakeCommunityRepository) FindByID(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error) {
+	if f.findByIDFunc != nil {
+		return f.findByIDFunc(ctx, id)
+	}
+	return nil, apperr.New(apperr.CodeNotFound, "community not found")
 }
 
 func (f *fakeCommunityRepository) FindBySlug(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {

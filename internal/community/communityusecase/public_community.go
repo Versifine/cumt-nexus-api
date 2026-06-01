@@ -3,10 +3,12 @@ package communityusecase
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
 const (
@@ -28,11 +30,20 @@ type GetCommunityInput struct {
 	Slug string
 }
 
+type CanPostInCommunityInput struct {
+	UserID      string
+	CommunityID string
+}
+
 type ListCommunitiesResult struct {
 	Communities []Community
 }
 
 type GetCommunityResult struct {
+	Community Community
+}
+
+type CanPostInCommunityResult struct {
 	Community Community
 }
 
@@ -149,6 +160,33 @@ func (uc *CommunityReadUseCase) GetCommunityBySlug(ctx context.Context, input Ge
 	}, nil
 }
 
+func (uc *CommunityReadUseCase) CanPostInCommunity(ctx context.Context, input CanPostInCommunityInput) (CanPostInCommunityResult, error) {
+	userID := strings.TrimSpace(input.UserID)
+	if userID == "" {
+		return CanPostInCommunityResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if _, err := userdomain.NewUserID(userID); err != nil {
+		return CanPostInCommunityResult{}, err
+	}
+
+	communityID, err := communitydomain.NewCommunityID(input.CommunityID)
+	if err != nil {
+		return CanPostInCommunityResult{}, err
+	}
+
+	community, err := uc.communities.FindByID(ctx, communityID)
+	if err != nil {
+		return CanPostInCommunityResult{}, fmt.Errorf("find community by id: %w", err)
+	}
+	if !isPostableCommunity(community) {
+		return CanPostInCommunityResult{}, apperr.New(apperr.CodeForbidden, "can't post in community")
+	}
+
+	return CanPostInCommunityResult{
+		Community: toCommunityDTO(*community),
+	}, nil
+}
+
 func validatePublicCommunity(community *communitydomain.Community) error {
 	if community == nil {
 		return apperr.New(apperr.CodeInternal, "public community is missing")
@@ -176,6 +214,10 @@ func isPubliclyReadableCommunity(community *communitydomain.Community) bool {
 	return community != nil &&
 		community.Status() == communitydomain.CommunityStatusActive &&
 		community.Visibility() == communitydomain.CommunityVisibilityPublic
+}
+
+func isPostableCommunity(community *communitydomain.Community) bool {
+	return isPubliclyReadableCommunity(community)
 }
 
 func toCommunityDTO(community communitydomain.Community) Community {

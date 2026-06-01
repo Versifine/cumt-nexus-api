@@ -20,14 +20,21 @@ var _ communityusecase.CommunityRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityMembershipRepository = (*PostgresMembershipRepository)(nil)
 var _ communityusecase.CommunityApplicationRepository = (*PostgresApplicationRepository)(nil)
 var _ communityusecase.PlatformStaffRepository = (*PostgresPlatformStaffRepository)(nil)
+var _ communityusecase.CommunityTransactionManager = (*PostgresCommunityTransactionManager)(nil)
+
+type postgresExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
 
 type PostgresCommunityRepository struct {
-	pool *pgxpool.Pool
+	db postgresExecutor
 }
 
 func NewPostgresCommunityRepository(pool *pgxpool.Pool) *PostgresCommunityRepository {
 	return &PostgresCommunityRepository{
-		pool: pool,
+		db: pool,
 	}
 }
 
@@ -49,7 +56,7 @@ func (repo *PostgresCommunityRepository) Create(ctx context.Context, community c
 	`
 
 	createdBy, hasCreatedBy := community.CreatedBy()
-	_, err := repo.pool.Exec(
+	_, err := repo.db.Exec(
 		ctx,
 		query,
 		community.ID().String(),
@@ -70,6 +77,36 @@ func (repo *PostgresCommunityRepository) Create(ctx context.Context, community c
 	return nil
 }
 
+func (repo *PostgresCommunityRepository) FindByID(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error) {
+	const query = `
+		SELECT
+			id::text,
+			slug,
+			name,
+			description,
+			kind,
+			status,
+			visibility,
+			created_by::text,
+			created_at,
+			updated_at
+		FROM communities
+		WHERE id = $1::uuid
+		LIMIT 1
+	`
+
+	row := repo.db.QueryRow(ctx, query, id.String())
+	community, err := scanCommunity(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.New(apperr.CodeNotFound, "community not found")
+		}
+		return nil, err
+	}
+
+	return community, nil
+}
+
 func (repo *PostgresCommunityRepository) FindBySlug(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
 	const query = `
 		SELECT
@@ -88,7 +125,7 @@ func (repo *PostgresCommunityRepository) FindBySlug(ctx context.Context, slug co
 		LIMIT 1
 	`
 
-	row := repo.pool.QueryRow(ctx, query, slug.String())
+	row := repo.db.QueryRow(ctx, query, slug.String())
 	community, err := scanCommunity(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -119,7 +156,7 @@ func (repo *PostgresCommunityRepository) ListActivePublic(ctx context.Context) (
 		ORDER BY created_at ASC, slug ASC
 	`
 
-	rows, err := repo.pool.Query(ctx, query)
+	rows, err := repo.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list active public communities: %w", err)
 	}
@@ -141,12 +178,12 @@ func (repo *PostgresCommunityRepository) ListActivePublic(ctx context.Context) (
 }
 
 type PostgresMembershipRepository struct {
-	pool *pgxpool.Pool
+	db postgresExecutor
 }
 
 func NewPostgresMembershipRepository(pool *pgxpool.Pool) *PostgresMembershipRepository {
 	return &PostgresMembershipRepository{
-		pool: pool,
+		db: pool,
 	}
 }
 
@@ -163,7 +200,7 @@ func (repo *PostgresMembershipRepository) Create(ctx context.Context, membership
 		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
 	`
 
-	_, err := repo.pool.Exec(
+	_, err := repo.db.Exec(
 		ctx,
 		query,
 		membership.CommunityID().String(),
@@ -181,12 +218,12 @@ func (repo *PostgresMembershipRepository) Create(ctx context.Context, membership
 }
 
 type PostgresApplicationRepository struct {
-	pool *pgxpool.Pool
+	db postgresExecutor
 }
 
 func NewPostgresApplicationRepository(pool *pgxpool.Pool) *PostgresApplicationRepository {
 	return &PostgresApplicationRepository{
-		pool: pool,
+		db: pool,
 	}
 }
 
@@ -212,7 +249,7 @@ func (repo *PostgresApplicationRepository) Create(ctx context.Context, applicati
 	reviewedAt, hasReviewedAt := application.ReviewedAt()
 	rejectReason, hasRejectReason := application.RejectReason()
 
-	_, err := repo.pool.Exec(
+	_, err := repo.db.Exec(
 		ctx,
 		query,
 		application.ID().String(),
@@ -235,6 +272,14 @@ func (repo *PostgresApplicationRepository) Create(ctx context.Context, applicati
 }
 
 func (repo *PostgresApplicationRepository) FindByID(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error) {
+	return repo.findByID(ctx, id, false)
+}
+
+func (repo *PostgresApplicationRepository) FindByIDForUpdate(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error) {
+	return repo.findByID(ctx, id, true)
+}
+
+func (repo *PostgresApplicationRepository) findByID(ctx context.Context, id communitydomain.CommunityApplicationID, forUpdate bool) (*communitydomain.CommunityApplication, error) {
 	const query = `
 		SELECT
 			id::text,
@@ -252,8 +297,31 @@ func (repo *PostgresApplicationRepository) FindByID(ctx context.Context, id comm
 		WHERE id = $1::uuid
 		LIMIT 1
 	`
+	const queryForUpdate = `
+		SELECT
+			id::text,
+			applicant_id::text,
+			requested_slug,
+			requested_name,
+			reason,
+			status,
+			reviewed_by::text,
+			reviewed_at,
+			reject_reason,
+			created_at,
+			updated_at
+		FROM community_applications
+		WHERE id = $1::uuid
+		LIMIT 1
+		FOR UPDATE
+	`
 
-	row := repo.pool.QueryRow(ctx, query, id.String())
+	queryText := query
+	if forUpdate {
+		queryText = queryForUpdate
+	}
+
+	row := repo.db.QueryRow(ctx, queryText, id.String())
 	application, err := scanCommunityApplication(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -280,7 +348,7 @@ func (repo *PostgresApplicationRepository) Save(ctx context.Context, application
 	reviewedAt, hasReviewedAt := application.ReviewedAt()
 	rejectReason, hasRejectReason := application.RejectReason()
 
-	tag, err := repo.pool.Exec(
+	tag, err := repo.db.Exec(
 		ctx,
 		query,
 		application.ID().String(),
@@ -301,12 +369,12 @@ func (repo *PostgresApplicationRepository) Save(ctx context.Context, application
 }
 
 type PostgresPlatformStaffRepository struct {
-	pool *pgxpool.Pool
+	db postgresExecutor
 }
 
 func NewPostgresPlatformStaffRepository(pool *pgxpool.Pool) *PostgresPlatformStaffRepository {
 	return &PostgresPlatformStaffRepository{
-		pool: pool,
+		db: pool,
 	}
 }
 
@@ -319,7 +387,7 @@ func (repo *PostgresPlatformStaffRepository) IsPlatformStaff(ctx context.Context
 	`
 
 	var isPlatformStaff bool
-	if err := repo.pool.QueryRow(ctx, query, userID.String()).Scan(&isPlatformStaff); err != nil {
+	if err := repo.db.QueryRow(ctx, query, userID.String()).Scan(&isPlatformStaff); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, apperr.New(apperr.CodeNotFound, "user not found")
 		}
@@ -327,6 +395,62 @@ func (repo *PostgresPlatformStaffRepository) IsPlatformStaff(ctx context.Context
 	}
 
 	return isPlatformStaff, nil
+}
+
+type PostgresCommunityTransactionManager struct {
+	pool *pgxpool.Pool
+}
+
+func NewPostgresCommunityTransactionManager(pool *pgxpool.Pool) *PostgresCommunityTransactionManager {
+	return &PostgresCommunityTransactionManager{
+		pool: pool,
+	}
+}
+
+func (manager *PostgresCommunityTransactionManager) WithinTx(ctx context.Context, fn func(ctx context.Context, repositories communityusecase.CommunityRepositories) error) (err error) {
+	tx, err := manager.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin community transaction: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	repositories := postgresCommunityRepositories{
+		communities:  &PostgresCommunityRepository{db: tx},
+		memberships:  &PostgresMembershipRepository{db: tx},
+		applications: &PostgresApplicationRepository{db: tx},
+	}
+	if err := fn(ctx, repositories); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit community transaction: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+type postgresCommunityRepositories struct {
+	communities  communityusecase.CommunityRepository
+	memberships  communityusecase.CommunityMembershipRepository
+	applications communityusecase.CommunityApplicationRepository
+}
+
+func (repositories postgresCommunityRepositories) Communities() communityusecase.CommunityRepository {
+	return repositories.communities
+}
+
+func (repositories postgresCommunityRepositories) Memberships() communityusecase.CommunityMembershipRepository {
+	return repositories.memberships
+}
+
+func (repositories postgresCommunityRepositories) Applications() communityusecase.CommunityApplicationRepository {
+	return repositories.applications
 }
 
 type rowScanner interface {

@@ -9,6 +9,7 @@ import (
 
 type CommunityRepository interface {
 	Create(ctx context.Context, community communitydomain.Community) error
+	FindByID(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error)
 	FindBySlug(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error)
 	ListActivePublic(ctx context.Context) ([]communitydomain.Community, error)
 }
@@ -20,9 +21,20 @@ type CommunityMembershipRepository interface {
 type CommunityApplicationRepository interface {
 	Create(ctx context.Context, application communitydomain.CommunityApplication) error
 	FindByID(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error)
+	FindByIDForUpdate(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error)
 	Save(ctx context.Context, application communitydomain.CommunityApplication) error
 }
 
 type PlatformStaffRepository interface {
 	IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error)
+}
+
+type CommunityTransactionManager interface {
+	WithinTx(ctx context.Context, fn func(ctx context.Context, repositories CommunityRepositories) error) error
+}
+
+type CommunityRepositories interface {
+	Communities() CommunityRepository
+	Memberships() CommunityMembershipRepository
+	Applications() CommunityApplicationRepository
 }
