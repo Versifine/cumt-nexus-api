@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
@@ -17,13 +18,20 @@ const (
 
 type ConsoleUseCase struct {
 	reports ContentReportQueryRepository
+	reviews ContentReportReviewRepository
 	staff   PlatformStaffRepository
+	now     func() time.Time
 }
 
-func NewConsoleUseCase(reports ContentReportQueryRepository, staff PlatformStaffRepository) *ConsoleUseCase {
+func NewConsoleUseCase(reports ContentReportQueryRepository, reviews ContentReportReviewRepository, staff PlatformStaffRepository, now func() time.Time) *ConsoleUseCase {
+	if now == nil {
+		now = time.Now
+	}
 	return &ConsoleUseCase{
 		reports: reports,
+		reviews: reviews,
 		staff:   staff,
+		now:     now,
 	}
 }
 
@@ -45,7 +53,16 @@ type GetReportInput struct {
 	ReportID string
 }
 
+type DismissReportInput struct {
+	ActorID  userdomain.UserID
+	ReportID string
+}
+
 type GetReportResult struct {
+	Report ContentReport
+}
+
+type DismissReportResult struct {
 	Report ContentReport
 }
 
@@ -93,6 +110,32 @@ func (uc *ConsoleUseCase) GetReport(ctx context.Context, input GetReportInput) (
 	}
 	return GetReportResult{
 		Report: toContentReportDTO(*report),
+	}, nil
+}
+
+func (uc *ConsoleUseCase) DismissReport(ctx context.Context, input DismissReportInput) (DismissReportResult, error) {
+	if err := uc.ensureActorCanUseConsole(ctx, input.ActorID); err != nil {
+		return DismissReportResult{}, err
+	}
+	reportID, err := moderationdomain.NewContentReportID(input.ReportID)
+	if err != nil {
+		return DismissReportResult{}, err
+	}
+
+	report, err := uc.reports.FindReportByID(ctx, reportID)
+	if err != nil {
+		return DismissReportResult{}, fmt.Errorf("find moderation report before dismiss: %w", err)
+	}
+	if report.Status() != moderationdomain.ReportStatusPending {
+		return DismissReportResult{}, apperr.New(apperr.CodeConflict, "content report is not pending")
+	}
+
+	dismissed, err := uc.reviews.DismissReport(ctx, reportID, input.ActorID, uc.now().UTC())
+	if err != nil {
+		return DismissReportResult{}, fmt.Errorf("dismiss moderation report: %w", err)
+	}
+	return DismissReportResult{
+		Report: toContentReportDTO(*dismissed),
 	}, nil
 }
 

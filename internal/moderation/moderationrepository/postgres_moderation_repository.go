@@ -20,6 +20,7 @@ import (
 
 var _ moderationusecase.ContentReportRepository = (*PostgresModerationRepository)(nil)
 var _ moderationusecase.ContentReportQueryRepository = (*PostgresModerationRepository)(nil)
+var _ moderationusecase.ContentReportReviewRepository = (*PostgresModerationRepository)(nil)
 var _ moderationusecase.ContentRemovalRepository = (*PostgresModerationRepository)(nil)
 
 type PostgresModerationRepository struct {
@@ -138,6 +139,38 @@ func (repo *PostgresModerationRepository) FindReportByID(ctx context.Context, id
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.New(apperr.CodeNotFound, "content report not found")
+		}
+		return nil, err
+	}
+	return report, nil
+}
+
+func (repo *PostgresModerationRepository) DismissReport(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, reviewedAt time.Time) (*moderationdomain.ContentReport, error) {
+	const query = `
+		UPDATE content_reports
+		SET status = 'dismissed',
+			reviewed_by = $2::uuid,
+			reviewed_at = $3,
+			updated_at = $3
+		WHERE id = $1::uuid
+			AND status = 'pending'
+		RETURNING
+			id::text,
+			reporter_id::text,
+			post_id::text,
+			comment_id::text,
+			reason,
+			status,
+			reviewed_by::text,
+			reviewed_at,
+			created_at,
+			updated_at
+	`
+
+	report, err := scanContentReport(repo.pool.QueryRow(ctx, query, id.String(), reviewerID.String(), reviewedAt))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.New(apperr.CodeConflict, "content report is not pending")
 		}
 		return nil, err
 	}

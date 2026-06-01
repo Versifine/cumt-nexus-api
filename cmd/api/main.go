@@ -95,7 +95,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	voteUC := voteusecase.NewPostVoteUseCase(postRepo, voteRepo, time.Now)
 	reportUC := moderationusecase.NewReportUseCase(moderationRepo, postRepo, commentRepo, time.Now)
 	removeUC := moderationusecase.NewRemoveUseCase(moderationRepo, platformStaffRepo, time.Now)
-	consoleUC := moderationusecase.NewConsoleUseCase(moderationRepo, platformStaffRepo)
+	consoleUC := moderationusecase.NewConsoleUseCase(moderationRepo, moderationRepo, platformStaffRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}

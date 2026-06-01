@@ -32,6 +32,7 @@ type RemoveUseCase interface {
 type ConsoleUseCase interface {
 	ListReports(ctx context.Context, input moderationusecase.ListReportsInput) (moderationusecase.ListReportsResult, error)
 	GetReport(ctx context.Context, input moderationusecase.GetReportInput) (moderationusecase.GetReportResult, error)
+	DismissReport(ctx context.Context, input moderationusecase.DismissReportInput) (moderationusecase.DismissReportResult, error)
 }
 
 type reportContentRequest struct {
@@ -92,6 +93,7 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/comments/:id/moderation/remove", handler.RemoveComment)
 	group.GET("/moderation/reports", handler.ListReports)
 	group.GET("/moderation/reports/:id", handler.GetReport)
+	group.POST("/moderation/reports/:id/dismiss", handler.DismissReport)
 }
 
 func (h *Handler) ReportPost(c *gin.Context) {
@@ -271,6 +273,29 @@ func (h *Handler) GetReport(c *gin.Context) {
 	}
 
 	result, err := h.console.GetReport(c.Request.Context(), moderationusecase.GetReportInput{
+		ActorID:  userID,
+		ReportID: c.Param("id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, reportContentResponse{
+		Report: toContentReportResponse(result.Report),
+	})
+}
+
+func (h *Handler) DismissReport(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.console.DismissReport(c.Request.Context(), moderationusecase.DismissReportInput{
 		ActorID:  userID,
 		ReportID: c.Param("id"),
 	})

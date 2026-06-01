@@ -390,6 +390,68 @@ func TestListReportsPropagatesUseCaseError(t *testing.T) {
 	assertModerationErrorCode(t, recorder, apperr.CodeForbidden)
 }
 
+func TestDismissReportReturnsDismissedReport(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	reportID := "2b74a80d-6d57-4d61-a3ae-db5e006766b6"
+	dismissed := newReportResult(moderationdomain.TargetTypePost.String(), "8f92e975-5323-4a58-bac1-1336b668183c", "")
+	dismissed.Status = moderationdomain.ReportStatusDismissed.String()
+	dismissed.ReviewedBy = userID.String()
+	reviewedAt := time.Date(2026, 6, 2, 5, 0, 0, 0, time.UTC)
+	dismissed.ReviewedAt = &reviewedAt
+	console := &fakeReportUseCase{
+		dismissReportResult: moderationusecase.DismissReportResult{
+			Report: dismissed,
+		},
+	}
+	router := newModerationTestRouter(console, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/moderation/reports/"+reportID+"/dismiss", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !console.dismissReportCalled {
+		t.Fatal("expected DismissReport to be called")
+	}
+	if console.dismissReportInput.ActorID != userID || console.dismissReportInput.ReportID != reportID {
+		t.Fatalf("unexpected dismiss input: %#v", console.dismissReportInput)
+	}
+
+	var response reportContentResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Report.Status != moderationdomain.ReportStatusDismissed.String() || response.Report.ReviewedBy != userID.String() {
+		t.Fatalf("unexpected dismiss response: %#v", response.Report)
+	}
+}
+
+func TestDismissReportPropagatesUseCaseError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	console := &fakeReportUseCase{
+		dismissReportErr: apperr.New(apperr.CodeConflict, "content report is not pending"),
+	}
+	router := newModerationTestRouter(console, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/moderation/reports/2b74a80d-6d57-4d61-a3ae-db5e006766b6/dismiss", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, recorder.Code, recorder.Body.String())
+	}
+	assertModerationErrorCode(t, recorder, apperr.CodeConflict)
+}
+
 type fakeReportUseCase struct {
 	reportPostCalled    bool
 	reportCommentCalled bool
@@ -397,24 +459,28 @@ type fakeReportUseCase struct {
 	removeCommentCalled bool
 	listReportsCalled   bool
 	getReportCalled     bool
+	dismissReportCalled bool
 	reportPostInput     moderationusecase.ReportPostInput
 	reportCommentInput  moderationusecase.ReportCommentInput
 	removePostInput     moderationusecase.RemovePostInput
 	removeCommentInput  moderationusecase.RemoveCommentInput
 	listReportsInput    moderationusecase.ListReportsInput
 	getReportInput      moderationusecase.GetReportInput
+	dismissReportInput  moderationusecase.DismissReportInput
 	reportPostResult    moderationusecase.ReportContentResult
 	reportCommentResult moderationusecase.ReportContentResult
 	removePostResult    moderationusecase.RemoveContentResult
 	removeCommentResult moderationusecase.RemoveContentResult
 	listReportsResult   moderationusecase.ListReportsResult
 	getReportResult     moderationusecase.GetReportResult
+	dismissReportResult moderationusecase.DismissReportResult
 	reportPostErr       error
 	reportCommentErr    error
 	removePostErr       error
 	removeCommentErr    error
 	listReportsErr      error
 	getReportErr        error
+	dismissReportErr    error
 }
 
 func (f *fakeReportUseCase) ReportPost(ctx context.Context, input moderationusecase.ReportPostInput) (moderationusecase.ReportContentResult, error) {
@@ -451,6 +517,12 @@ func (f *fakeReportUseCase) GetReport(ctx context.Context, input moderationuseca
 	f.getReportCalled = true
 	f.getReportInput = input
 	return f.getReportResult, f.getReportErr
+}
+
+func (f *fakeReportUseCase) DismissReport(ctx context.Context, input moderationusecase.DismissReportInput) (moderationusecase.DismissReportResult, error) {
+	f.dismissReportCalled = true
+	f.dismissReportInput = input
+	return f.dismissReportResult, f.dismissReportErr
 }
 
 type fakeAccessTokenParser struct {

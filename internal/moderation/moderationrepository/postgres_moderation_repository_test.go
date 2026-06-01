@@ -130,6 +130,50 @@ func TestPostgresModerationRepositoryFindMissingReportReturnsNotFound(t *testing
 	}
 }
 
+func TestPostgresModerationRepositoryDismissReport(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	reporterID := insertTestUser(ctx, t, pool)
+	reviewerID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Dismissed report")
+	target, err := moderationdomain.NewPostTarget(post)
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "not actually abuse", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+
+	reviewedAt := now.Add(time.Minute)
+	dismissed, err := repo.DismissReport(ctx, report.ID(), reviewerID, reviewedAt)
+	if err != nil {
+		t.Fatalf("DismissReport returned error: %v", err)
+	}
+
+	if dismissed.Status() != moderationdomain.ReportStatusDismissed {
+		t.Fatalf("expected dismissed status, got %q", dismissed.Status())
+	}
+	gotReviewerID, ok := dismissed.ReviewedBy()
+	if !ok || gotReviewerID != reviewerID {
+		t.Fatalf("expected reviewer %q, got %q/%v", reviewerID.String(), gotReviewerID.String(), ok)
+	}
+	gotReviewedAt, ok := dismissed.ReviewedAt()
+	if !ok || !gotReviewedAt.Equal(reviewedAt) {
+		t.Fatalf("expected reviewed_at %s, got %s/%v", reviewedAt, gotReviewedAt, ok)
+	}
+	assertReportStatusInDB(t, ctx, pool, report.ID(), "dismissed")
+
+	if _, err := repo.DismissReport(ctx, report.ID(), reviewerID, reviewedAt.Add(time.Minute)); !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict for already dismissed report, got %v", err)
+	}
+}
+
 func TestPostgresModerationRepositoryRemovePostWithAction(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresModerationRepository(pool)

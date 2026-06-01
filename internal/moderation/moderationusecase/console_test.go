@@ -25,7 +25,7 @@ func TestConsoleListReportsDefaultsPendingAndNormalizesPagination(t *testing.T) 
 			return []moderationdomain.ContentReport{*report}, nil
 		},
 	}
-	uc := NewConsoleUseCase(reports, &fakeStaffRepository{isStaff: true})
+	uc := NewConsoleUseCase(reports, reports, &fakeStaffRepository{isStaff: true}, func() time.Time { return now })
 
 	result, err := uc.ListReports(context.Background(), ListReportsInput{
 		ActorID: actorID,
@@ -54,7 +54,7 @@ func TestConsoleListReportsSupportsStatusAndClampsLimit(t *testing.T) {
 			return nil, nil
 		},
 	}
-	uc := NewConsoleUseCase(reports, &fakeStaffRepository{isStaff: true})
+	uc := NewConsoleUseCase(reports, reports, &fakeStaffRepository{isStaff: true}, time.Now)
 
 	result, err := uc.ListReports(context.Background(), ListReportsInput{
 		ActorID: userdomain.NewGeneratedUserID(),
@@ -81,7 +81,7 @@ func TestConsoleGetReportReturnsReport(t *testing.T) {
 			return report, nil
 		},
 	}
-	uc := NewConsoleUseCase(reports, &fakeStaffRepository{isStaff: true})
+	uc := NewConsoleUseCase(reports, reports, &fakeStaffRepository{isStaff: true}, time.Now)
 
 	result, err := uc.GetReport(context.Background(), GetReportInput{
 		ActorID:  userdomain.NewGeneratedUserID(),
@@ -100,14 +100,14 @@ func TestConsoleGetReportReturnsReport(t *testing.T) {
 }
 
 func TestConsoleRejectsMissingActorNonStaffAndInvalidInputs(t *testing.T) {
-	uc := NewConsoleUseCase(&fakeReportQueryRepository{}, &fakeStaffRepository{isStaff: true})
+	uc := NewConsoleUseCase(&fakeReportQueryRepository{}, &fakeReportQueryRepository{}, &fakeStaffRepository{isStaff: true}, time.Now)
 
 	_, err := uc.ListReports(context.Background(), ListReportsInput{})
 	if !hasAppCode(err, apperr.CodeUnauthenticated) {
 		t.Fatalf("expected unauthenticated for missing actor, got %v", err)
 	}
 
-	uc = NewConsoleUseCase(&fakeReportQueryRepository{}, &fakeStaffRepository{isStaff: false})
+	uc = NewConsoleUseCase(&fakeReportQueryRepository{}, &fakeReportQueryRepository{}, &fakeStaffRepository{isStaff: false}, time.Now)
 	_, err = uc.ListReports(context.Background(), ListReportsInput{
 		ActorID: userdomain.NewGeneratedUserID(),
 	})
@@ -115,7 +115,7 @@ func TestConsoleRejectsMissingActorNonStaffAndInvalidInputs(t *testing.T) {
 		t.Fatalf("expected forbidden for non staff, got %v", err)
 	}
 
-	uc = NewConsoleUseCase(&fakeReportQueryRepository{}, &fakeStaffRepository{isStaff: true})
+	uc = NewConsoleUseCase(&fakeReportQueryRepository{}, &fakeReportQueryRepository{}, &fakeStaffRepository{isStaff: true}, time.Now)
 	_, err = uc.ListReports(context.Background(), ListReportsInput{
 		ActorID: userdomain.NewGeneratedUserID(),
 		Status:  "unknown",
@@ -142,13 +142,16 @@ func TestConsoleRejectsMissingActorNonStaffAndInvalidInputs(t *testing.T) {
 }
 
 func TestConsolePropagatesRepositoryError(t *testing.T) {
-	uc := NewConsoleUseCase(
-		&fakeReportQueryRepository{
-			findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
-				return nil, apperr.New(apperr.CodeNotFound, "content report not found")
-			},
+	query := &fakeReportQueryRepository{
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+			return nil, apperr.New(apperr.CodeNotFound, "content report not found")
 		},
+	}
+	uc := NewConsoleUseCase(
+		query,
+		query,
 		&fakeStaffRepository{isStaff: true},
+		time.Now,
 	)
 
 	_, err := uc.GetReport(context.Background(), GetReportInput{
@@ -160,11 +163,81 @@ func TestConsolePropagatesRepositoryError(t *testing.T) {
 	}
 }
 
+func TestConsoleDismissReportMarksPendingReportDismissed(t *testing.T) {
+	now := testNow()
+	reviewedAt := now.Add(time.Minute)
+	actorID := userdomain.NewGeneratedUserID()
+	report := mustContentReport(t, mustPostTarget(t), userdomain.NewGeneratedUserID(), "spam", now)
+	reports := &fakeReportQueryRepository{
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+			return report, nil
+		},
+		dismissFunc: func(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, gotReviewedAt time.Time) (*moderationdomain.ContentReport, error) {
+			if id != report.ID() || reviewerID != actorID || !gotReviewedAt.Equal(reviewedAt) {
+				t.Fatalf("unexpected dismiss args: %q %q %s", id.String(), reviewerID.String(), gotReviewedAt)
+			}
+			dismissed, err := moderationdomain.RehydrateContentReport(report.ID(), report.Target(), report.ReporterID(), report.Reason(), moderationdomain.ReportStatusDismissed, &reviewerID, &gotReviewedAt, report.CreatedAt(), gotReviewedAt)
+			if err != nil {
+				t.Fatalf("RehydrateContentReport returned error: %v", err)
+			}
+			return dismissed, nil
+		},
+	}
+	uc := NewConsoleUseCase(reports, reports, &fakeStaffRepository{isStaff: true}, func() time.Time { return reviewedAt })
+
+	result, err := uc.DismissReport(context.Background(), DismissReportInput{
+		ActorID:  actorID,
+		ReportID: report.ID().String(),
+	})
+	if err != nil {
+		t.Fatalf("DismissReport returned error: %v", err)
+	}
+
+	if !reports.findCalled || !reports.dismissCalled {
+		t.Fatal("expected find and dismiss repositories to be called")
+	}
+	if result.Report.Status != moderationdomain.ReportStatusDismissed.String() || result.Report.ReviewedBy != actorID.String() {
+		t.Fatalf("unexpected dismiss result: %#v", result.Report)
+	}
+	if result.Report.ReviewedAt == nil || !result.Report.ReviewedAt.Equal(reviewedAt) {
+		t.Fatalf("expected reviewed_at %s, got %#v", reviewedAt, result.Report.ReviewedAt)
+	}
+}
+
+func TestConsoleDismissRejectsNonPendingReport(t *testing.T) {
+	now := testNow()
+	reviewerID := userdomain.NewGeneratedUserID()
+	report := mustContentReport(t, mustPostTarget(t), userdomain.NewGeneratedUserID(), "spam", now)
+	dismissed, err := moderationdomain.RehydrateContentReport(report.ID(), report.Target(), report.ReporterID(), report.Reason(), moderationdomain.ReportStatusDismissed, &reviewerID, &now, report.CreatedAt(), now)
+	if err != nil {
+		t.Fatalf("RehydrateContentReport returned error: %v", err)
+	}
+	reports := &fakeReportQueryRepository{
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+			return dismissed, nil
+		},
+	}
+	uc := NewConsoleUseCase(reports, reports, &fakeStaffRepository{isStaff: true}, time.Now)
+
+	_, err = uc.DismissReport(context.Background(), DismissReportInput{
+		ActorID:  userdomain.NewGeneratedUserID(),
+		ReportID: report.ID().String(),
+	})
+	if !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict for non-pending report, got %v", err)
+	}
+	if reports.dismissCalled {
+		t.Fatal("dismiss repository should not be called for non-pending report")
+	}
+}
+
 type fakeReportQueryRepository struct {
-	listCalled bool
-	findCalled bool
-	listFunc   func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error)
-	findFunc   func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error)
+	listCalled    bool
+	findCalled    bool
+	dismissCalled bool
+	listFunc      func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error)
+	findFunc      func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error)
+	dismissFunc   func(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, reviewedAt time.Time) (*moderationdomain.ContentReport, error)
 }
 
 func (f *fakeReportQueryRepository) ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error) {
@@ -181,6 +254,14 @@ func (f *fakeReportQueryRepository) FindReportByID(ctx context.Context, id moder
 		return f.findFunc(ctx, id)
 	}
 	return nil, apperr.New(apperr.CodeNotFound, "content report not found")
+}
+
+func (f *fakeReportQueryRepository) DismissReport(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, reviewedAt time.Time) (*moderationdomain.ContentReport, error) {
+	f.dismissCalled = true
+	if f.dismissFunc != nil {
+		return f.dismissFunc(ctx, id, reviewerID, reviewedAt)
+	}
+	return nil, nil
 }
 
 func mustPostTarget(t *testing.T) moderationdomain.Target {

@@ -2,6 +2,7 @@ package moderationusecase
 
 import (
 	"context"
+	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
@@ -16,6 +17,10 @@ type ContentReportRepository interface {
 type ContentReportQueryRepository interface {
 	ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error)
 	FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error)
+}
+
+type ContentReportReviewRepository interface {
+	DismissReport(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, reviewedAt time.Time) (*moderationdomain.ContentReport, error)
 }
 
 type ContentRemovalRepository interface {
