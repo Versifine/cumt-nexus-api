@@ -57,6 +57,8 @@ type ContentReport struct {
 	ReporterID string
 	Reason     string
 	Status     string
+	ReviewedBy string
+	ReviewedAt *time.Time
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -144,6 +146,14 @@ func toContentReportDTO(report moderationdomain.ContentReport) ContentReport {
 	if id, ok := target.CommentID(); ok {
 		commentID = id.String()
 	}
+	reviewedBy := ""
+	if id, ok := report.ReviewedBy(); ok {
+		reviewedBy = id.String()
+	}
+	var reviewedAt *time.Time
+	if value, ok := report.ReviewedAt(); ok {
+		reviewedAt = &value
+	}
 
 	return ContentReport{
 		ID:         report.ID().String(),
@@ -153,6 +163,8 @@ func toContentReportDTO(report moderationdomain.ContentReport) ContentReport {
 		ReporterID: report.ReporterID().String(),
 		Reason:     report.Reason().String(),
 		Status:     report.Status().String(),
+		ReviewedBy: reviewedBy,
+		ReviewedAt: reviewedAt,
 		CreatedAt:  report.CreatedAt(),
 		UpdatedAt:  report.UpdatedAt(),
 	}

@@ -277,23 +277,144 @@ func TestRemovePostPropagatesUseCaseError(t *testing.T) {
 	assertModerationErrorCode(t, recorder, apperr.CodeForbidden)
 }
 
+func TestListReportsReturnsReports(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	console := &fakeReportUseCase{
+		listReportsResult: moderationusecase.ListReportsResult{
+			Reports: []moderationusecase.ContentReport{
+				newReportResult(moderationdomain.TargetTypePost.String(), "8f92e975-5323-4a58-bac1-1336b668183c", ""),
+			},
+			Limit:  50,
+			Offset: 2,
+		},
+	}
+	router := newModerationTestRouter(console, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/moderation/reports?status=resolved&limit=99&offset=2", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !console.listReportsCalled {
+		t.Fatal("expected ListReports to be called")
+	}
+	if console.listReportsInput.ActorID != userID {
+		t.Fatalf("expected actor %q, got %q", userID.String(), console.listReportsInput.ActorID.String())
+	}
+	if console.listReportsInput.Status != "resolved" || console.listReportsInput.Limit != 99 || console.listReportsInput.Offset != 2 {
+		t.Fatalf("unexpected list input: %#v", console.listReportsInput)
+	}
+
+	var response listReportsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Limit != 50 || response.Offset != 2 || len(response.Reports) != 1 {
+		t.Fatalf("unexpected list response: %#v", response)
+	}
+}
+
+func TestGetReportReturnsReport(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	reportID := "2b74a80d-6d57-4d61-a3ae-db5e006766b6"
+	console := &fakeReportUseCase{
+		getReportResult: moderationusecase.GetReportResult{
+			Report: newReportResult(moderationdomain.TargetTypeComment.String(), "", "94509b7b-1b72-4726-ac08-819f0322d065"),
+		},
+	}
+	router := newModerationTestRouter(console, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/moderation/reports/"+reportID, nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !console.getReportCalled {
+		t.Fatal("expected GetReport to be called")
+	}
+	if console.getReportInput.ActorID != userID || console.getReportInput.ReportID != reportID {
+		t.Fatalf("unexpected get input: %#v", console.getReportInput)
+	}
+}
+
+func TestListReportsRejectsInvalidQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	console := &fakeReportUseCase{}
+	router := newModerationTestRouter(console, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/moderation/reports?limit=abc", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	assertModerationErrorCode(t, recorder, apperr.CodeInvalidArgument)
+	if console.listReportsCalled {
+		t.Fatal("list reports usecase should not be called for invalid query")
+	}
+}
+
+func TestListReportsPropagatesUseCaseError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	console := &fakeReportUseCase{
+		listReportsErr: apperr.New(apperr.CodeForbidden, "platform staff required"),
+	}
+	router := newModerationTestRouter(console, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/moderation/reports", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, recorder.Code, recorder.Body.String())
+	}
+	assertModerationErrorCode(t, recorder, apperr.CodeForbidden)
+}
+
 type fakeReportUseCase struct {
 	reportPostCalled    bool
 	reportCommentCalled bool
 	removePostCalled    bool
 	removeCommentCalled bool
+	listReportsCalled   bool
+	getReportCalled     bool
 	reportPostInput     moderationusecase.ReportPostInput
 	reportCommentInput  moderationusecase.ReportCommentInput
 	removePostInput     moderationusecase.RemovePostInput
 	removeCommentInput  moderationusecase.RemoveCommentInput
+	listReportsInput    moderationusecase.ListReportsInput
+	getReportInput      moderationusecase.GetReportInput
 	reportPostResult    moderationusecase.ReportContentResult
 	reportCommentResult moderationusecase.ReportContentResult
 	removePostResult    moderationusecase.RemoveContentResult
 	removeCommentResult moderationusecase.RemoveContentResult
+	listReportsResult   moderationusecase.ListReportsResult
+	getReportResult     moderationusecase.GetReportResult
 	reportPostErr       error
 	reportCommentErr    error
 	removePostErr       error
 	removeCommentErr    error
+	listReportsErr      error
+	getReportErr        error
 }
 
 func (f *fakeReportUseCase) ReportPost(ctx context.Context, input moderationusecase.ReportPostInput) (moderationusecase.ReportContentResult, error) {
@@ -320,6 +441,18 @@ func (f *fakeReportUseCase) RemoveComment(ctx context.Context, input moderationu
 	return f.removeCommentResult, f.removeCommentErr
 }
 
+func (f *fakeReportUseCase) ListReports(ctx context.Context, input moderationusecase.ListReportsInput) (moderationusecase.ListReportsResult, error) {
+	f.listReportsCalled = true
+	f.listReportsInput = input
+	return f.listReportsResult, f.listReportsErr
+}
+
+func (f *fakeReportUseCase) GetReport(ctx context.Context, input moderationusecase.GetReportInput) (moderationusecase.GetReportResult, error) {
+	f.getReportCalled = true
+	f.getReportInput = input
+	return f.getReportResult, f.getReportErr
+}
+
 type fakeAccessTokenParser struct {
 	claims *authtoken.AccessTokenClaims
 	err    error
@@ -335,7 +468,7 @@ func newModerationTestRouter(usecase *fakeReportUseCase, parser authhttp.AccessT
 
 	protected := router.Group("/api/v1")
 	protected.Use(authhttp.RequireAuth(parser))
-	RegisterRoutes(protected, NewHandler(usecase, usecase))
+	RegisterRoutes(protected, NewHandler(usecase, usecase, usecase))
 
 	return router
 }

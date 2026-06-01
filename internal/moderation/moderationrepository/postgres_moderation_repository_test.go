@@ -84,6 +84,52 @@ func TestPostgresModerationRepositoryMapsForeignKeyFailure(t *testing.T) {
 	}
 }
 
+func TestPostgresModerationRepositoryListReportsAndFindReportByID(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow().Add(24 * time.Hour)
+
+	reporterID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Listed report")
+	target, err := moderationdomain.NewPostTarget(post)
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "list me", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+
+	reports, err := repo.ListReports(ctx, moderationdomain.ReportStatusPending, 10, 0)
+	if err != nil {
+		t.Fatalf("ListReports returned error: %v", err)
+	}
+	if !containsReportID(reports, report.ID()) {
+		t.Fatalf("expected listed reports to contain %q, got %#v", report.ID().String(), reports)
+	}
+
+	found, err := repo.FindReportByID(ctx, report.ID())
+	if err != nil {
+		t.Fatalf("FindReportByID returned error: %v", err)
+	}
+	if found.ID() != report.ID() || found.Status() != moderationdomain.ReportStatusPending {
+		t.Fatalf("unexpected found report: %#v", found)
+	}
+}
+
+func TestPostgresModerationRepositoryFindMissingReportReturnsNotFound(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+
+	_, err := repo.FindReportByID(ctx, moderationdomain.NewGeneratedContentReportID())
+	if !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found for missing report, got %v", err)
+	}
+}
+
 func TestPostgresModerationRepositoryRemovePostWithAction(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresModerationRepository(pool)
@@ -113,6 +159,15 @@ func TestPostgresModerationRepositoryRemovePostWithAction(t *testing.T) {
 	assertContentStatus(t, ctx, pool, "posts", post.String(), "removed")
 	assertReportStatusInDB(t, ctx, pool, report.ID(), "resolved")
 	assertActionExists(t, ctx, pool, action.ID())
+}
+
+func containsReportID(reports []moderationdomain.ContentReport, id moderationdomain.ContentReportID) bool {
+	for _, report := range reports {
+		if report.ID() == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPostgresModerationRepositoryRemoveCommentWithAction(t *testing.T) {

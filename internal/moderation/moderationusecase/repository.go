@@ -13,6 +13,11 @@ type ContentReportRepository interface {
 	CreateReport(ctx context.Context, report moderationdomain.ContentReport) error
 }
 
+type ContentReportQueryRepository interface {
+	ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error)
+	FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error)
+}
+
 type ContentRemovalRepository interface {
 	RemovePostWithAction(ctx context.Context, action moderationdomain.ModerationAction) error
 	RemoveCommentWithAction(ctx context.Context, action moderationdomain.ModerationAction) error

@@ -4,15 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var _ moderationusecase.ContentReportRepository = (*PostgresModerationRepository)(nil)
+var _ moderationusecase.ContentReportQueryRepository = (*PostgresModerationRepository)(nil)
 var _ moderationusecase.ContentRemovalRepository = (*PostgresModerationRepository)(nil)
 
 type PostgresModerationRepository struct {
@@ -67,6 +74,74 @@ func (repo *PostgresModerationRepository) CreateReport(ctx context.Context, repo
 	}
 
 	return nil
+}
+
+func (repo *PostgresModerationRepository) ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error) {
+	const query = `
+		SELECT
+			id::text,
+			reporter_id::text,
+			post_id::text,
+			comment_id::text,
+			reason,
+			status,
+			reviewed_by::text,
+			reviewed_at,
+			created_at,
+			updated_at
+		FROM content_reports
+		WHERE status = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, status.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list content reports: %w", err)
+	}
+	defer rows.Close()
+
+	reports := make([]moderationdomain.ContentReport, 0)
+	for rows.Next() {
+		report, err := scanContentReport(rows)
+		if err != nil {
+			return nil, err
+		}
+		reports = append(reports, *report)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate content reports: %w", err)
+	}
+	return reports, nil
+}
+
+func (repo *PostgresModerationRepository) FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+	const query = `
+		SELECT
+			id::text,
+			reporter_id::text,
+			post_id::text,
+			comment_id::text,
+			reason,
+			status,
+			reviewed_by::text,
+			reviewed_at,
+			created_at,
+			updated_at
+		FROM content_reports
+		WHERE id = $1::uuid
+		LIMIT 1
+	`
+
+	report, err := scanContentReport(repo.pool.QueryRow(ctx, query, id.String()))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.New(apperr.CodeNotFound, "content report not found")
+		}
+		return nil, err
+	}
+	return report, nil
 }
 
 func (repo *PostgresModerationRepository) RemovePostWithAction(ctx context.Context, action moderationdomain.ModerationAction) error {
@@ -148,6 +223,115 @@ func (repo *PostgresModerationRepository) removeWithAction(ctx context.Context, 
 
 type postgresExecutor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanContentReport(row rowScanner) (*moderationdomain.ContentReport, error) {
+	var rawID string
+	var rawReporterID string
+	var rawPostID pgtype.Text
+	var rawCommentID pgtype.Text
+	var rawReason string
+	var rawStatus string
+	var rawReviewedBy pgtype.Text
+	var rawReviewedAt pgtype.Timestamptz
+	var createdAt time.Time
+	var updatedAt time.Time
+
+	if err := row.Scan(
+		&rawID,
+		&rawReporterID,
+		&rawPostID,
+		&rawCommentID,
+		&rawReason,
+		&rawStatus,
+		&rawReviewedBy,
+		&rawReviewedAt,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	id, err := moderationdomain.NewContentReportID(rawID)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report id: %v", err)
+	}
+	reporterID, err := userdomain.NewUserID(rawReporterID)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report reporter id: %v", err)
+	}
+	target, err := rehydrateReportTarget(rawPostID, rawCommentID)
+	if err != nil {
+		return nil, err
+	}
+	reason, err := moderationdomain.NewReason(rawReason)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report reason: %v", err)
+	}
+	status, err := moderationdomain.NewReportStatus(rawStatus)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report status: %v", err)
+	}
+	reviewedBy, err := rehydrateOptionalUserID(rawReviewedBy)
+	if err != nil {
+		return nil, err
+	}
+	reviewedAt := rehydrateOptionalTime(rawReviewedAt)
+
+	report, err := moderationdomain.RehydrateContentReport(id, target, reporterID, reason, status, reviewedBy, reviewedAt, createdAt, updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report: %v", err)
+	}
+	return report, nil
+}
+
+func rehydrateReportTarget(rawPostID pgtype.Text, rawCommentID pgtype.Text) (moderationdomain.Target, error) {
+	if rawPostID.Valid {
+		postID, err := postdomain.NewPostID(rawPostID.String)
+		if err != nil {
+			return moderationdomain.Target{}, fmt.Errorf("rehydrate content report post id: %v", err)
+		}
+		target, err := moderationdomain.NewPostTarget(postID)
+		if err != nil {
+			return moderationdomain.Target{}, fmt.Errorf("rehydrate content report post target: %v", err)
+		}
+		return target, nil
+	}
+	if rawCommentID.Valid {
+		commentID, err := commentdomain.NewCommentID(rawCommentID.String)
+		if err != nil {
+			return moderationdomain.Target{}, fmt.Errorf("rehydrate content report comment id: %v", err)
+		}
+		target, err := moderationdomain.NewCommentTarget(commentID)
+		if err != nil {
+			return moderationdomain.Target{}, fmt.Errorf("rehydrate content report comment target: %v", err)
+		}
+		return target, nil
+	}
+	return moderationdomain.Target{}, apperr.New(apperr.CodeInvalidArgument, "content report target is invalid")
+}
+
+func rehydrateOptionalUserID(raw pgtype.Text) (*userdomain.UserID, error) {
+	if !raw.Valid {
+		return nil, nil
+	}
+	id, err := userdomain.NewUserID(raw.String)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report reviewer id: %v", err)
+	}
+	return &id, nil
+}
+
+func rehydrateOptionalTime(raw pgtype.Timestamptz) *time.Time {
+	if !raw.Valid {
+		return nil
+	}
+	value := raw.Time
+	return &value
 }
 
 func insertModerationAction(ctx context.Context, db postgresExecutor, action moderationdomain.ModerationAction) error {
