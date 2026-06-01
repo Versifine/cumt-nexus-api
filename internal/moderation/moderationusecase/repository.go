@@ -28,6 +28,10 @@ type ContentRemovalRepository interface {
 	RemoveCommentWithAction(ctx context.Context, action moderationdomain.ModerationAction) error
 }
 
+type ReportedTargetRemovalRepository interface {
+	RemoveReportedTargetWithAction(ctx context.Context, reportID moderationdomain.ContentReportID, action moderationdomain.ModerationAction) error
+}
+
 type PlatformStaffRepository interface {
 	IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error)
 }

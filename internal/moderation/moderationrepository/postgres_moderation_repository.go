@@ -22,6 +22,7 @@ var _ moderationusecase.ContentReportRepository = (*PostgresModerationRepository
 var _ moderationusecase.ContentReportQueryRepository = (*PostgresModerationRepository)(nil)
 var _ moderationusecase.ContentReportReviewRepository = (*PostgresModerationRepository)(nil)
 var _ moderationusecase.ContentRemovalRepository = (*PostgresModerationRepository)(nil)
+var _ moderationusecase.ReportedTargetRemovalRepository = (*PostgresModerationRepository)(nil)
 
 type PostgresModerationRepository struct {
 	pool *pgxpool.Pool
@@ -185,6 +186,46 @@ func (repo *PostgresModerationRepository) RemoveCommentWithAction(ctx context.Co
 	return repo.removeWithAction(ctx, action, "comments")
 }
 
+func (repo *PostgresModerationRepository) RemoveReportedTargetWithAction(ctx context.Context, reportID moderationdomain.ContentReportID, action moderationdomain.ModerationAction) (err error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin reported target removal transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	reportTarget, reportStatus, err := lockContentReportTarget(ctx, tx, reportID)
+	if err != nil {
+		return err
+	}
+	if reportStatus != moderationdomain.ReportStatusPending {
+		return apperr.New(apperr.CodeConflict, "content report is not pending")
+	}
+	if !sameModerationTarget(reportTarget, action.Target()) {
+		return apperr.New(apperr.CodeInvalidArgument, "moderation action target does not match report")
+	}
+
+	if err := removeVisibleTarget(ctx, tx, action); err != nil {
+		return err
+	}
+	if err := insertModerationAction(ctx, tx, action); err != nil {
+		return err
+	}
+	if err := resolvePendingReports(ctx, tx, action); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit reported target removal transaction: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 func (repo *PostgresModerationRepository) removeWithAction(ctx context.Context, action moderationdomain.ModerationAction, targetTable string) (err error) {
 	tx, err := repo.pool.Begin(ctx)
 	if err != nil {
@@ -198,48 +239,25 @@ func (repo *PostgresModerationRepository) removeWithAction(ctx context.Context, 
 	}()
 
 	target := action.Target()
-	postID, hasPostID := target.PostID()
-	commentID, hasCommentID := target.CommentID()
+	_, hasPostID := target.PostID()
+	_, hasCommentID := target.CommentID()
 
-	var updateQuery string
-	var targetID any
 	switch targetTable {
 	case "posts":
 		if !hasPostID {
 			return apperr.New(apperr.CodeInvalidArgument, "moderation post target is required")
 		}
-		updateQuery = `
-			UPDATE posts
-			SET status = 'removed',
-				updated_at = $2
-			WHERE id = $1::uuid
-				AND status = 'visible'
-		`
-		targetID = postID.String()
 	case "comments":
 		if !hasCommentID {
 			return apperr.New(apperr.CodeInvalidArgument, "moderation comment target is required")
 		}
-		updateQuery = `
-			UPDATE comments
-			SET status = 'removed',
-				updated_at = $2
-			WHERE id = $1::uuid
-				AND status = 'visible'
-		`
-		targetID = commentID.String()
 	default:
 		return apperr.New(apperr.CodeInvalidArgument, "moderation target table is invalid")
 	}
 
-	tag, err := tx.Exec(ctx, updateQuery, targetID, action.CreatedAt())
-	if err != nil {
-		return mapPostgresWriteError("remove content", err)
+	if err := removeVisibleTarget(ctx, tx, action); err != nil {
+		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return apperr.New(apperr.CodeNotFound, "content not found")
-	}
-
 	if err := insertModerationAction(ctx, tx, action); err != nil {
 		return err
 	}
@@ -252,6 +270,92 @@ func (repo *PostgresModerationRepository) removeWithAction(ctx context.Context, 
 	}
 	committed = true
 	return nil
+}
+
+func lockContentReportTarget(ctx context.Context, tx pgx.Tx, reportID moderationdomain.ContentReportID) (moderationdomain.Target, moderationdomain.ReportStatus, error) {
+	const query = `
+		SELECT
+			post_id::text,
+			comment_id::text,
+			status
+		FROM content_reports
+		WHERE id = $1::uuid
+		FOR UPDATE
+	`
+
+	var rawPostID pgtype.Text
+	var rawCommentID pgtype.Text
+	var rawStatus string
+	if err := tx.QueryRow(ctx, query, reportID.String()).Scan(&rawPostID, &rawCommentID, &rawStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return moderationdomain.Target{}, "", apperr.New(apperr.CodeNotFound, "content report not found")
+		}
+		return moderationdomain.Target{}, "", fmt.Errorf("lock content report: %w", err)
+	}
+
+	target, err := rehydrateReportTarget(rawPostID, rawCommentID)
+	if err != nil {
+		return moderationdomain.Target{}, "", err
+	}
+	status, err := moderationdomain.NewReportStatus(rawStatus)
+	if err != nil {
+		return moderationdomain.Target{}, "", err
+	}
+	return target, status, nil
+}
+
+func removeVisibleTarget(ctx context.Context, db postgresExecutor, action moderationdomain.ModerationAction) error {
+	target := action.Target()
+	postID, hasPostID := target.PostID()
+	commentID, hasCommentID := target.CommentID()
+
+	var updateQuery string
+	var targetID any
+	if hasPostID {
+		updateQuery = `
+			UPDATE posts
+			SET status = 'removed',
+				updated_at = $2
+			WHERE id = $1::uuid
+				AND status = 'visible'
+		`
+		targetID = postID.String()
+	} else if hasCommentID {
+		updateQuery = `
+			UPDATE comments
+			SET status = 'removed',
+				updated_at = $2
+			WHERE id = $1::uuid
+				AND status = 'visible'
+		`
+		targetID = commentID.String()
+	} else {
+		return apperr.New(apperr.CodeInvalidArgument, "moderation target is required")
+	}
+
+	tag, err := db.Exec(ctx, updateQuery, targetID, action.CreatedAt())
+	if err != nil {
+		return mapPostgresWriteError("remove content", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "content not found")
+	}
+	return nil
+}
+
+func sameModerationTarget(left moderationdomain.Target, right moderationdomain.Target) bool {
+	if left.Type() != right.Type() {
+		return false
+	}
+	if leftPostID, ok := left.PostID(); ok {
+		rightPostID, rightOK := right.PostID()
+		return rightOK && rightPostID == leftPostID
+	}
+	if leftCommentID, ok := left.CommentID(); ok {
+		rightCommentID, rightOK := right.CommentID()
+		return rightOK && rightCommentID == leftCommentID
+	}
+	return false
 }
 
 type postgresExecutor interface {

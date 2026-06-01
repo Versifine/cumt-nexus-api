@@ -452,35 +452,127 @@ func TestDismissReportPropagatesUseCaseError(t *testing.T) {
 	assertModerationErrorCode(t, recorder, apperr.CodeConflict)
 }
 
+func TestRemoveReportedTargetReturnsModerationAction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	reportID := "2b74a80d-6d57-4d61-a3ae-db5e006766b6"
+	console := &fakeReportUseCase{
+		removeReportedTargetResult: moderationusecase.RemoveReportedTargetResult{
+			Action: newActionResult(moderationdomain.TargetTypePost.String(), "8f92e975-5323-4a58-bac1-1336b668183c", ""),
+		},
+	}
+	router := newModerationTestRouter(console, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/moderation/reports/"+reportID+"/remove-target", bytes.NewBufferString(`{
+		"reason": "policy violation"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !console.removeReportedTargetCalled {
+		t.Fatal("expected RemoveReportedTarget to be called")
+	}
+	if console.removeReportedTargetInput.ActorID != userID || console.removeReportedTargetInput.ReportID != reportID {
+		t.Fatalf("unexpected remove reported target input: %#v", console.removeReportedTargetInput)
+	}
+	if console.removeReportedTargetInput.Reason != "policy violation" {
+		t.Fatalf("expected reason, got %q", console.removeReportedTargetInput.Reason)
+	}
+
+	var response removeContentResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Action.TargetType != moderationdomain.TargetTypePost.String() || response.Action.Action != moderationdomain.ActionTypeRemove.String() {
+		t.Fatalf("unexpected action response: %#v", response.Action)
+	}
+}
+
+func TestRemoveReportedTargetRejectsInvalidRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	console := &fakeReportUseCase{}
+	router := newModerationTestRouter(console, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/moderation/reports/2b74a80d-6d57-4d61-a3ae-db5e006766b6/remove-target", bytes.NewBufferString(`{}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	assertModerationErrorCode(t, recorder, apperr.CodeInvalidArgument)
+	if console.removeReportedTargetCalled {
+		t.Fatal("remove reported target usecase should not be called for invalid request")
+	}
+}
+
+func TestRemoveReportedTargetPropagatesUseCaseError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	console := &fakeReportUseCase{
+		removeReportedTargetErr: apperr.New(apperr.CodeForbidden, "platform staff required"),
+	}
+	router := newModerationTestRouter(console, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/moderation/reports/2b74a80d-6d57-4d61-a3ae-db5e006766b6/remove-target", bytes.NewBufferString(`{
+		"reason": "policy violation"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, recorder.Code, recorder.Body.String())
+	}
+	assertModerationErrorCode(t, recorder, apperr.CodeForbidden)
+}
+
 type fakeReportUseCase struct {
-	reportPostCalled    bool
-	reportCommentCalled bool
-	removePostCalled    bool
-	removeCommentCalled bool
-	listReportsCalled   bool
-	getReportCalled     bool
-	dismissReportCalled bool
-	reportPostInput     moderationusecase.ReportPostInput
-	reportCommentInput  moderationusecase.ReportCommentInput
-	removePostInput     moderationusecase.RemovePostInput
-	removeCommentInput  moderationusecase.RemoveCommentInput
-	listReportsInput    moderationusecase.ListReportsInput
-	getReportInput      moderationusecase.GetReportInput
-	dismissReportInput  moderationusecase.DismissReportInput
-	reportPostResult    moderationusecase.ReportContentResult
-	reportCommentResult moderationusecase.ReportContentResult
-	removePostResult    moderationusecase.RemoveContentResult
-	removeCommentResult moderationusecase.RemoveContentResult
-	listReportsResult   moderationusecase.ListReportsResult
-	getReportResult     moderationusecase.GetReportResult
-	dismissReportResult moderationusecase.DismissReportResult
-	reportPostErr       error
-	reportCommentErr    error
-	removePostErr       error
-	removeCommentErr    error
-	listReportsErr      error
-	getReportErr        error
-	dismissReportErr    error
+	reportPostCalled           bool
+	reportCommentCalled        bool
+	removePostCalled           bool
+	removeCommentCalled        bool
+	listReportsCalled          bool
+	getReportCalled            bool
+	dismissReportCalled        bool
+	removeReportedTargetCalled bool
+	reportPostInput            moderationusecase.ReportPostInput
+	reportCommentInput         moderationusecase.ReportCommentInput
+	removePostInput            moderationusecase.RemovePostInput
+	removeCommentInput         moderationusecase.RemoveCommentInput
+	listReportsInput           moderationusecase.ListReportsInput
+	getReportInput             moderationusecase.GetReportInput
+	dismissReportInput         moderationusecase.DismissReportInput
+	removeReportedTargetInput  moderationusecase.RemoveReportedTargetInput
+	reportPostResult           moderationusecase.ReportContentResult
+	reportCommentResult        moderationusecase.ReportContentResult
+	removePostResult           moderationusecase.RemoveContentResult
+	removeCommentResult        moderationusecase.RemoveContentResult
+	listReportsResult          moderationusecase.ListReportsResult
+	getReportResult            moderationusecase.GetReportResult
+	dismissReportResult        moderationusecase.DismissReportResult
+	removeReportedTargetResult moderationusecase.RemoveReportedTargetResult
+	reportPostErr              error
+	reportCommentErr           error
+	removePostErr              error
+	removeCommentErr           error
+	listReportsErr             error
+	getReportErr               error
+	dismissReportErr           error
+	removeReportedTargetErr    error
 }
 
 func (f *fakeReportUseCase) ReportPost(ctx context.Context, input moderationusecase.ReportPostInput) (moderationusecase.ReportContentResult, error) {
@@ -523,6 +615,12 @@ func (f *fakeReportUseCase) DismissReport(ctx context.Context, input moderationu
 	f.dismissReportCalled = true
 	f.dismissReportInput = input
 	return f.dismissReportResult, f.dismissReportErr
+}
+
+func (f *fakeReportUseCase) RemoveReportedTarget(ctx context.Context, input moderationusecase.RemoveReportedTargetInput) (moderationusecase.RemoveReportedTargetResult, error) {
+	f.removeReportedTargetCalled = true
+	f.removeReportedTargetInput = input
+	return f.removeReportedTargetResult, f.removeReportedTargetErr
 }
 
 type fakeAccessTokenParser struct {

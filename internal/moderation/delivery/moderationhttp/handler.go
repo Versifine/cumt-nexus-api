@@ -33,6 +33,7 @@ type ConsoleUseCase interface {
 	ListReports(ctx context.Context, input moderationusecase.ListReportsInput) (moderationusecase.ListReportsResult, error)
 	GetReport(ctx context.Context, input moderationusecase.GetReportInput) (moderationusecase.GetReportResult, error)
 	DismissReport(ctx context.Context, input moderationusecase.DismissReportInput) (moderationusecase.DismissReportResult, error)
+	RemoveReportedTarget(ctx context.Context, input moderationusecase.RemoveReportedTargetInput) (moderationusecase.RemoveReportedTargetResult, error)
 }
 
 type reportContentRequest struct {
@@ -94,6 +95,7 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/moderation/reports", handler.ListReports)
 	group.GET("/moderation/reports/:id", handler.GetReport)
 	group.POST("/moderation/reports/:id/dismiss", handler.DismissReport)
+	group.POST("/moderation/reports/:id/remove-target", handler.RemoveReportedTarget)
 }
 
 func (h *Handler) ReportPost(c *gin.Context) {
@@ -307,6 +309,37 @@ func (h *Handler) DismissReport(c *gin.Context) {
 
 	c.JSON(http.StatusOK, reportContentResponse{
 		Report: toContentReportResponse(result.Report),
+	})
+}
+
+func (h *Handler) RemoveReportedTarget(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req reportContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid moderation remove request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.console.RemoveReportedTarget(c.Request.Context(), moderationusecase.RemoveReportedTargetInput{
+		ActorID:  userID,
+		ReportID: c.Param("id"),
+		Reason:   req.Reason,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, removeContentResponse{
+		Action: toModerationActionResponse(result.Action),
 	})
 }
 

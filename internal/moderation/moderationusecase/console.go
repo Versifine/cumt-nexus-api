@@ -17,21 +17,29 @@ const (
 )
 
 type ConsoleUseCase struct {
-	reports ContentReportQueryRepository
-	reviews ContentReportReviewRepository
-	staff   PlatformStaffRepository
-	now     func() time.Time
+	reports          ContentReportQueryRepository
+	reviews          ContentReportReviewRepository
+	reportedRemovals ReportedTargetRemovalRepository
+	staff            PlatformStaffRepository
+	now              func() time.Time
 }
 
-func NewConsoleUseCase(reports ContentReportQueryRepository, reviews ContentReportReviewRepository, staff PlatformStaffRepository, now func() time.Time) *ConsoleUseCase {
+func NewConsoleUseCase(
+	reports ContentReportQueryRepository,
+	reviews ContentReportReviewRepository,
+	reportedRemovals ReportedTargetRemovalRepository,
+	staff PlatformStaffRepository,
+	now func() time.Time,
+) *ConsoleUseCase {
 	if now == nil {
 		now = time.Now
 	}
 	return &ConsoleUseCase{
-		reports: reports,
-		reviews: reviews,
-		staff:   staff,
-		now:     now,
+		reports:          reports,
+		reviews:          reviews,
+		reportedRemovals: reportedRemovals,
+		staff:            staff,
+		now:              now,
 	}
 }
 
@@ -58,12 +66,22 @@ type DismissReportInput struct {
 	ReportID string
 }
 
+type RemoveReportedTargetInput struct {
+	ActorID  userdomain.UserID
+	ReportID string
+	Reason   string
+}
+
 type GetReportResult struct {
 	Report ContentReport
 }
 
 type DismissReportResult struct {
 	Report ContentReport
+}
+
+type RemoveReportedTargetResult struct {
+	Action ModerationAction
 }
 
 func (uc *ConsoleUseCase) ListReports(ctx context.Context, input ListReportsInput) (ListReportsResult, error) {
@@ -136,6 +154,47 @@ func (uc *ConsoleUseCase) DismissReport(ctx context.Context, input DismissReport
 	}
 	return DismissReportResult{
 		Report: toContentReportDTO(*dismissed),
+	}, nil
+}
+
+func (uc *ConsoleUseCase) RemoveReportedTarget(ctx context.Context, input RemoveReportedTargetInput) (RemoveReportedTargetResult, error) {
+	if err := uc.ensureActorCanUseConsole(ctx, input.ActorID); err != nil {
+		return RemoveReportedTargetResult{}, err
+	}
+	reportID, err := moderationdomain.NewContentReportID(input.ReportID)
+	if err != nil {
+		return RemoveReportedTargetResult{}, err
+	}
+	reason, err := moderationdomain.NewReason(input.Reason)
+	if err != nil {
+		return RemoveReportedTargetResult{}, err
+	}
+
+	report, err := uc.reports.FindReportByID(ctx, reportID)
+	if err != nil {
+		return RemoveReportedTargetResult{}, fmt.Errorf("find moderation report before remove target: %w", err)
+	}
+	if report.Status() != moderationdomain.ReportStatusPending {
+		return RemoveReportedTargetResult{}, apperr.New(apperr.CodeConflict, "content report is not pending")
+	}
+
+	action, err := moderationdomain.NewModerationAction(
+		moderationdomain.NewGeneratedModerationActionID(),
+		report.Target(),
+		input.ActorID,
+		moderationdomain.ActionTypeRemove,
+		reason,
+		uc.now().UTC(),
+	)
+	if err != nil {
+		return RemoveReportedTargetResult{}, err
+	}
+
+	if err := uc.reportedRemovals.RemoveReportedTargetWithAction(ctx, reportID, *action); err != nil {
+		return RemoveReportedTargetResult{}, fmt.Errorf("remove reported target with moderation action: %w", err)
+	}
+	return RemoveReportedTargetResult{
+		Action: toModerationActionDTO(*action),
 	}, nil
 }
 

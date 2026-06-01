@@ -246,6 +246,70 @@ func TestPostgresModerationRepositoryRemoveCommentWithAction(t *testing.T) {
 	assertActionExists(t, ctx, pool, action.ID())
 }
 
+func TestPostgresModerationRepositoryRemoveReportedTargetWithAction(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	reporterID := insertTestUser(ctx, t, pool)
+	actorID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Reported target removal")
+	target, err := moderationdomain.NewPostTarget(post)
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "spam", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+	action := mustAction(t, target, actorID, "policy violation", now.Add(time.Minute))
+
+	if err := repo.RemoveReportedTargetWithAction(ctx, report.ID(), *action); err != nil {
+		t.Fatalf("RemoveReportedTargetWithAction returned error: %v", err)
+	}
+	cleanupAction(ctx, t, pool, action.ID())
+
+	assertContentStatus(t, ctx, pool, "posts", post.String(), "removed")
+	assertReportStatusInDB(t, ctx, pool, report.ID(), "resolved")
+	assertActionExists(t, ctx, pool, action.ID())
+}
+
+func TestPostgresModerationRepositoryRemoveReportedTargetRejectsNonPendingReport(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	reporterID := insertTestUser(ctx, t, pool)
+	reviewerID := insertTestUser(ctx, t, pool)
+	actorID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Dismissed reported target")
+	target, err := moderationdomain.NewPostTarget(post)
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "not actually abuse", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+	if _, err := repo.DismissReport(ctx, report.ID(), reviewerID, now.Add(time.Minute)); err != nil {
+		t.Fatalf("DismissReport returned error: %v", err)
+	}
+	action := mustAction(t, target, actorID, "policy violation", now.Add(2*time.Minute))
+
+	if err := repo.RemoveReportedTargetWithAction(ctx, report.ID(), *action); !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict for non-pending report, got %v", err)
+	}
+
+	assertContentStatus(t, ctx, pool, "posts", post.String(), "visible")
+	assertReportStatusInDB(t, ctx, pool, report.ID(), "dismissed")
+}
+
 func TestPostgresModerationRepositoryRemoveMissingContentReturnsNotFound(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresModerationRepository(pool)
