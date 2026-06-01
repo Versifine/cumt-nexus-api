@@ -171,7 +171,7 @@ func (f *fakeRegisterUseCase) Register(ctx context.Context, input authusecase.Re
 func newRegisterTestRouter(register RegisterUseCase) *gin.Engine {
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
-	RegisterRoutes(router.Group("/api/v1/auth"), NewHandler(register))
+	RegisterRoutes(router.Group("/api/v1/auth"), NewHandler(register, nil))
 	return router
 }
 

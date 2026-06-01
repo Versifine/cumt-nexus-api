@@ -1,0 +1,157 @@
+package userusecase
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+)
+
+func TestGetCurrentUserSuccess(t *testing.T) {
+	now := time.Date(2026, 5, 30, 10, 30, 0, 0, time.UTC)
+	user := newCurrentUserTestUser(t, "alice", "active", now)
+	repo := &fakeCurrentUserRepository{
+		user: user,
+	}
+	uc := NewCurrentUserUseCase(repo)
+
+	result, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
+		UserID: user.ID(),
+	})
+	if err != nil {
+		t.Fatalf("GetCurrentUser returned error: %v", err)
+	}
+
+	if !repo.findByIDCalled {
+		t.Fatal("expected FindByID to be called")
+	}
+	if repo.findByID != user.ID() {
+		t.Fatalf("expected FindByID user id %q, got %q", user.ID().String(), repo.findByID.String())
+	}
+	if result.User.ID != user.ID().String() {
+		t.Fatalf("expected user id %q, got %q", user.ID().String(), result.User.ID)
+	}
+	if result.User.Username != "alice" {
+		t.Fatalf("expected username %q, got %q", "alice", result.User.Username)
+	}
+	if result.User.Status != "active" {
+		t.Fatalf("expected status %q, got %q", "active", result.User.Status)
+	}
+	if !result.User.CreatedAt.Equal(now) {
+		t.Fatalf("expected created_at %s, got %s", now, result.User.CreatedAt)
+	}
+}
+
+func TestGetCurrentUserRejectsMissingUserID(t *testing.T) {
+	repo := &fakeCurrentUserRepository{}
+	uc := NewCurrentUserUseCase(repo)
+
+	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{})
+	if !hasAppCode(err, apperr.CodeUnauthenticated) {
+		t.Fatalf("expected unauthenticated, got %v", err)
+	}
+	if repo.findByIDCalled {
+		t.Fatal("FindByID should not be called for missing user id")
+	}
+}
+
+func TestGetCurrentUserNotFoundReturnsUnauthenticated(t *testing.T) {
+	userID := userdomain.NewGeneratedUserID()
+	repo := &fakeCurrentUserRepository{
+		err: apperr.New(apperr.CodeNotFound, "user not found"),
+	}
+	uc := NewCurrentUserUseCase(repo)
+
+	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
+		UserID: userID,
+	})
+	if !hasAppCode(err, apperr.CodeUnauthenticated) {
+		t.Fatalf("expected unauthenticated, got %v", err)
+	}
+	if !repo.findByIDCalled {
+		t.Fatal("expected FindByID to be called")
+	}
+}
+
+func TestGetCurrentUserDisabledReturnsForbidden(t *testing.T) {
+	user := newCurrentUserTestUser(t, "alice", "disabled", time.Now().UTC())
+	repo := &fakeCurrentUserRepository{
+		user: user,
+	}
+	uc := NewCurrentUserUseCase(repo)
+
+	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
+		UserID: user.ID(),
+	})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden, got %v", err)
+	}
+}
+
+func TestGetCurrentUserRepositoryError(t *testing.T) {
+	userID := userdomain.NewGeneratedUserID()
+	repo := &fakeCurrentUserRepository{
+		err: errors.New("database failed"),
+	}
+	uc := NewCurrentUserUseCase(repo)
+
+	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
+		UserID: userID,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if hasAppCode(err, apperr.CodeUnauthenticated) {
+		t.Fatalf("expected wrapped repository error, got %v", err)
+	}
+}
+
+type fakeCurrentUserRepository struct {
+	findByIDCalled bool
+	findByID       userdomain.UserID
+	user           *userdomain.User
+	err            error
+}
+
+func (f *fakeCurrentUserRepository) FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error) {
+	f.findByIDCalled = true
+	f.findByID = id
+	return f.user, f.err
+}
+
+func newCurrentUserTestUser(t *testing.T, username string, status string, now time.Time) *userdomain.User {
+	t.Helper()
+
+	validUsername, err := userdomain.NewUsername(username)
+	if err != nil {
+		t.Fatalf("NewUsername returned error: %v", err)
+	}
+	passwordHash, err := userdomain.NewPasswordHash("hashed-password")
+	if err != nil {
+		t.Fatalf("NewPasswordHash returned error: %v", err)
+	}
+	userStatus, err := userdomain.NewUserStatus(status)
+	if err != nil {
+		t.Fatalf("NewUserStatus returned error: %v", err)
+	}
+	user, err := userdomain.RehydrateUser(userdomain.NewGeneratedUserID(), validUsername, passwordHash, userStatus, now, now)
+	if err != nil {
+		t.Fatalf("RehydrateUser returned error: %v", err)
+	}
+	return user
+}
+
+func hasAppCode(err error, code apperr.Code) bool {
+	if err == nil {
+		return false
+	}
+
+	var appErr *apperr.Error
+	if !errors.As(err, &appErr) {
+		return false
+	}
+	return appErr.Code() == code
+}

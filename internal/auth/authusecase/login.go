@@ -16,7 +16,7 @@ type LoginInput struct {
 type LoginResult struct {
 	AccessToken string
 	TokenType   string
-	ExpiresIn   time.Duration
+	ExpiresIn   int64
 	User        LoginUser
 }
 type LoginUser struct {
@@ -41,6 +41,19 @@ type LoginUserCase struct {
 	now              func() time.Time
 }
 
+func NewLoginUserCase(userFinder UserFinder, passwordComparer PasswordComparer, tokenIssuer LoginTokenIssuer, now func() time.Time) *LoginUserCase {
+	if now == nil {
+		now = time.Now
+	}
+
+	return &LoginUserCase{
+		userFinder:       userFinder,
+		passwordComparer: passwordComparer,
+		tokenIssuer:      tokenIssuer,
+		now:              now,
+	}
+}
+
 func (uc *LoginUserCase) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
 	now := uc.now().UTC()
 
@@ -61,22 +74,22 @@ func (uc *LoginUserCase) Login(ctx context.Context, input LoginInput) (LoginResu
 	}
 	err = uc.passwordComparer.Compare(user.PasswordHash(), plainPassword)
 	if err != nil {
-		return LoginResult{}, apperr.New(apperr.CodeUnauthenticated, "username or password is incorrect")
+		return LoginResult{}, apperr.New(apperr.CodeUnauthenticated, "invalid username or password")
 	}
 	if !user.CanLogin() {
-		return LoginResult{}, apperr.New(apperr.CodeForbidden, "user is forbiiden")
+		return LoginResult{}, apperr.New(apperr.CodeForbidden, "user is forbidden")
 	}
 	tokenValue, tokenType, expiresIn, err := uc.tokenIssuer.IssueAccessToken(user.ID(), now)
 	if err != nil {
-		return LoginResult{}, fmt.Errorf("issue register access token: %w", err)
+		return LoginResult{}, fmt.Errorf("issue login access token: %w", err)
 	}
 
 	return LoginResult{
 		AccessToken: tokenValue,
 		TokenType:   tokenType,
-		ExpiresIn:   expiresIn,
+		ExpiresIn:   int64(expiresIn.Seconds()),
 		User: LoginUser{
-			ID:        string(user.ID()),
+			ID:        user.ID().String(),
 			Username:  user.Username().String(),
 			Status:    user.Status().String(),
 			CreatedAt: user.CreatedAt(),

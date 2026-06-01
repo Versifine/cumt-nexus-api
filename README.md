@@ -4,7 +4,9 @@
 
 ## 当前状态
 
-阶段：`阶段 1 认证与用户基础闭环`
+阶段：`阶段 5 已完成`
+
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环，并完成阶段 5 完整真实冒烟、文档收口和最终 review packet。
 
 已具备：
 
@@ -15,13 +17,30 @@
 - 统一错误响应、recovery、request id、请求日志
 - 用户领域模型、密码哈希、用户仓储
 - `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
 - JWT access token 签发
+- Bearer JWT 认证中间件
+- `GET /api/v1/me`
+- 阶段 2 社区 schema migration
+- 社区领域模型与 PostgreSQL repository
+- API 启动期公共总版 bootstrap
+- `GET /api/v1/communities`
+- `GET /api/v1/communities/:slug`
+- `POST /api/v1/community-applications`
+- `POST /api/v1/community-applications/:id/approve`
+- `POST /api/v1/community-applications/:id/reject`
+- 审批通过后事务内创建社区和申请人 `owner` 成员关系
+- 阶段 3 帖子 schema、domain、repository
+- `POST /api/v1/communities/:slug/posts`
+- `GET /api/v1/communities/:slug/posts`
+- `GET /api/v1/posts/:id`
+- 阶段 4 评论 schema、domain、repository
+- `POST /api/v1/posts/:id/comments`
+- `GET /api/v1/posts/:id/comments`
 
 下一步：
 
-- `POST /api/v1/auth/login`
-- 认证中间件
-- `GET /api/v1/me`
+- 下一阶段如继续推进，应新开产品语义阶段并优先明确范围；本目标不进入 feed、vote、moderation。
 
 ## 接口
 
@@ -30,6 +49,18 @@
 ```text
 GET  /healthz
 POST /api/v1/auth/register
+POST /api/v1/auth/login
+GET  /api/v1/me
+GET  /api/v1/communities
+GET  /api/v1/communities/:slug
+POST /api/v1/community-applications
+POST /api/v1/community-applications/:id/approve
+POST /api/v1/community-applications/:id/reject
+POST /api/v1/communities/:slug/posts
+GET  /api/v1/communities/:slug/posts
+GET  /api/v1/posts/:id
+POST /api/v1/posts/:id/comments
+GET  /api/v1/posts/:id/comments
 ```
 
 注册请求：
@@ -41,6 +72,120 @@ curl -i -X POST http://localhost:8080/api/v1/auth/register \
 ```
 
 成功响应返回 `access_token`、`token_type`、`expires_in` 和用户公开信息。响应不会包含 `password_hash`。
+
+登录请求：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"alice\",\"password\":\"password123\"}"
+```
+
+成功响应结构与注册一致。
+
+当前用户请求：
+
+```bash
+curl -i http://localhost:8080/api/v1/me \
+  -H "Authorization: Bearer <access_token>"
+```
+
+成功响应返回当前用户公开信息：
+
+```json
+{
+  "id": "uuid",
+  "username": "alice",
+  "status": "active",
+  "created_at": "2026-05-30T00:00:00Z"
+}
+```
+
+未带 token、token 格式错误、token 无效或 token 对应用户不存在时，统一返回 `401 unauthenticated`。
+
+社区列表请求：
+
+```bash
+curl -i http://localhost:8080/api/v1/communities \
+  -H "Authorization: Bearer <access_token>"
+```
+
+社区详情请求：
+
+```bash
+curl -i http://localhost:8080/api/v1/communities/public \
+  -H "Authorization: Bearer <access_token>"
+```
+
+提交社区申请：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/community-applications \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"requested_slug\":\"campus-life\",\"requested_name\":\"Campus Life\",\"reason\":\"Need a campus board\"}"
+```
+
+批准社区申请：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/community-applications/<application_id>/approve \
+  -H "Authorization: Bearer <staff_access_token>"
+```
+
+拒绝社区申请：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/community-applications/<application_id>/reject \
+  -H "Authorization: Bearer <staff_access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"reject_reason\":\"duplicate slug\"}"
+```
+
+阶段 2 暂不提供 staff 管理接口。本地 demo 可以通过 SQL 设置审批者：
+
+```sql
+UPDATE users SET is_platform_staff = true WHERE username = 'reviewer';
+```
+
+发布帖子：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/communities/public/posts \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"title\":\"Hello campus\",\"body\":\"First post body\"}"
+```
+
+社区帖子列表：
+
+```bash
+curl -i "http://localhost:8080/api/v1/communities/public/posts?limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+帖子详情：
+
+```bash
+curl -i http://localhost:8080/api/v1/posts/<post_id> \
+  -H "Authorization: Bearer <access_token>"
+```
+
+发布评论：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/posts/<post_id>/comments \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"body\":\"First comment\"}"
+```
+
+帖子评论列表：
+
+```bash
+curl -i "http://localhost:8080/api/v1/posts/<post_id>/comments?limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
 
 ## 本地运行
 
@@ -109,11 +254,18 @@ go build -buildvcs=false ./...
 - `docs/internal/README.md`：内部文档索引
 - `docs/internal/architecture/project-baseline.md`：架构基线
 - `docs/internal/architecture/auth-user-v1.md`：阶段 1 认证设计
+- `docs/internal/architecture/community-v1.md`：V1 社区业务架构与阶段 2 社区边界
+- `docs/internal/engineering/workflow.md`：阶段、工单、分支、提交和目标模式长跑规则
 - `docs/internal/engineering/stage-1-auth-playbook.md`：阶段 1 认证实现手册
 
 ## 当前限制
 
 - 阶段 1 暂不做 refresh token、多端会话、第三方登录、邮箱验证、找回密码和复杂 RBAC。
+- `/me` 只返回当前用户基础公开信息，不做资料编辑、头像、邮箱和权限列表。
+- 认证中间件只验证 Bearer access token 并写入当前用户 ID，不查询数据库。
+- 阶段 2 已落地社区申请与审批闭环，但暂不做 staff 管理接口、申请列表、申请取消、私密社区、邀请制和复杂成员加入/退出流程。
+- 阶段 3 帖子主链路暂不做图片上传、标签、编辑、删除、草稿、vote、hot feed、全站 feed、搜索和审核台。
+- 阶段 4 评论主链路暂不做评论树优化、评论编辑、删除、投票、审核台和通知。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License

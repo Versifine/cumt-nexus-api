@@ -25,4 +25,5 @@ type userResponse struct {
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/register", handler.Register)
+	group.POST("/login", handler.Login)
 }

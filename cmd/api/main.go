@@ -15,11 +15,22 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authtoken"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/delivery/authhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/comment/commentrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/comment/commentusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/comment/delivery/commenthttp"
+	"github.com/Versifine/cumt-nexus-api/internal/community/communityrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/community/delivery/communityhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/logger"
+	"github.com/Versifine/cumt-nexus-api/internal/post/delivery/posthttp"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/user/delivery/userhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -51,13 +62,46 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	defer db.Close(pool)
 	log.Info("database connected")
 	userRepo := userrepository.NewPostgresUserRepository(pool)
+	communityRepo := communityrepository.NewPostgresCommunityRepository(pool)
+	communityApplicationRepo := communityrepository.NewPostgresApplicationRepository(pool)
+	platformStaffRepo := communityrepository.NewPostgresPlatformStaffRepository(pool)
+	communityTxManager := communityrepository.NewPostgresCommunityTransactionManager(pool)
+	postRepo := postrepository.NewPostgresPostRepository(pool)
+	commentRepo := commentrepository.NewPostgresCommentRepository(pool)
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
-	authHandler := authhttp.NewHandler(registerUC)
+	loginUC := authusecase.NewLoginUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
+	currentUserUC := userusecase.NewCurrentUserUseCase(userRepo)
+	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
+	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
+	communityApplicationUC := communityusecase.NewCommunityApplicationUseCase(
+		communityRepo,
+		communityApplicationRepo,
+		platformStaffRepo,
+		communityTxManager,
+		time.Now,
+	)
+	postUC := postusecase.NewPostUseCase(postRepo, communityReadUC, time.Now)
+	commentUC := commentusecase.NewCommentUseCase(commentRepo, postRepo, time.Now)
+	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
+		return fmt.Errorf("ensure public community: %w", err)
+	}
+	authHandler := authhttp.NewHandler(registerUC, loginUC)
+	userHandler := userhttp.NewHandler(currentUserUC)
+	communityHandler := communityhttp.NewHandler(communityReadUC, communityApplicationUC)
+	postHandler := posthttp.NewHandler(postUC)
+	commentHandler := commenthttp.NewHandler(commentUC)
 
 	router := httpserver.NewRouter(log)
-	authhttp.RegisterRoutes(router.Group("/api/v1/auth"), authHandler)
+	apiV1 := router.Group("/api/v1")
+	authhttp.RegisterRoutes(apiV1.Group("/auth"), authHandler)
+	protectedV1 := apiV1.Group("")
+	protectedV1.Use(authhttp.RequireAuth(tokenIssuer))
+	userhttp.RegisterRoutes(protectedV1, userHandler)
+	communityhttp.RegisterRoutes(protectedV1, communityHandler)
+	posthttp.RegisterRoutes(protectedV1, postHandler)
+	commenthttp.RegisterRoutes(protectedV1, commentHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)
