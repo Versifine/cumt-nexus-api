@@ -1,0 +1,123 @@
+package voteusecase
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
+)
+
+type PostRepository interface {
+	FindVisibleByID(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
+}
+
+type PostVoteUseCase struct {
+	posts PostRepository
+	votes PostVoteRepository
+	now   func() time.Time
+}
+
+func NewPostVoteUseCase(posts PostRepository, votes PostVoteRepository, now func() time.Time) *PostVoteUseCase {
+	if now == nil {
+		now = time.Now
+	}
+
+	return &PostVoteUseCase{
+		posts: posts,
+		votes: votes,
+		now:   now,
+	}
+}
+
+type SetPostVoteInput struct {
+	PostID string
+	UserID userdomain.UserID
+	Value  int
+}
+
+type DeletePostVoteInput struct {
+	PostID string
+	UserID userdomain.UserID
+}
+
+type SetPostVoteResult struct {
+	Vote PostVote
+}
+
+type PostVote struct {
+	PostID    string
+	UserID    string
+	Value     int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (uc *PostVoteUseCase) SetPostVote(ctx context.Context, input SetPostVoteInput) (SetPostVoteResult, error) {
+	if strings.TrimSpace(input.UserID.String()) == "" {
+		return SetPostVoteResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+
+	postID, err := postdomain.NewPostID(input.PostID)
+	if err != nil {
+		return SetPostVoteResult{}, err
+	}
+	value, err := votedomain.NewVoteValue(input.Value)
+	if err != nil {
+		return SetPostVoteResult{}, err
+	}
+
+	post, err := uc.posts.FindVisibleByID(ctx, postID)
+	if err != nil {
+		return SetPostVoteResult{}, fmt.Errorf("find post for vote: %w", err)
+	}
+
+	now := uc.now().UTC()
+	vote, err := votedomain.NewPostVote(post.ID(), input.UserID, value, now)
+	if err != nil {
+		return SetPostVoteResult{}, err
+	}
+
+	if err := uc.votes.Upsert(ctx, *vote); err != nil {
+		return SetPostVoteResult{}, fmt.Errorf("upsert post vote: %w", err)
+	}
+
+	return SetPostVoteResult{
+		Vote: toPostVoteDTO(*vote),
+	}, nil
+}
+
+func (uc *PostVoteUseCase) DeletePostVote(ctx context.Context, input DeletePostVoteInput) error {
+	if strings.TrimSpace(input.UserID.String()) == "" {
+		return apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+
+	postID, err := postdomain.NewPostID(input.PostID)
+	if err != nil {
+		return err
+	}
+	post, err := uc.posts.FindVisibleByID(ctx, postID)
+	if err != nil {
+		return fmt.Errorf("find post for vote deletion: %w", err)
+	}
+
+	if err := uc.votes.DeleteByPostAndUser(ctx, post.ID(), input.UserID); err != nil {
+		return fmt.Errorf("delete post vote: %w", err)
+	}
+
+	return nil
+}
+
+func toPostVoteDTO(vote votedomain.PostVote) PostVote {
+	return PostVote{
+		PostID:    vote.PostID().String(),
+		UserID:    vote.UserID().String(),
+		Value:     vote.Value().Int(),
+		CreatedAt: vote.CreatedAt(),
+		UpdatedAt: vote.UpdatedAt(),
+	}
+}
