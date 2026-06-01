@@ -12,12 +12,18 @@ import (
 )
 
 type Handler struct {
-	reports ReportUseCase
+	reports  ReportUseCase
+	removals RemoveUseCase
 }
 
 type ReportUseCase interface {
 	ReportPost(ctx context.Context, input moderationusecase.ReportPostInput) (moderationusecase.ReportContentResult, error)
 	ReportComment(ctx context.Context, input moderationusecase.ReportCommentInput) (moderationusecase.ReportContentResult, error)
+}
+
+type RemoveUseCase interface {
+	RemovePost(ctx context.Context, input moderationusecase.RemovePostInput) (moderationusecase.RemoveContentResult, error)
+	RemoveComment(ctx context.Context, input moderationusecase.RemoveCommentInput) (moderationusecase.RemoveContentResult, error)
 }
 
 type reportContentRequest struct {
@@ -40,15 +46,33 @@ type reportContentResponse struct {
 	Report contentReportResponse `json:"report"`
 }
 
-func NewHandler(reports ReportUseCase) *Handler {
+type moderationActionResponse struct {
+	ID         string    `json:"id"`
+	TargetType string    `json:"target_type"`
+	PostID     string    `json:"post_id,omitempty"`
+	CommentID  string    `json:"comment_id,omitempty"`
+	ActorID    string    `json:"actor_id"`
+	Action     string    `json:"action"`
+	Reason     string    `json:"reason"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type removeContentResponse struct {
+	Action moderationActionResponse `json:"action"`
+}
+
+func NewHandler(reports ReportUseCase, removals RemoveUseCase) *Handler {
 	return &Handler{
-		reports: reports,
+		reports:  reports,
+		removals: removals,
 	}
 }
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/posts/:id/reports", handler.ReportPost)
 	group.POST("/comments/:id/reports", handler.ReportComment)
+	group.POST("/posts/:id/moderation/remove", handler.RemovePost)
+	group.POST("/comments/:id/moderation/remove", handler.RemoveComment)
 }
 
 func (h *Handler) ReportPost(c *gin.Context) {
@@ -113,6 +137,68 @@ func (h *Handler) ReportComment(c *gin.Context) {
 	})
 }
 
+func (h *Handler) RemovePost(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req reportContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid moderation remove request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.removals.RemovePost(c.Request.Context(), moderationusecase.RemovePostInput{
+		PostID:  c.Param("id"),
+		ActorID: userID,
+		Reason:  req.Reason,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, removeContentResponse{
+		Action: toModerationActionResponse(result.Action),
+	})
+}
+
+func (h *Handler) RemoveComment(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req reportContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid moderation remove request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.removals.RemoveComment(c.Request.Context(), moderationusecase.RemoveCommentInput{
+		CommentID: c.Param("id"),
+		ActorID:   userID,
+		Reason:    req.Reason,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, removeContentResponse{
+		Action: toModerationActionResponse(result.Action),
+	})
+}
+
 func toContentReportResponse(report moderationusecase.ContentReport) contentReportResponse {
 	return contentReportResponse{
 		ID:         report.ID,
@@ -124,5 +210,18 @@ func toContentReportResponse(report moderationusecase.ContentReport) contentRepo
 		Status:     report.Status,
 		CreatedAt:  report.CreatedAt,
 		UpdatedAt:  report.UpdatedAt,
+	}
+}
+
+func toModerationActionResponse(action moderationusecase.ModerationAction) moderationActionResponse {
+	return moderationActionResponse{
+		ID:         action.ID,
+		TargetType: action.TargetType,
+		PostID:     action.PostID,
+		CommentID:  action.CommentID,
+		ActorID:    action.ActorID,
+		Action:     action.Action,
+		Reason:     action.Reason,
+		CreatedAt:  action.CreatedAt,
 	}
 }

@@ -162,15 +162,138 @@ func TestReportPostPropagatesUseCaseError(t *testing.T) {
 	assertModerationErrorCode(t, recorder, apperr.CodeNotFound)
 }
 
+func TestRemovePostReturnsModerationAction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	actions := &fakeReportUseCase{
+		removePostResult: moderationusecase.RemoveContentResult{
+			Action: newActionResult(moderationdomain.TargetTypePost.String(), "8f92e975-5323-4a58-bac1-1336b668183c", ""),
+		},
+	}
+	router := newModerationTestRouter(actions, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c/moderation/remove", bytes.NewBufferString(`{
+		"reason": "policy violation"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !actions.removePostCalled {
+		t.Fatal("expected RemovePost to be called")
+	}
+	if actions.removePostInput.ActorID != userID {
+		t.Fatalf("expected actor %q, got %q", userID.String(), actions.removePostInput.ActorID.String())
+	}
+	if actions.removePostInput.Reason != "policy violation" {
+		t.Fatalf("expected reason, got %q", actions.removePostInput.Reason)
+	}
+
+	var response removeContentResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Action.TargetType != moderationdomain.TargetTypePost.String() || response.Action.Action != moderationdomain.ActionTypeRemove.String() {
+		t.Fatalf("unexpected action response: %#v", response.Action)
+	}
+}
+
+func TestRemoveCommentReturnsModerationAction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	actions := &fakeReportUseCase{
+		removeCommentResult: moderationusecase.RemoveContentResult{
+			Action: newActionResult(moderationdomain.TargetTypeComment.String(), "", "94509b7b-1b72-4726-ac08-819f0322d065"),
+		},
+	}
+	router := newModerationTestRouter(actions, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/comments/94509b7b-1b72-4726-ac08-819f0322d065/moderation/remove", bytes.NewBufferString(`{
+		"reason": "policy violation"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !actions.removeCommentCalled {
+		t.Fatal("expected RemoveComment to be called")
+	}
+}
+
+func TestRemovePostRejectsInvalidRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	actions := &fakeReportUseCase{}
+	router := newModerationTestRouter(actions, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c/moderation/remove", bytes.NewBufferString(`{}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	assertModerationErrorCode(t, recorder, apperr.CodeInvalidArgument)
+	if actions.removePostCalled {
+		t.Fatal("remove usecase should not be called for invalid request")
+	}
+}
+
+func TestRemovePostPropagatesUseCaseError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	actions := &fakeReportUseCase{
+		removePostErr: apperr.New(apperr.CodeForbidden, "platform staff required"),
+	}
+	router := newModerationTestRouter(actions, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c/moderation/remove", bytes.NewBufferString(`{
+		"reason": "policy violation"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, recorder.Code, recorder.Body.String())
+	}
+	assertModerationErrorCode(t, recorder, apperr.CodeForbidden)
+}
+
 type fakeReportUseCase struct {
 	reportPostCalled    bool
 	reportCommentCalled bool
+	removePostCalled    bool
+	removeCommentCalled bool
 	reportPostInput     moderationusecase.ReportPostInput
 	reportCommentInput  moderationusecase.ReportCommentInput
+	removePostInput     moderationusecase.RemovePostInput
+	removeCommentInput  moderationusecase.RemoveCommentInput
 	reportPostResult    moderationusecase.ReportContentResult
 	reportCommentResult moderationusecase.ReportContentResult
+	removePostResult    moderationusecase.RemoveContentResult
+	removeCommentResult moderationusecase.RemoveContentResult
 	reportPostErr       error
 	reportCommentErr    error
+	removePostErr       error
+	removeCommentErr    error
 }
 
 func (f *fakeReportUseCase) ReportPost(ctx context.Context, input moderationusecase.ReportPostInput) (moderationusecase.ReportContentResult, error) {
@@ -185,6 +308,18 @@ func (f *fakeReportUseCase) ReportComment(ctx context.Context, input moderationu
 	return f.reportCommentResult, f.reportCommentErr
 }
 
+func (f *fakeReportUseCase) RemovePost(ctx context.Context, input moderationusecase.RemovePostInput) (moderationusecase.RemoveContentResult, error) {
+	f.removePostCalled = true
+	f.removePostInput = input
+	return f.removePostResult, f.removePostErr
+}
+
+func (f *fakeReportUseCase) RemoveComment(ctx context.Context, input moderationusecase.RemoveCommentInput) (moderationusecase.RemoveContentResult, error) {
+	f.removeCommentCalled = true
+	f.removeCommentInput = input
+	return f.removeCommentResult, f.removeCommentErr
+}
+
 type fakeAccessTokenParser struct {
 	claims *authtoken.AccessTokenClaims
 	err    error
@@ -194,13 +329,13 @@ func (f *fakeAccessTokenParser) ParseAccessToken(rawToken string) (*authtoken.Ac
 	return f.claims, f.err
 }
 
-func newModerationTestRouter(reports ReportUseCase, parser authhttp.AccessTokenParser) *gin.Engine {
+func newModerationTestRouter(usecase *fakeReportUseCase, parser authhttp.AccessTokenParser) *gin.Engine {
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
 
 	protected := router.Group("/api/v1")
 	protected.Use(authhttp.RequireAuth(parser))
-	RegisterRoutes(protected, NewHandler(reports))
+	RegisterRoutes(protected, NewHandler(usecase, usecase))
 
 	return router
 }
@@ -229,6 +364,20 @@ func newReportResult(targetType string, postID string, commentID string) moderat
 		Status:     moderationdomain.ReportStatusPending.String(),
 		CreatedAt:  now,
 		UpdatedAt:  now,
+	}
+}
+
+func newActionResult(targetType string, postID string, commentID string) moderationusecase.ModerationAction {
+	now := time.Date(2026, 6, 2, 4, 40, 0, 0, time.UTC)
+	return moderationusecase.ModerationAction{
+		ID:         "7dc17b1f-0743-4979-974d-78005cd0ef09",
+		TargetType: targetType,
+		PostID:     postID,
+		CommentID:  commentID,
+		ActorID:    userdomain.NewGeneratedUserID().String(),
+		Action:     moderationdomain.ActionTypeRemove.String(),
+		Reason:     "policy violation",
+		CreatedAt:  now,
 	}
 }
 

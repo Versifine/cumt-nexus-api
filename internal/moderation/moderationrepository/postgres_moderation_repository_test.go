@@ -84,6 +84,84 @@ func TestPostgresModerationRepositoryMapsForeignKeyFailure(t *testing.T) {
 	}
 }
 
+func TestPostgresModerationRepositoryRemovePostWithAction(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	reporterID := insertTestUser(ctx, t, pool)
+	actorID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Removed post")
+	target, err := moderationdomain.NewPostTarget(post)
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "spam", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+	action := mustAction(t, target, actorID, "policy violation", now.Add(time.Minute))
+
+	if err := repo.RemovePostWithAction(ctx, *action); err != nil {
+		t.Fatalf("RemovePostWithAction returned error: %v", err)
+	}
+	cleanupAction(ctx, t, pool, action.ID())
+
+	assertContentStatus(t, ctx, pool, "posts", post.String(), "removed")
+	assertReportStatusInDB(t, ctx, pool, report.ID(), "resolved")
+	assertActionExists(t, ctx, pool, action.ID())
+}
+
+func TestPostgresModerationRepositoryRemoveCommentWithAction(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	reporterID := insertTestUser(ctx, t, pool)
+	actorID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Comment parent")
+	comment := insertTestComment(ctx, t, pool, post, authorID)
+	target, err := moderationdomain.NewCommentTarget(comment)
+	if err != nil {
+		t.Fatalf("NewCommentTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "abuse", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+	action := mustAction(t, target, actorID, "policy violation", now.Add(time.Minute))
+
+	if err := repo.RemoveCommentWithAction(ctx, *action); err != nil {
+		t.Fatalf("RemoveCommentWithAction returned error: %v", err)
+	}
+	cleanupAction(ctx, t, pool, action.ID())
+
+	assertContentStatus(t, ctx, pool, "comments", comment.String(), "removed")
+	assertReportStatusInDB(t, ctx, pool, report.ID(), "resolved")
+	assertActionExists(t, ctx, pool, action.ID())
+}
+
+func TestPostgresModerationRepositoryRemoveMissingContentReturnsNotFound(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	actorID := insertTestUser(ctx, t, pool)
+	target, err := moderationdomain.NewPostTarget(postdomain.NewGeneratedPostID())
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	action := mustAction(t, target, actorID, "missing", testNow())
+
+	if err := repo.RemovePostWithAction(ctx, *action); !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found for missing post, got %v", err)
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -292,6 +370,16 @@ func cleanupReport(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id mod
 	})
 }
 
+func cleanupAction(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id moderationdomain.ModerationActionID) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM moderation_actions WHERE id = $1::uuid`, id.String()); err != nil {
+			t.Fatalf("cleanup moderation action %q: %v", id.String(), err)
+		}
+	})
+}
+
 func mustReport(t *testing.T, target moderationdomain.Target, reporterID userdomain.UserID, reason string, now time.Time) *moderationdomain.ContentReport {
 	t.Helper()
 
@@ -304,6 +392,57 @@ func mustReport(t *testing.T, target moderationdomain.Target, reporterID userdom
 		t.Fatalf("NewContentReport returned error: %v", err)
 	}
 	return report
+}
+
+func mustAction(t *testing.T, target moderationdomain.Target, actorID userdomain.UserID, reason string, now time.Time) *moderationdomain.ModerationAction {
+	t.Helper()
+
+	parsedReason, err := moderationdomain.NewReason(reason)
+	if err != nil {
+		t.Fatalf("NewReason returned error: %v", err)
+	}
+	action, err := moderationdomain.NewModerationAction(moderationdomain.NewGeneratedModerationActionID(), target, actorID, moderationdomain.ActionTypeRemove, parsedReason, now)
+	if err != nil {
+		t.Fatalf("NewModerationAction returned error: %v", err)
+	}
+	return action
+}
+
+func assertContentStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, id string, want string) {
+	t.Helper()
+
+	var got string
+	query := `SELECT status FROM ` + table + ` WHERE id = $1::uuid`
+	if err := pool.QueryRow(ctx, query, id).Scan(&got); err != nil {
+		t.Fatalf("query %s status: %v", table, err)
+	}
+	if got != want {
+		t.Fatalf("expected %s status %q, got %q", table, want, got)
+	}
+}
+
+func assertReportStatusInDB(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id moderationdomain.ContentReportID, want string) {
+	t.Helper()
+
+	var got string
+	if err := pool.QueryRow(ctx, `SELECT status FROM content_reports WHERE id = $1::uuid`, id.String()).Scan(&got); err != nil {
+		t.Fatalf("query report status: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected report status %q, got %q", want, got)
+	}
+}
+
+func assertActionExists(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id moderationdomain.ModerationActionID) {
+	t.Helper()
+
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM moderation_actions WHERE id = $1::uuid)`, id.String()).Scan(&exists); err != nil {
+		t.Fatalf("query moderation action: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected moderation action %q to exist", id.String())
+	}
 }
 
 func testNow() time.Time {

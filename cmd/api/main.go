@@ -94,6 +94,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	commentUC := commentusecase.NewCommentUseCase(commentRepo, postRepo, time.Now)
 	voteUC := voteusecase.NewPostVoteUseCase(postRepo, voteRepo, time.Now)
 	reportUC := moderationusecase.NewReportUseCase(moderationRepo, postRepo, commentRepo, time.Now)
+	removeUC := moderationusecase.NewRemoveUseCase(moderationRepo, platformStaffRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
@@ -103,7 +104,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	postHandler := posthttp.NewHandler(postUC)
 	commentHandler := commenthttp.NewHandler(commentUC)
 	voteHandler := votehttp.NewHandler(voteUC)
-	moderationHandler := moderationhttp.NewHandler(reportUC)
+	moderationHandler := moderationhttp.NewHandler(reportUC, removeUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	apiV1 := router.Group("/api/v1")
