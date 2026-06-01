@@ -31,6 +31,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/user/delivery/userhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/delivery/votehttp"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/voterepository"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/voteusecase"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -68,6 +71,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	communityTxManager := communityrepository.NewPostgresCommunityTransactionManager(pool)
 	postRepo := postrepository.NewPostgresPostRepository(pool)
 	commentRepo := commentrepository.NewPostgresCommentRepository(pool)
+	voteRepo := voterepository.NewPostgresPostVoteRepository(pool)
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
@@ -82,8 +86,9 @@ func run(cfg *config.Config, log *slog.Logger) error {
 		communityTxManager,
 		time.Now,
 	)
-	postUC := postusecase.NewPostUseCase(postRepo, communityReadUC, time.Now)
+	postUC := postusecase.NewPostUseCase(postRepo, communityReadUC, time.Now, voteRepo)
 	commentUC := commentusecase.NewCommentUseCase(commentRepo, postRepo, time.Now)
+	voteUC := voteusecase.NewPostVoteUseCase(postRepo, voteRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
@@ -92,8 +97,9 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	communityHandler := communityhttp.NewHandler(communityReadUC, communityApplicationUC)
 	postHandler := posthttp.NewHandler(postUC)
 	commentHandler := commenthttp.NewHandler(commentUC)
+	voteHandler := votehttp.NewHandler(voteUC)
 
-	router := httpserver.NewRouter(log)
+	router := httpserver.NewRouter(log, cfg.HTTP)
 	apiV1 := router.Group("/api/v1")
 	authhttp.RegisterRoutes(apiV1.Group("/auth"), authHandler)
 	protectedV1 := apiV1.Group("")
@@ -102,6 +108,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	communityhttp.RegisterRoutes(protectedV1, communityHandler)
 	posthttp.RegisterRoutes(protectedV1, postHandler)
 	commenthttp.RegisterRoutes(protectedV1, commentHandler)
+	votehttp.RegisterRoutes(protectedV1, voteHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)

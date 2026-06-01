@@ -36,6 +36,7 @@ func Load() (*Config, error) {
 	cfg.HTTP.ReadTimeout = durationDefault("HTTP_READ_TIMEOUT", 5*time.Second, &errs)
 	cfg.HTTP.WriteTimeout = durationDefault("HTTP_WRITE_TIMEOUT", 10*time.Second, &errs)
 	cfg.HTTP.ShutdownTimeout = durationDefault("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second, &errs)
+	cfg.HTTP.CORSAllowedOrigins = stringListDefault("HTTP_CORS_ALLOWED_ORIGINS", nil)
 
 	cfg.Log.Level = stringDefault("LOG_LEVEL", "info")
 	cfg.Log.Format = stringDefault("LOG_FORMAT", "json")
@@ -67,6 +68,26 @@ func stringDefault(key, defaultValue string) string {
 		return defaultValue
 	}
 	return strings.TrimSpace(v)
+}
+
+func stringListDefault(key string, defaultValue []string) []string {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return defaultValue
+	}
+
+	parts := strings.Split(v, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return defaultValue
+	}
+	return values
 }
 
 func intDefault(key string, defaultValue int, errs *[]error) int {
