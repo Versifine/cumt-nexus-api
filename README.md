@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-阶段：`阶段 8 审核台最小闭环`
+阶段：`阶段 9 hot feed / 内容分发`
 
 代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环，以及阶段 8 审核台最小闭环。
 
-当前暂停在阶段 8 里程碑。下一阶段需要先选择产品边界，候选方向包括 hot feed / 内容分发、审核台增强、搜索或通知。
+当前推进阶段 9：在已有全站最新流和帖子投票事实之上，补齐最小 hot feed / 内容分发能力。阶段 9 先让全站帖子流和社区帖子列表支持 `sort=new|hot`，默认保持 `new`，`hot` 使用现有投票事实做简化热度排序。
 
 已具备：
 
@@ -57,8 +57,9 @@
 
 下一步：
 
-- 先选择阶段 9 产品边界，再生成下一阶段工单。
-- 当前仍不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理、hot feed、搜索或评论投票。
+- 阶段 9 优先实现 `GET /api/v1/posts?sort=hot` 和 `GET /api/v1/communities/:slug/posts?sort=hot`。
+- 后续目标顺序是：审核台增强、搜索、通知。
+- 当前仍不做个性化推荐、预计算时间线、推荐系统、反作弊、评论投票、通知或审核台增强。
 
 ## 接口
 
@@ -189,18 +190,32 @@ curl -i -X POST http://localhost:8080/api/v1/communities/public/posts \
 社区帖子列表：
 
 ```bash
-curl -i "http://localhost:8080/api/v1/communities/public/posts?limit=20&offset=0" \
+curl -i "http://localhost:8080/api/v1/communities/public/posts?sort=new&limit=20&offset=0" \
   -H "Authorization: Bearer <access_token>"
 ```
 
 全站最新帖子流：
 
 ```bash
-curl -i "http://localhost:8080/api/v1/posts?limit=20&offset=0" \
+curl -i "http://localhost:8080/api/v1/posts?sort=new&limit=20&offset=0" \
   -H "Authorization: Bearer <access_token>"
 ```
 
-帖子列表、帖子详情和全站最新流都会返回 `upvote_count`、`downvote_count`、`score`、`my_vote`。`my_vote` 为 `1`、`-1` 或 `0`。
+全站 hot 帖子流：
+
+```bash
+curl -i "http://localhost:8080/api/v1/posts?sort=hot&limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+社区 hot 帖子列表：
+
+```bash
+curl -i "http://localhost:8080/api/v1/communities/public/posts?sort=hot&limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+不传 `sort` 时默认按 `new` 排序。`sort=hot` 使用现有帖子投票事实排序，按 `score DESC, upvote_count DESC, created_at DESC, id DESC`。帖子列表、帖子详情和全站帖子流都会返回 `upvote_count`、`downvote_count`、`score`、`my_vote`。`my_vote` 为 `1`、`-1` 或 `0`。
 
 帖子详情：
 
@@ -418,6 +433,7 @@ go build -buildvcs=false ./...
 - 阶段 6 已完成帖子 upvote/downvote 和全站最新流；暂不做 hot feed、推荐排序、评论投票、投票通知和防刷策略。
 - 阶段 7 已完成轻量举报与平台 staff 移除内容闭环。
 - 阶段 8 已完成审核台最小闭环；暂不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理或 target 内容预览增强。
+- 阶段 9 正在推进 hot feed / 内容分发；暂不做个性化推荐、预计算时间线、推荐系统、反作弊、评论投票、通知或审核台增强。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License
