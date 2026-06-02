@@ -24,6 +24,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/delivery/moderationhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/notification/delivery/notificationhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/notification/notificationrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/notification/notificationusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
@@ -31,6 +34,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/post/delivery/posthttp"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/search/delivery/searchhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/search/searchrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/search/searchusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/delivery/userhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
@@ -76,6 +82,8 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	commentRepo := commentrepository.NewPostgresCommentRepository(pool)
 	voteRepo := voterepository.NewPostgresPostVoteRepository(pool)
 	moderationRepo := moderationrepository.NewPostgresModerationRepository(pool)
+	searchRepo := searchrepository.NewPostgresSearchRepository(pool)
+	notificationRepo := notificationrepository.NewPostgresNotificationRepository(pool)
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
@@ -96,6 +104,8 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	reportUC := moderationusecase.NewReportUseCase(moderationRepo, postRepo, commentRepo, time.Now)
 	removeUC := moderationusecase.NewRemoveUseCase(moderationRepo, platformStaffRepo, time.Now)
 	consoleUC := moderationusecase.NewConsoleUseCase(moderationRepo, moderationRepo, moderationRepo, platformStaffRepo, time.Now)
+	searchUC := searchusecase.NewUseCase(searchRepo)
+	notificationUC := notificationusecase.NewUseCase(notificationRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
@@ -106,6 +116,8 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	commentHandler := commenthttp.NewHandler(commentUC)
 	voteHandler := votehttp.NewHandler(voteUC)
 	moderationHandler := moderationhttp.NewHandler(reportUC, removeUC, consoleUC)
+	searchHandler := searchhttp.NewHandler(searchUC)
+	notificationHandler := notificationhttp.NewHandler(notificationUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	apiV1 := router.Group("/api/v1")
@@ -118,6 +130,8 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	commenthttp.RegisterRoutes(protectedV1, commentHandler)
 	votehttp.RegisterRoutes(protectedV1, voteHandler)
 	moderationhttp.RegisterRoutes(protectedV1, moderationHandler)
+	searchhttp.RegisterRoutes(protectedV1, searchHandler)
+	notificationhttp.RegisterRoutes(protectedV1, notificationHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)

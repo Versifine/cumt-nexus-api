@@ -19,6 +19,13 @@ const (
 	MaxPostListLimit     = 50
 )
 
+type PostListSort string
+
+const (
+	PostListSortNew PostListSort = "new"
+	PostListSortHot PostListSort = "hot"
+)
+
 type CommunityPolicy interface {
 	GetCommunityBySlug(ctx context.Context, input communityusecase.GetCommunityInput) (communityusecase.GetCommunityResult, error)
 	CanPostInCommunity(ctx context.Context, input communityusecase.CanPostInCommunityInput) (communityusecase.CanPostInCommunityResult, error)
@@ -41,12 +48,14 @@ type PublishPostInput struct {
 type ListCommunityPostsInput struct {
 	CommunitySlug string
 	ViewerID      userdomain.UserID
+	Sort          string
 	Limit         int
 	Offset        int
 }
 
 type ListLatestPostsInput struct {
 	ViewerID userdomain.UserID
+	Sort     string
 	Limit    int
 	Offset   int
 }
@@ -161,6 +170,10 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
+	sort, err := normalizePostListSort(input.Sort)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
 
 	community, err := uc.communities.GetCommunityBySlug(ctx, communityusecase.GetCommunityInput{
 		Slug: input.CommunitySlug,
@@ -173,7 +186,7 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 		return ListCommunityPostsResult{}, err
 	}
 
-	posts, err := uc.posts.ListVisibleByCommunity(ctx, communityID, limit, offset)
+	posts, err := uc.posts.ListVisibleByCommunity(ctx, communityID, sort, limit, offset)
 	if err != nil {
 		return ListCommunityPostsResult{}, fmt.Errorf("list community posts: %w", err)
 	}
@@ -200,8 +213,12 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
+	sort, err := normalizePostListSort(input.Sort)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
 
-	posts, err := uc.posts.ListVisibleInPublicCommunities(ctx, limit, offset)
+	posts, err := uc.posts.ListVisibleInPublicCommunities(ctx, sort, limit, offset)
 	if err != nil {
 		return ListLatestPostsResult{}, fmt.Errorf("list latest posts: %w", err)
 	}
@@ -259,6 +276,19 @@ func normalizePagination(limit int, offset int) (int, int, error) {
 	}
 
 	return limit, offset, nil
+}
+
+func normalizePostListSort(raw string) (PostListSort, error) {
+	sort := PostListSort(strings.ToLower(strings.TrimSpace(raw)))
+	if sort == "" {
+		return PostListSortNew, nil
+	}
+	switch sort {
+	case PostListSortNew, PostListSortHot:
+		return sort, nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "post list sort is invalid")
+	}
 }
 
 type postVoteView struct {

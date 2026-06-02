@@ -109,7 +109,10 @@ func TestListCommunityPostsNormalizesPagination(t *testing.T) {
 	var gotLimit int
 	var gotOffset int
 	posts := &fakePostRepository{
-		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error) {
+		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+			if sort != PostListSortNew {
+				t.Fatalf("expected default sort %q, got %q", PostListSortNew, sort)
+			}
 			gotLimit = limit
 			gotOffset = offset
 			return []postdomain.Post{*post}, nil
@@ -170,6 +173,32 @@ func TestListCommunityPostsRejectsInvalidPagination(t *testing.T) {
 	}
 }
 
+func TestListCommunityPostsPassesHotSort(t *testing.T) {
+	communityID := communitydomain.NewGeneratedCommunityID()
+	var gotSort PostListSort
+	posts := &fakePostRepository{
+		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+			gotSort = sort
+			return nil, nil
+		},
+	}
+	communities := &fakeCommunityPolicy{
+		getResult: communityusecase.GetCommunityResult{Community: newCommunityDTO(communityID, "campus")},
+	}
+	uc := NewPostUseCase(posts, communities, time.Now)
+
+	_, err := uc.ListCommunityPosts(context.Background(), ListCommunityPostsInput{
+		CommunitySlug: "campus",
+		Sort:          "HoT",
+	})
+	if err != nil {
+		t.Fatalf("ListCommunityPosts returned error: %v", err)
+	}
+	if gotSort != PostListSortHot {
+		t.Fatalf("expected hot sort, got %q", gotSort)
+	}
+}
+
 func TestListLatestPostsReturnsVoteView(t *testing.T) {
 	viewerID := userdomain.NewGeneratedUserID()
 	communityID := communitydomain.NewGeneratedCommunityID()
@@ -177,7 +206,10 @@ func TestListLatestPostsReturnsVoteView(t *testing.T) {
 	var gotLimit int
 	var gotOffset int
 	posts := &fakePostRepository{
-		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+			if sort != PostListSortNew {
+				t.Fatalf("expected default sort %q, got %q", PostListSortNew, sort)
+			}
 			gotLimit = limit
 			gotOffset = offset
 			return []postdomain.Post{*post}, nil
@@ -216,6 +248,34 @@ func TestListLatestPostsReturnsVoteView(t *testing.T) {
 	}
 	if result.Posts[0].UpvoteCount != 4 || result.Posts[0].DownvoteCount != 2 || result.Posts[0].Score != 2 || result.Posts[0].MyVote != 1 {
 		t.Fatalf("unexpected vote view: %#v", result.Posts[0])
+	}
+}
+
+func TestListLatestPostsPassesHotSort(t *testing.T) {
+	var gotSort PostListSort
+	posts := &fakePostRepository{
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+			gotSort = sort
+			return nil, nil
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now)
+
+	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{Sort: "hot"})
+	if err != nil {
+		t.Fatalf("ListLatestPosts returned error: %v", err)
+	}
+	if gotSort != PostListSortHot {
+		t.Fatalf("expected hot sort, got %q", gotSort)
+	}
+}
+
+func TestListLatestPostsRejectsInvalidSort(t *testing.T) {
+	uc := NewPostUseCase(&fakePostRepository{}, &fakeCommunityPolicy{}, time.Now)
+
+	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{Sort: "popular"})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for invalid sort, got %v", err)
 	}
 }
 
@@ -281,8 +341,8 @@ func TestGetPostDefaultsEmptyVoteView(t *testing.T) {
 type fakePostRepository struct {
 	createFunc                         func(ctx context.Context, post postdomain.Post) error
 	findVisibleByIDFunc                func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
-	listVisibleByCommunityFunc         func(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error)
-	listVisibleInPublicCommunitiesFunc func(ctx context.Context, limit int, offset int) ([]postdomain.Post, error)
+	listVisibleByCommunityFunc         func(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+	listVisibleInPublicCommunitiesFunc func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 }
 
 func (f *fakePostRepository) Create(ctx context.Context, post postdomain.Post) error {
@@ -299,16 +359,16 @@ func (f *fakePostRepository) FindVisibleByID(ctx context.Context, id postdomain.
 	return nil, apperr.New(apperr.CodeNotFound, "post not found")
 }
 
-func (f *fakePostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error) {
+func (f *fakePostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
 	if f.listVisibleByCommunityFunc != nil {
-		return f.listVisibleByCommunityFunc(ctx, communityID, limit, offset)
+		return f.listVisibleByCommunityFunc(ctx, communityID, sort, limit, offset)
 	}
 	return nil, nil
 }
 
-func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
+func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
 	if f.listVisibleInPublicCommunitiesFunc != nil {
-		return f.listVisibleInPublicCommunitiesFunc(ctx, limit, offset)
+		return f.listVisibleInPublicCommunitiesFunc(ctx, sort, limit, offset)
 	}
 	return nil, nil
 }

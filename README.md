@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-阶段：`阶段 8 审核台最小闭环`
+阶段：`阶段 12 通知已完成`
 
-代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础，以及阶段 7 轻量举报与平台 staff 移除内容闭环。
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环、阶段 9 hot feed / 内容分发闭环、阶段 10 审核台增强闭环、阶段 11 搜索闭环，以及阶段 12 通知闭环。
 
-当前推进阶段 8：补齐平台 staff 的最小审核处理入口，包括举报列表、举报详情、dismiss 举报，以及基于举报移除目标内容。
+阶段 12 已完成：补齐最小站内通知中心，已提供通知事实表、我的通知列表和标记单条通知已读。不进入 WebSocket、邮件、移动推送、通知设置或跨模块自动事件源。
 
 已具备：
 
@@ -48,13 +48,24 @@
 - `POST /api/v1/comments/:id/reports`
 - `POST /api/v1/posts/:id/moderation/remove`
 - `POST /api/v1/comments/:id/moderation/remove`
+- `GET /api/v1/moderation/reports`
+- `GET /api/v1/moderation/reports/:id`
+- `POST /api/v1/moderation/reports/:id/dismiss`
+- `POST /api/v1/moderation/reports/:id/remove-target`
+- 审核台举报列表和详情响应 `target_preview`
+- `GET /api/v1/posts?sort=new|hot`
+- `GET /api/v1/communities/:slug/posts?sort=new|hot`
+- `GET /api/v1/search?q=...&scope=all|communities|posts`
+- `GET /api/v1/notifications`
+- `POST /api/v1/notifications/:id/read`
 - 移除内容和审核动作写入同一 PostgreSQL 事务
 - HTTP CORS 基础配置：`HTTP_CORS_ALLOWED_ORIGINS`
 
 下一步：
 
-- 阶段 8 正在推进审核台最小闭环；优先实现 staff 可操作的举报处理主链路。
-- 当前仍不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理、hot feed 或评论投票。
+- 本轮目标已完成。
+- 后续若继续通知，可优先接入评论、举报处理或系统公告作为通知来源。
+- 当前仍不做全文索引、外部搜索引擎、标签搜索、评论搜索、搜索高亮、搜索分析、个性化排序、WebSocket、邮件、推送或通知设置。
 
 ## 接口
 
@@ -82,6 +93,13 @@ POST /api/v1/posts/:id/reports
 POST /api/v1/comments/:id/reports
 POST /api/v1/posts/:id/moderation/remove
 POST /api/v1/comments/:id/moderation/remove
+GET  /api/v1/moderation/reports
+GET  /api/v1/moderation/reports/:id
+POST /api/v1/moderation/reports/:id/dismiss
+POST /api/v1/moderation/reports/:id/remove-target
+GET  /api/v1/search
+GET  /api/v1/notifications
+POST /api/v1/notifications/:id/read
 ```
 
 注册请求：
@@ -181,18 +199,32 @@ curl -i -X POST http://localhost:8080/api/v1/communities/public/posts \
 社区帖子列表：
 
 ```bash
-curl -i "http://localhost:8080/api/v1/communities/public/posts?limit=20&offset=0" \
+curl -i "http://localhost:8080/api/v1/communities/public/posts?sort=new&limit=20&offset=0" \
   -H "Authorization: Bearer <access_token>"
 ```
 
 全站最新帖子流：
 
 ```bash
-curl -i "http://localhost:8080/api/v1/posts?limit=20&offset=0" \
+curl -i "http://localhost:8080/api/v1/posts?sort=new&limit=20&offset=0" \
   -H "Authorization: Bearer <access_token>"
 ```
 
-帖子列表、帖子详情和全站最新流都会返回 `upvote_count`、`downvote_count`、`score`、`my_vote`。`my_vote` 为 `1`、`-1` 或 `0`。
+全站 hot 帖子流：
+
+```bash
+curl -i "http://localhost:8080/api/v1/posts?sort=hot&limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+社区 hot 帖子列表：
+
+```bash
+curl -i "http://localhost:8080/api/v1/communities/public/posts?sort=hot&limit=20&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+不传 `sort` 时默认按 `new` 排序。`sort=hot` 使用现有帖子投票事实排序，按 `score DESC, upvote_count DESC, created_at DESC, id DESC`。帖子列表、帖子详情和全站帖子流都会返回 `upvote_count`、`downvote_count`、`score`、`my_vote`。`my_vote` 为 `1`、`-1` 或 `0`。
 
 帖子详情：
 
@@ -284,6 +316,42 @@ curl -i -X POST http://localhost:8080/api/v1/comments/<comment_id>/moderation/re
 UPDATE users SET is_platform_staff = true WHERE username = 'reviewer';
 ```
 
+举报列表：
+
+```bash
+curl -i "http://localhost:8080/api/v1/moderation/reports?status=pending&limit=20&offset=0" \
+  -H "Authorization: Bearer <staff_access_token>"
+```
+
+不传 `status` 时默认只返回 `pending` 举报。非 staff 返回 `403 forbidden`。
+
+举报详情：
+
+```bash
+curl -i http://localhost:8080/api/v1/moderation/reports/<report_id> \
+  -H "Authorization: Bearer <staff_access_token>"
+```
+
+dismiss 举报：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/moderation/reports/<report_id>/dismiss \
+  -H "Authorization: Bearer <staff_access_token>"
+```
+
+dismiss 只处理 `pending` 举报，成功后写入 `dismissed`、`reviewed_by`、`reviewed_at` 和 `updated_at`，不新增 `moderation_actions.action=dismiss`。
+
+基于举报移除目标内容：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/moderation/reports/<report_id>/remove-target \
+  -H "Authorization: Bearer <staff_access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"reason\":\"policy violation\"}"
+```
+
+remove-target 只处理 `pending` 举报，并复用内容移除事务：移除帖子或评论、写入 `moderation_actions(action=remove)`、解决同 target 的 pending 举报在同一 PostgreSQL 事务内完成。
+
 ## 本地运行
 
 ### 1. 准备配置
@@ -373,7 +441,8 @@ go build -buildvcs=false ./...
 - 阶段 4 评论主链路暂不做评论树优化、评论编辑、删除、评论投票、审核台和通知。
 - 阶段 6 已完成帖子 upvote/downvote 和全站最新流；暂不做 hot feed、推荐排序、评论投票、投票通知和防刷策略。
 - 阶段 7 已完成轻量举报与平台 staff 移除内容闭环。
-- 阶段 8 正在推进审核台最小闭环；暂不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理或 target 内容预览增强。
+- 阶段 8 已完成审核台最小闭环；暂不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理或 target 内容预览增强。
+- 阶段 9 正在推进 hot feed / 内容分发；暂不做个性化推荐、预计算时间线、推荐系统、反作弊、评论投票、通知或审核台增强。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License

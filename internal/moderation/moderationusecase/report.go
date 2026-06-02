@@ -50,17 +50,30 @@ type ReportContentResult struct {
 }
 
 type ContentReport struct {
-	ID         string
-	TargetType string
-	PostID     string
-	CommentID  string
-	ReporterID string
-	Reason     string
-	Status     string
-	ReviewedBy string
-	ReviewedAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID            string
+	TargetType    string
+	PostID        string
+	CommentID     string
+	ReporterID    string
+	Reason        string
+	Status        string
+	ReviewedBy    string
+	ReviewedAt    *time.Time
+	TargetPreview *ReportTargetPreview
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type ReportTargetPreview struct {
+	TargetType  string
+	PostID      string
+	CommentID   string
+	AuthorID    string
+	Status      string
+	Title       string
+	BodyExcerpt string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 func (uc *ReportUseCase) ReportPost(ctx context.Context, input ReportPostInput) (ReportContentResult, error) {
@@ -168,4 +181,13 @@ func toContentReportDTO(report moderationdomain.ContentReport) ContentReport {
 		CreatedAt:  report.CreatedAt(),
 		UpdatedAt:  report.UpdatedAt(),
 	}
+}
+
+func toContentReportRecordDTO(record ContentReportRecord) ContentReport {
+	report := toContentReportDTO(record.Report)
+	if record.TargetPreview != nil {
+		preview := *record.TargetPreview
+		report.TargetPreview = &preview
+	}
+	return report
 }

@@ -281,10 +281,21 @@ func TestListReportsReturnsReports(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	userID := userdomain.NewGeneratedUserID()
+	report := newReportResult(moderationdomain.TargetTypePost.String(), "8f92e975-5323-4a58-bac1-1336b668183c", "")
+	report.TargetPreview = &moderationusecase.ReportTargetPreview{
+		TargetType:  moderationdomain.TargetTypePost.String(),
+		PostID:      "8f92e975-5323-4a58-bac1-1336b668183c",
+		AuthorID:    userdomain.NewGeneratedUserID().String(),
+		Status:      "visible",
+		Title:       "Reported post",
+		BodyExcerpt: "reported body",
+		CreatedAt:   report.CreatedAt,
+		UpdatedAt:   report.UpdatedAt,
+	}
 	console := &fakeReportUseCase{
 		listReportsResult: moderationusecase.ListReportsResult{
 			Reports: []moderationusecase.ContentReport{
-				newReportResult(moderationdomain.TargetTypePost.String(), "8f92e975-5323-4a58-bac1-1336b668183c", ""),
+				report,
 			},
 			Limit:  50,
 			Offset: 2,
@@ -318,6 +329,9 @@ func TestListReportsReturnsReports(t *testing.T) {
 	if response.Limit != 50 || response.Offset != 2 || len(response.Reports) != 1 {
 		t.Fatalf("unexpected list response: %#v", response)
 	}
+	if response.Reports[0].TargetPreview == nil || response.Reports[0].TargetPreview.Title != "Reported post" {
+		t.Fatalf("expected target preview, got %#v", response.Reports[0].TargetPreview)
+	}
 }
 
 func TestGetReportReturnsReport(t *testing.T) {
@@ -325,9 +339,20 @@ func TestGetReportReturnsReport(t *testing.T) {
 
 	userID := userdomain.NewGeneratedUserID()
 	reportID := "2b74a80d-6d57-4d61-a3ae-db5e006766b6"
+	report := newReportResult(moderationdomain.TargetTypeComment.String(), "", "94509b7b-1b72-4726-ac08-819f0322d065")
+	report.TargetPreview = &moderationusecase.ReportTargetPreview{
+		TargetType:  moderationdomain.TargetTypeComment.String(),
+		PostID:      "8f92e975-5323-4a58-bac1-1336b668183c",
+		CommentID:   "94509b7b-1b72-4726-ac08-819f0322d065",
+		AuthorID:    userdomain.NewGeneratedUserID().String(),
+		Status:      "visible",
+		BodyExcerpt: "reported comment",
+		CreatedAt:   report.CreatedAt,
+		UpdatedAt:   report.UpdatedAt,
+	}
 	console := &fakeReportUseCase{
 		getReportResult: moderationusecase.GetReportResult{
-			Report: newReportResult(moderationdomain.TargetTypeComment.String(), "", "94509b7b-1b72-4726-ac08-819f0322d065"),
+			Report: report,
 		},
 	}
 	router := newModerationTestRouter(console, validParserWithUserID(userID))
@@ -346,6 +371,14 @@ func TestGetReportReturnsReport(t *testing.T) {
 	}
 	if console.getReportInput.ActorID != userID || console.getReportInput.ReportID != reportID {
 		t.Fatalf("unexpected get input: %#v", console.getReportInput)
+	}
+
+	var response reportContentResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Report.TargetPreview == nil || response.Report.TargetPreview.CommentID != "94509b7b-1b72-4726-ac08-819f0322d065" {
+		t.Fatalf("expected comment target preview, got %#v", response.Report.TargetPreview)
 	}
 }
 

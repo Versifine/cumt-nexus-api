@@ -15,8 +15,13 @@ type ContentReportRepository interface {
 }
 
 type ContentReportQueryRepository interface {
-	ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error)
-	FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error)
+	ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]ContentReportRecord, error)
+	FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error)
+}
+
+type ContentReportRecord struct {
+	Report        moderationdomain.ContentReport
+	TargetPreview *ReportTargetPreview
 }
 
 type ContentReportReviewRepository interface {

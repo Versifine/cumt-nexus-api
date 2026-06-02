@@ -97,18 +97,18 @@ func (uc *ConsoleUseCase) ListReports(ctx context.Context, input ListReportsInpu
 		return ListReportsResult{}, err
 	}
 
-	reports, err := uc.reports.ListReports(ctx, status, limit, offset)
+	records, err := uc.reports.ListReports(ctx, status, limit, offset)
 	if err != nil {
 		return ListReportsResult{}, fmt.Errorf("list moderation reports: %w", err)
 	}
 
 	result := ListReportsResult{
-		Reports: make([]ContentReport, 0, len(reports)),
+		Reports: make([]ContentReport, 0, len(records)),
 		Limit:   limit,
 		Offset:  offset,
 	}
-	for _, report := range reports {
-		result.Reports = append(result.Reports, toContentReportDTO(report))
+	for _, record := range records {
+		result.Reports = append(result.Reports, toContentReportRecordDTO(record))
 	}
 	return result, nil
 }
@@ -122,12 +122,12 @@ func (uc *ConsoleUseCase) GetReport(ctx context.Context, input GetReportInput) (
 		return GetReportResult{}, err
 	}
 
-	report, err := uc.reports.FindReportByID(ctx, reportID)
+	record, err := uc.reports.FindReportByID(ctx, reportID)
 	if err != nil {
 		return GetReportResult{}, fmt.Errorf("find moderation report: %w", err)
 	}
 	return GetReportResult{
-		Report: toContentReportDTO(*report),
+		Report: toContentReportRecordDTO(*record),
 	}, nil
 }
 
@@ -140,10 +140,11 @@ func (uc *ConsoleUseCase) DismissReport(ctx context.Context, input DismissReport
 		return DismissReportResult{}, err
 	}
 
-	report, err := uc.reports.FindReportByID(ctx, reportID)
+	record, err := uc.reports.FindReportByID(ctx, reportID)
 	if err != nil {
 		return DismissReportResult{}, fmt.Errorf("find moderation report before dismiss: %w", err)
 	}
+	report := record.Report
 	if report.Status() != moderationdomain.ReportStatusPending {
 		return DismissReportResult{}, apperr.New(apperr.CodeConflict, "content report is not pending")
 	}
@@ -170,10 +171,11 @@ func (uc *ConsoleUseCase) RemoveReportedTarget(ctx context.Context, input Remove
 		return RemoveReportedTargetResult{}, err
 	}
 
-	report, err := uc.reports.FindReportByID(ctx, reportID)
+	record, err := uc.reports.FindReportByID(ctx, reportID)
 	if err != nil {
 		return RemoveReportedTargetResult{}, fmt.Errorf("find moderation report before remove target: %w", err)
 	}
+	report := record.Report
 	if report.Status() != moderationdomain.ReportStatusPending {
 		return RemoveReportedTargetResult{}, apperr.New(apperr.CodeConflict, "content report is not pending")
 	}

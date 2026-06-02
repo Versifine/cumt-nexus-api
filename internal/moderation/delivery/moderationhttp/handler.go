@@ -41,17 +41,30 @@ type reportContentRequest struct {
 }
 
 type contentReportResponse struct {
-	ID         string     `json:"id"`
-	TargetType string     `json:"target_type"`
-	PostID     string     `json:"post_id,omitempty"`
-	CommentID  string     `json:"comment_id,omitempty"`
-	ReporterID string     `json:"reporter_id"`
-	Reason     string     `json:"reason"`
-	Status     string     `json:"status"`
-	ReviewedBy string     `json:"reviewed_by,omitempty"`
-	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID            string                       `json:"id"`
+	TargetType    string                       `json:"target_type"`
+	PostID        string                       `json:"post_id,omitempty"`
+	CommentID     string                       `json:"comment_id,omitempty"`
+	ReporterID    string                       `json:"reporter_id"`
+	Reason        string                       `json:"reason"`
+	Status        string                       `json:"status"`
+	ReviewedBy    string                       `json:"reviewed_by,omitempty"`
+	ReviewedAt    *time.Time                   `json:"reviewed_at,omitempty"`
+	TargetPreview *reportTargetPreviewResponse `json:"target_preview,omitempty"`
+	CreatedAt     time.Time                    `json:"created_at"`
+	UpdatedAt     time.Time                    `json:"updated_at"`
+}
+
+type reportTargetPreviewResponse struct {
+	TargetType  string    `json:"target_type"`
+	PostID      string    `json:"post_id,omitempty"`
+	CommentID   string    `json:"comment_id,omitempty"`
+	AuthorID    string    `json:"author_id"`
+	Status      string    `json:"status"`
+	Title       string    `json:"title,omitempty"`
+	BodyExcerpt string    `json:"body_excerpt"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type reportContentResponse struct {
@@ -356,7 +369,7 @@ func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
 }
 
 func toContentReportResponse(report moderationusecase.ContentReport) contentReportResponse {
-	return contentReportResponse{
+	response := contentReportResponse{
 		ID:         report.ID,
 		TargetType: report.TargetType,
 		PostID:     report.PostID,
@@ -368,6 +381,25 @@ func toContentReportResponse(report moderationusecase.ContentReport) contentRepo
 		ReviewedAt: report.ReviewedAt,
 		CreatedAt:  report.CreatedAt,
 		UpdatedAt:  report.UpdatedAt,
+	}
+	if report.TargetPreview != nil {
+		preview := toReportTargetPreviewResponse(*report.TargetPreview)
+		response.TargetPreview = &preview
+	}
+	return response
+}
+
+func toReportTargetPreviewResponse(preview moderationusecase.ReportTargetPreview) reportTargetPreviewResponse {
+	return reportTargetPreviewResponse{
+		TargetType:  preview.TargetType,
+		PostID:      preview.PostID,
+		CommentID:   preview.CommentID,
+		AuthorID:    preview.AuthorID,
+		Status:      preview.Status,
+		Title:       preview.Title,
+		BodyExcerpt: preview.BodyExcerpt,
+		CreatedAt:   preview.CreatedAt,
+		UpdatedAt:   preview.UpdatedAt,
 	}
 }
 
