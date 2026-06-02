@@ -13,6 +13,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
@@ -115,8 +116,17 @@ func TestPostgresModerationRepositoryListReportsAndFindReportByID(t *testing.T) 
 	if err != nil {
 		t.Fatalf("FindReportByID returned error: %v", err)
 	}
-	if found.ID() != report.ID() || found.Status() != moderationdomain.ReportStatusPending {
+	if found.Report.ID() != report.ID() || found.Report.Status() != moderationdomain.ReportStatusPending {
 		t.Fatalf("unexpected found report: %#v", found)
+	}
+	if found.TargetPreview == nil {
+		t.Fatal("expected post target preview")
+	}
+	if found.TargetPreview.TargetType != moderationdomain.TargetTypePost.String() || found.TargetPreview.PostID != post.String() {
+		t.Fatalf("unexpected post target preview: %#v", found.TargetPreview)
+	}
+	if found.TargetPreview.Title != "Listed report" || found.TargetPreview.Status != "visible" {
+		t.Fatalf("unexpected post preview content: %#v", found.TargetPreview)
 	}
 }
 
@@ -127,6 +137,41 @@ func TestPostgresModerationRepositoryFindMissingReportReturnsNotFound(t *testing
 	_, err := repo.FindReportByID(ctx, moderationdomain.NewGeneratedContentReportID())
 	if !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for missing report, got %v", err)
+	}
+}
+
+func TestPostgresModerationRepositoryFindCommentReportIncludesTargetPreview(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	reporterID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Comment preview parent")
+	comment := insertTestComment(ctx, t, pool, post, authorID)
+	target, err := moderationdomain.NewCommentTarget(comment)
+	if err != nil {
+		t.Fatalf("NewCommentTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "abuse", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+
+	found, err := repo.FindReportByID(ctx, report.ID())
+	if err != nil {
+		t.Fatalf("FindReportByID returned error: %v", err)
+	}
+	if found.TargetPreview == nil {
+		t.Fatal("expected comment target preview")
+	}
+	if found.TargetPreview.TargetType != moderationdomain.TargetTypeComment.String() || found.TargetPreview.CommentID != comment.String() {
+		t.Fatalf("unexpected comment target preview: %#v", found.TargetPreview)
+	}
+	if found.TargetPreview.PostID != post.String() || found.TargetPreview.Status != "visible" {
+		t.Fatalf("unexpected comment preview context: %#v", found.TargetPreview)
 	}
 }
 
@@ -203,11 +248,19 @@ func TestPostgresModerationRepositoryRemovePostWithAction(t *testing.T) {
 	assertContentStatus(t, ctx, pool, "posts", post.String(), "removed")
 	assertReportStatusInDB(t, ctx, pool, report.ID(), "resolved")
 	assertActionExists(t, ctx, pool, action.ID())
+
+	found, err := repo.FindReportByID(ctx, report.ID())
+	if err != nil {
+		t.Fatalf("FindReportByID after removal returned error: %v", err)
+	}
+	if found.TargetPreview == nil || found.TargetPreview.Status != "removed" {
+		t.Fatalf("expected removed target preview, got %#v", found.TargetPreview)
+	}
 }
 
-func containsReportID(reports []moderationdomain.ContentReport, id moderationdomain.ContentReportID) bool {
-	for _, report := range reports {
-		if report.ID() == id {
+func containsReportID(records []moderationusecase.ContentReportRecord, id moderationdomain.ContentReportID) bool {
+	for _, record := range records {
+		if record.Report.ID() == id {
 			return true
 		}
 	}

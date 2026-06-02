@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
@@ -78,22 +79,38 @@ func (repo *PostgresModerationRepository) CreateReport(ctx context.Context, repo
 	return nil
 }
 
-func (repo *PostgresModerationRepository) ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error) {
+func (repo *PostgresModerationRepository) ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationusecase.ContentReportRecord, error) {
 	const query = `
 		SELECT
-			id::text,
-			reporter_id::text,
-			post_id::text,
-			comment_id::text,
-			reason,
-			status,
-			reviewed_by::text,
-			reviewed_at,
-			created_at,
-			updated_at
+			content_reports.id::text,
+			content_reports.reporter_id::text,
+			content_reports.post_id::text,
+			content_reports.comment_id::text,
+			content_reports.reason,
+			content_reports.status,
+			content_reports.reviewed_by::text,
+			content_reports.reviewed_at,
+			content_reports.created_at,
+			content_reports.updated_at,
+			posts.id::text,
+			posts.author_id::text,
+			posts.status,
+			posts.title,
+			posts.body,
+			posts.created_at,
+			posts.updated_at,
+			comments.id::text,
+			comments.post_id::text,
+			comments.author_id::text,
+			comments.status,
+			comments.body,
+			comments.created_at,
+			comments.updated_at
 		FROM content_reports
-		WHERE status = $1
-		ORDER BY created_at DESC, id DESC
+		LEFT JOIN posts ON posts.id = content_reports.post_id
+		LEFT JOIN comments ON comments.id = content_reports.comment_id
+		WHERE content_reports.status = $1
+		ORDER BY content_reports.created_at DESC, content_reports.id DESC
 		LIMIT $2
 		OFFSET $3
 	`
@@ -104,46 +121,62 @@ func (repo *PostgresModerationRepository) ListReports(ctx context.Context, statu
 	}
 	defer rows.Close()
 
-	reports := make([]moderationdomain.ContentReport, 0)
+	records := make([]moderationusecase.ContentReportRecord, 0)
 	for rows.Next() {
-		report, err := scanContentReport(rows)
+		record, err := scanContentReportRecord(rows)
 		if err != nil {
 			return nil, err
 		}
-		reports = append(reports, *report)
+		records = append(records, *record)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate content reports: %w", err)
 	}
-	return reports, nil
+	return records, nil
 }
 
-func (repo *PostgresModerationRepository) FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+func (repo *PostgresModerationRepository) FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*moderationusecase.ContentReportRecord, error) {
 	const query = `
 		SELECT
-			id::text,
-			reporter_id::text,
-			post_id::text,
-			comment_id::text,
-			reason,
-			status,
-			reviewed_by::text,
-			reviewed_at,
-			created_at,
-			updated_at
+			content_reports.id::text,
+			content_reports.reporter_id::text,
+			content_reports.post_id::text,
+			content_reports.comment_id::text,
+			content_reports.reason,
+			content_reports.status,
+			content_reports.reviewed_by::text,
+			content_reports.reviewed_at,
+			content_reports.created_at,
+			content_reports.updated_at,
+			posts.id::text,
+			posts.author_id::text,
+			posts.status,
+			posts.title,
+			posts.body,
+			posts.created_at,
+			posts.updated_at,
+			comments.id::text,
+			comments.post_id::text,
+			comments.author_id::text,
+			comments.status,
+			comments.body,
+			comments.created_at,
+			comments.updated_at
 		FROM content_reports
-		WHERE id = $1::uuid
+		LEFT JOIN posts ON posts.id = content_reports.post_id
+		LEFT JOIN comments ON comments.id = content_reports.comment_id
+		WHERE content_reports.id = $1::uuid
 		LIMIT 1
 	`
 
-	report, err := scanContentReport(repo.pool.QueryRow(ctx, query, id.String()))
+	record, err := scanContentReportRecord(repo.pool.QueryRow(ctx, query, id.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.New(apperr.CodeNotFound, "content report not found")
 		}
 		return nil, err
 	}
-	return report, nil
+	return record, nil
 }
 
 func (repo *PostgresModerationRepository) DismissReport(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, reviewedAt time.Time) (*moderationdomain.ContentReport, error) {
@@ -426,6 +459,118 @@ func scanContentReport(row rowScanner) (*moderationdomain.ContentReport, error) 
 	return report, nil
 }
 
+func scanContentReportRecord(row rowScanner) (*moderationusecase.ContentReportRecord, error) {
+	var rawID string
+	var rawReporterID string
+	var rawPostID pgtype.Text
+	var rawCommentID pgtype.Text
+	var rawReason string
+	var rawStatus string
+	var rawReviewedBy pgtype.Text
+	var rawReviewedAt pgtype.Timestamptz
+	var createdAt time.Time
+	var updatedAt time.Time
+	var rawPreviewPostID pgtype.Text
+	var rawPreviewPostAuthorID pgtype.Text
+	var rawPreviewPostStatus pgtype.Text
+	var rawPreviewPostTitle pgtype.Text
+	var rawPreviewPostBody pgtype.Text
+	var rawPreviewPostCreatedAt pgtype.Timestamptz
+	var rawPreviewPostUpdatedAt pgtype.Timestamptz
+	var rawPreviewCommentID pgtype.Text
+	var rawPreviewCommentPostID pgtype.Text
+	var rawPreviewCommentAuthorID pgtype.Text
+	var rawPreviewCommentStatus pgtype.Text
+	var rawPreviewCommentBody pgtype.Text
+	var rawPreviewCommentCreatedAt pgtype.Timestamptz
+	var rawPreviewCommentUpdatedAt pgtype.Timestamptz
+
+	if err := row.Scan(
+		&rawID,
+		&rawReporterID,
+		&rawPostID,
+		&rawCommentID,
+		&rawReason,
+		&rawStatus,
+		&rawReviewedBy,
+		&rawReviewedAt,
+		&createdAt,
+		&updatedAt,
+		&rawPreviewPostID,
+		&rawPreviewPostAuthorID,
+		&rawPreviewPostStatus,
+		&rawPreviewPostTitle,
+		&rawPreviewPostBody,
+		&rawPreviewPostCreatedAt,
+		&rawPreviewPostUpdatedAt,
+		&rawPreviewCommentID,
+		&rawPreviewCommentPostID,
+		&rawPreviewCommentAuthorID,
+		&rawPreviewCommentStatus,
+		&rawPreviewCommentBody,
+		&rawPreviewCommentCreatedAt,
+		&rawPreviewCommentUpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	id, err := moderationdomain.NewContentReportID(rawID)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report id: %v", err)
+	}
+	reporterID, err := userdomain.NewUserID(rawReporterID)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report reporter id: %v", err)
+	}
+	target, err := rehydrateReportTarget(rawPostID, rawCommentID)
+	if err != nil {
+		return nil, err
+	}
+	reason, err := moderationdomain.NewReason(rawReason)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report reason: %v", err)
+	}
+	status, err := moderationdomain.NewReportStatus(rawStatus)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report status: %v", err)
+	}
+	reviewedBy, err := rehydrateOptionalUserID(rawReviewedBy)
+	if err != nil {
+		return nil, err
+	}
+	reviewedAt := rehydrateOptionalTime(rawReviewedAt)
+
+	report, err := moderationdomain.RehydrateContentReport(id, target, reporterID, reason, status, reviewedBy, reviewedAt, createdAt, updatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate content report: %v", err)
+	}
+
+	preview, err := rehydrateReportTargetPreview(
+		rawPreviewPostID,
+		rawPreviewPostAuthorID,
+		rawPreviewPostStatus,
+		rawPreviewPostTitle,
+		rawPreviewPostBody,
+		rawPreviewPostCreatedAt,
+		rawPreviewPostUpdatedAt,
+		rawPreviewCommentID,
+		rawPreviewCommentPostID,
+		rawPreviewCommentAuthorID,
+		rawPreviewCommentStatus,
+		rawPreviewCommentBody,
+		rawPreviewCommentCreatedAt,
+		rawPreviewCommentUpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &moderationusecase.ContentReportRecord{
+		Report:        *report,
+		TargetPreview: preview,
+	}, nil
+}
+
 func rehydrateReportTarget(rawPostID pgtype.Text, rawCommentID pgtype.Text) (moderationdomain.Target, error) {
 	if rawPostID.Valid {
 		postID, err := postdomain.NewPostID(rawPostID.String)
@@ -469,6 +614,82 @@ func rehydrateOptionalTime(raw pgtype.Timestamptz) *time.Time {
 	}
 	value := raw.Time
 	return &value
+}
+
+func rehydrateReportTargetPreview(
+	rawPostID pgtype.Text,
+	rawPostAuthorID pgtype.Text,
+	rawPostStatus pgtype.Text,
+	rawPostTitle pgtype.Text,
+	rawPostBody pgtype.Text,
+	rawPostCreatedAt pgtype.Timestamptz,
+	rawPostUpdatedAt pgtype.Timestamptz,
+	rawCommentID pgtype.Text,
+	rawCommentPostID pgtype.Text,
+	rawCommentAuthorID pgtype.Text,
+	rawCommentStatus pgtype.Text,
+	rawCommentBody pgtype.Text,
+	rawCommentCreatedAt pgtype.Timestamptz,
+	rawCommentUpdatedAt pgtype.Timestamptz,
+) (*moderationusecase.ReportTargetPreview, error) {
+	if rawPostID.Valid {
+		createdAt, err := requiredPreviewTime(rawPostCreatedAt, "post created_at")
+		if err != nil {
+			return nil, err
+		}
+		updatedAt, err := requiredPreviewTime(rawPostUpdatedAt, "post updated_at")
+		if err != nil {
+			return nil, err
+		}
+		return &moderationusecase.ReportTargetPreview{
+			TargetType:  moderationdomain.TargetTypePost.String(),
+			PostID:      rawPostID.String,
+			AuthorID:    rawPostAuthorID.String,
+			Status:      rawPostStatus.String,
+			Title:       rawPostTitle.String,
+			BodyExcerpt: excerptBody(rawPostBody.String),
+			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
+		}, nil
+	}
+	if rawCommentID.Valid {
+		createdAt, err := requiredPreviewTime(rawCommentCreatedAt, "comment created_at")
+		if err != nil {
+			return nil, err
+		}
+		updatedAt, err := requiredPreviewTime(rawCommentUpdatedAt, "comment updated_at")
+		if err != nil {
+			return nil, err
+		}
+		return &moderationusecase.ReportTargetPreview{
+			TargetType:  moderationdomain.TargetTypeComment.String(),
+			PostID:      rawCommentPostID.String,
+			CommentID:   rawCommentID.String,
+			AuthorID:    rawCommentAuthorID.String,
+			Status:      rawCommentStatus.String,
+			BodyExcerpt: excerptBody(rawCommentBody.String),
+			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
+		}, nil
+	}
+	return nil, nil
+}
+
+func requiredPreviewTime(raw pgtype.Timestamptz, name string) (time.Time, error) {
+	if !raw.Valid {
+		return time.Time{}, fmt.Errorf("rehydrate report target preview %s: value is null", name)
+	}
+	return raw.Time, nil
+}
+
+func excerptBody(raw string) string {
+	const maxRunes = 160
+	trimmed := strings.TrimSpace(raw)
+	runes := []rune(trimmed)
+	if len(runes) <= maxRunes {
+		return trimmed
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func insertModerationAction(ctx context.Context, db postgresExecutor, action moderationdomain.ModerationAction) error {

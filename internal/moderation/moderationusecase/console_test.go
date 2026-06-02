@@ -14,15 +14,25 @@ func TestConsoleListReportsDefaultsPendingAndNormalizesPagination(t *testing.T) 
 	now := testNow()
 	actorID := userdomain.NewGeneratedUserID()
 	report := mustContentReport(t, mustPostTarget(t), userdomain.NewGeneratedUserID(), "spam", now)
+	preview := &ReportTargetPreview{
+		TargetType:  moderationdomain.TargetTypePost.String(),
+		PostID:      mustPost(t, now).ID().String(),
+		AuthorID:    userdomain.NewGeneratedUserID().String(),
+		Status:      "visible",
+		Title:       "Reported post",
+		BodyExcerpt: "reported body",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
 	reports := &fakeReportQueryRepository{
-		listFunc: func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error) {
+		listFunc: func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]ContentReportRecord, error) {
 			if status != moderationdomain.ReportStatusPending {
 				t.Fatalf("expected pending status, got %q", status)
 			}
 			if limit != 20 || offset != 0 {
 				t.Fatalf("expected default limit/offset, got %d/%d", limit, offset)
 			}
-			return []moderationdomain.ContentReport{*report}, nil
+			return []ContentReportRecord{{Report: *report, TargetPreview: preview}}, nil
 		},
 	}
 	uc := NewConsoleUseCase(reports, reports, reports, &fakeStaffRepository{isStaff: true}, func() time.Time { return now })
@@ -40,11 +50,14 @@ func TestConsoleListReportsDefaultsPendingAndNormalizesPagination(t *testing.T) 
 	if result.Limit != 20 || result.Offset != 0 || len(result.Reports) != 1 {
 		t.Fatalf("unexpected list result: %#v", result)
 	}
+	if result.Reports[0].TargetPreview == nil || result.Reports[0].TargetPreview.Title != "Reported post" {
+		t.Fatalf("expected target preview, got %#v", result.Reports[0].TargetPreview)
+	}
 }
 
 func TestConsoleListReportsSupportsStatusAndClampsLimit(t *testing.T) {
 	reports := &fakeReportQueryRepository{
-		listFunc: func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error) {
+		listFunc: func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]ContentReportRecord, error) {
 			if status != moderationdomain.ReportStatusResolved {
 				t.Fatalf("expected resolved status, got %q", status)
 			}
@@ -73,12 +86,22 @@ func TestConsoleListReportsSupportsStatusAndClampsLimit(t *testing.T) {
 func TestConsoleGetReportReturnsReport(t *testing.T) {
 	now := testNow()
 	report := mustContentReport(t, mustPostTarget(t), userdomain.NewGeneratedUserID(), "spam", now)
+	preview := &ReportTargetPreview{
+		TargetType:  moderationdomain.TargetTypePost.String(),
+		PostID:      mustPost(t, now).ID().String(),
+		AuthorID:    userdomain.NewGeneratedUserID().String(),
+		Status:      "visible",
+		Title:       "Reported post",
+		BodyExcerpt: "reported body",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
 	reports := &fakeReportQueryRepository{
-		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
 			if id != report.ID() {
 				t.Fatalf("expected report id %q, got %q", report.ID().String(), id.String())
 			}
-			return report, nil
+			return &ContentReportRecord{Report: *report, TargetPreview: preview}, nil
 		},
 	}
 	uc := NewConsoleUseCase(reports, reports, reports, &fakeStaffRepository{isStaff: true}, time.Now)
@@ -96,6 +119,9 @@ func TestConsoleGetReportReturnsReport(t *testing.T) {
 	}
 	if result.Report.ID != report.ID().String() {
 		t.Fatalf("unexpected report result: %#v", result.Report)
+	}
+	if result.Report.TargetPreview == nil || result.Report.TargetPreview.Title != "Reported post" {
+		t.Fatalf("expected target preview, got %#v", result.Report.TargetPreview)
 	}
 }
 
@@ -143,7 +169,7 @@ func TestConsoleRejectsMissingActorNonStaffAndInvalidInputs(t *testing.T) {
 
 func TestConsolePropagatesRepositoryError(t *testing.T) {
 	query := &fakeReportQueryRepository{
-		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
 			return nil, apperr.New(apperr.CodeNotFound, "content report not found")
 		},
 	}
@@ -170,8 +196,8 @@ func TestConsoleDismissReportMarksPendingReportDismissed(t *testing.T) {
 	actorID := userdomain.NewGeneratedUserID()
 	report := mustContentReport(t, mustPostTarget(t), userdomain.NewGeneratedUserID(), "spam", now)
 	reports := &fakeReportQueryRepository{
-		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
-			return report, nil
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
+			return &ContentReportRecord{Report: *report}, nil
 		},
 		dismissFunc: func(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, gotReviewedAt time.Time) (*moderationdomain.ContentReport, error) {
 			if id != report.ID() || reviewerID != actorID || !gotReviewedAt.Equal(reviewedAt) {
@@ -214,8 +240,8 @@ func TestConsoleDismissRejectsNonPendingReport(t *testing.T) {
 		t.Fatalf("RehydrateContentReport returned error: %v", err)
 	}
 	reports := &fakeReportQueryRepository{
-		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
-			return dismissed, nil
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
+			return &ContentReportRecord{Report: *dismissed}, nil
 		},
 	}
 	uc := NewConsoleUseCase(reports, reports, reports, &fakeStaffRepository{isStaff: true}, time.Now)
@@ -238,11 +264,11 @@ func TestConsoleRemoveReportedTargetCreatesModerationAction(t *testing.T) {
 	actorID := userdomain.NewGeneratedUserID()
 	report := mustContentReport(t, mustPostTarget(t), userdomain.NewGeneratedUserID(), "spam", now)
 	reports := &fakeReportQueryRepository{
-		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
 			if id != report.ID() {
 				t.Fatalf("expected report id %q, got %q", report.ID().String(), id.String())
 			}
-			return report, nil
+			return &ContentReportRecord{Report: *report}, nil
 		},
 		removeReportedFunc: func(ctx context.Context, id moderationdomain.ContentReportID, action moderationdomain.ModerationAction) error {
 			if id != report.ID() {
@@ -292,8 +318,8 @@ func TestConsoleRemoveReportedTargetRejectsInvalidInputAndNonPendingReport(t *te
 		t.Fatalf("RehydrateContentReport returned error: %v", err)
 	}
 	reports := &fakeReportQueryRepository{
-		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
-			return dismissed, nil
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
+			return &ContentReportRecord{Report: *dismissed}, nil
 		},
 	}
 	uc := NewConsoleUseCase(reports, reports, reports, &fakeStaffRepository{isStaff: true}, time.Now)
@@ -327,8 +353,8 @@ func TestConsoleRemoveReportedTargetPropagatesRepositoryError(t *testing.T) {
 	now := testNow()
 	report := mustContentReport(t, mustPostTarget(t), userdomain.NewGeneratedUserID(), "spam", now)
 	reports := &fakeReportQueryRepository{
-		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
-			return report, nil
+		findFunc: func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
+			return &ContentReportRecord{Report: *report}, nil
 		},
 		removeReportedFunc: func(ctx context.Context, id moderationdomain.ContentReportID, action moderationdomain.ModerationAction) error {
 			return apperr.New(apperr.CodeNotFound, "content not found")
@@ -351,13 +377,13 @@ type fakeReportQueryRepository struct {
 	findCalled           bool
 	dismissCalled        bool
 	removeReportedCalled bool
-	listFunc             func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error)
-	findFunc             func(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error)
+	listFunc             func(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]ContentReportRecord, error)
+	findFunc             func(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error)
 	dismissFunc          func(ctx context.Context, id moderationdomain.ContentReportID, reviewerID userdomain.UserID, reviewedAt time.Time) (*moderationdomain.ContentReport, error)
 	removeReportedFunc   func(ctx context.Context, id moderationdomain.ContentReportID, action moderationdomain.ModerationAction) error
 }
 
-func (f *fakeReportQueryRepository) ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationdomain.ContentReport, error) {
+func (f *fakeReportQueryRepository) ListReports(ctx context.Context, status moderationdomain.ReportStatus, limit int, offset int) ([]ContentReportRecord, error) {
 	f.listCalled = true
 	if f.listFunc != nil {
 		return f.listFunc(ctx, status, limit, offset)
@@ -365,7 +391,7 @@ func (f *fakeReportQueryRepository) ListReports(ctx context.Context, status mode
 	return nil, nil
 }
 
-func (f *fakeReportQueryRepository) FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*moderationdomain.ContentReport, error) {
+func (f *fakeReportQueryRepository) FindReportByID(ctx context.Context, id moderationdomain.ContentReportID) (*ContentReportRecord, error) {
 	f.findCalled = true
 	if f.findFunc != nil {
 		return f.findFunc(ctx, id)
