@@ -127,6 +127,7 @@ func (h *Handler) ListCommunityPosts(c *gin.Context) {
 	result, err := h.posts.ListCommunityPosts(c.Request.Context(), postusecase.ListCommunityPostsInput{
 		CommunitySlug: c.Param("slug"),
 		ViewerID:      userID,
+		Sort:          c.Query("sort"),
 		Limit:         limit,
 		Offset:        offset,
 	})
@@ -171,6 +172,7 @@ func (h *Handler) ListLatestPosts(c *gin.Context) {
 
 	result, err := h.posts.ListLatestPosts(c.Request.Context(), postusecase.ListLatestPostsInput{
 		ViewerID: userID,
+		Sort:     c.Query("sort"),
 		Limit:    limit,
 		Offset:   offset,
 	})

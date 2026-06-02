@@ -77,7 +77,7 @@ func TestListCommunityPostsReturnsPosts(t *testing.T) {
 	router := newPostTestRouter(posts, validParserWithUserID(userID))
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/posts?limit=20&offset=5", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/posts?sort=hot&limit=20&offset=5", nil)
 	request.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(recorder, request)
@@ -90,6 +90,9 @@ func TestListCommunityPostsReturnsPosts(t *testing.T) {
 	}
 	if posts.listInput.Limit != 20 || posts.listInput.Offset != 5 {
 		t.Fatalf("expected limit=20 offset=5, got limit=%d offset=%d", posts.listInput.Limit, posts.listInput.Offset)
+	}
+	if posts.listInput.Sort != "hot" {
+		t.Fatalf("expected sort hot, got %q", posts.listInput.Sort)
 	}
 	if posts.listInput.ViewerID != userID {
 		t.Fatalf("expected viewer %q, got %q", userID.String(), posts.listInput.ViewerID.String())
@@ -154,7 +157,7 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	router := newPostTestRouter(posts, validParserWithUserID(userID))
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts?limit=20&offset=5", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts?sort=hot&limit=20&offset=5", nil)
 	request.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(recorder, request)
@@ -168,6 +171,9 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	if posts.listLatestInput.Limit != 20 || posts.listLatestInput.Offset != 5 {
 		t.Fatalf("expected limit=20 offset=5, got limit=%d offset=%d", posts.listLatestInput.Limit, posts.listLatestInput.Offset)
 	}
+	if posts.listLatestInput.Sort != "hot" {
+		t.Fatalf("expected sort hot, got %q", posts.listLatestInput.Sort)
+	}
 	if posts.listLatestInput.ViewerID != userID {
 		t.Fatalf("expected viewer %q, got %q", userID.String(), posts.listLatestInput.ViewerID.String())
 	}
@@ -179,6 +185,29 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	if len(response.Posts) != 1 || response.Posts[0].Title != "Latest" {
 		t.Fatalf("unexpected latest posts response: %#v", response.Posts)
 	}
+}
+
+func TestListLatestPostsMapsInvalidSortError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	posts := &fakePostUseCase{
+		listLatestErr: apperr.New(apperr.CodeInvalidArgument, "post list sort is invalid"),
+	}
+	router := newPostTestRouter(posts, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts?sort=popular", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	if posts.listLatestInput.Sort != "popular" {
+		t.Fatalf("expected sort popular, got %q", posts.listLatestInput.Sort)
+	}
+	assertPostErrorCode(t, recorder, apperr.CodeInvalidArgument)
 }
 
 func TestPostRoutesRejectInvalidAuth(t *testing.T) {

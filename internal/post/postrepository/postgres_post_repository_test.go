@@ -14,6 +14,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,7 +54,7 @@ func TestPostgresPostRepositoryCreateFindListAndNotFound(t *testing.T) {
 		t.Fatalf("unexpected post: got id=%q title=%q", got.ID().String(), got.Title().String())
 	}
 
-	posts, err := repo.ListVisibleByCommunity(ctx, communityID, 20, 0)
+	posts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortNew, 20, 0)
 	if err != nil {
 		t.Fatalf("ListVisibleByCommunity returned error: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestPostgresPostRepositoryListVisibleInPublicCommunities(t *testing.T) {
 		cleanupPost(ctx, t, pool, post.ID())
 	}
 
-	posts, err := repo.ListVisibleInPublicCommunities(ctx, 20, 0)
+	posts, err := repo.ListVisibleInPublicCommunities(ctx, postusecase.PostListSortNew, 20, 0)
 	if err != nil {
 		t.Fatalf("ListVisibleInPublicCommunities returned error: %v", err)
 	}
@@ -108,6 +109,100 @@ func TestPostgresPostRepositoryListVisibleInPublicCommunities(t *testing.T) {
 	}
 	if gotIDs[0] != newerPost.ID() || gotIDs[1] != olderPost.ID() {
 		t.Fatalf("expected newest-first visible public posts, got %#v", gotIDs)
+	}
+}
+
+func TestPostgresPostRepositoryListVisibleByCommunityHotSort(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "hot-community-"+randomSuffix())
+
+	simplePost := mustPost(t, communityID, authorID, "Simple hot", now.Add(2*time.Minute))
+	balancedPost := mustPost(t, communityID, authorID, "Balanced hot", now)
+	coldPost := mustPost(t, communityID, authorID, "Cold hot", now.Add(3*time.Minute))
+
+	for _, post := range []*postdomain.Post{simplePost, balancedPost, coldPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+
+	insertTestPostVote(ctx, t, pool, simplePost.ID(), insertTestUser(ctx, t, pool), 1)
+	insertTestPostVote(ctx, t, pool, balancedPost.ID(), insertTestUser(ctx, t, pool), 1)
+	insertTestPostVote(ctx, t, pool, balancedPost.ID(), insertTestUser(ctx, t, pool), 1)
+	insertTestPostVote(ctx, t, pool, balancedPost.ID(), insertTestUser(ctx, t, pool), -1)
+
+	posts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortHot, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByCommunity hot returned error: %v", err)
+	}
+	if len(posts) != 3 {
+		t.Fatalf("expected three posts, got %d", len(posts))
+	}
+
+	gotIDs := []postdomain.PostID{posts[0].ID(), posts[1].ID(), posts[2].ID()}
+	wantIDs := []postdomain.PostID{balancedPost.ID(), simplePost.ID(), coldPost.ID()}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("expected hot order %#v, got %#v", wantIDs, gotIDs)
+		}
+	}
+}
+
+func TestPostgresPostRepositoryListVisibleInPublicCommunitiesHotSort(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "global-hot-"+randomSuffix())
+	suspendedCommunityID := insertTestCommunityWithStatus(ctx, t, pool, authorID, "global-hot-"+randomSuffix(), "suspended")
+
+	hotPost := mustPost(t, communityID, authorID, "Global hot", now)
+	warmPost := mustPost(t, communityID, authorID, "Global warm", now.Add(time.Minute))
+	suspendedPost := mustPost(t, suspendedCommunityID, authorID, "Suspended hot", now.Add(2*time.Minute))
+	removedPost := mustPostWithStatus(t, communityID, authorID, "Removed hot", postdomain.PostStatusRemoved, now.Add(3*time.Minute))
+
+	for _, post := range []*postdomain.Post{hotPost, warmPost, suspendedPost, removedPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+
+	for i := 0; i < 8; i++ {
+		insertTestPostVote(ctx, t, pool, hotPost.ID(), insertTestUser(ctx, t, pool), 1)
+	}
+	for i := 0; i < 3; i++ {
+		insertTestPostVote(ctx, t, pool, warmPost.ID(), insertTestUser(ctx, t, pool), 1)
+	}
+	for i := 0; i < 10; i++ {
+		insertTestPostVote(ctx, t, pool, suspendedPost.ID(), insertTestUser(ctx, t, pool), 1)
+		insertTestPostVote(ctx, t, pool, removedPost.ID(), insertTestUser(ctx, t, pool), 1)
+	}
+
+	posts, err := repo.ListVisibleInPublicCommunities(ctx, postusecase.PostListSortHot, 200, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleInPublicCommunities hot returned error: %v", err)
+	}
+
+	var gotIDs []postdomain.PostID
+	for _, post := range posts {
+		switch post.ID() {
+		case hotPost.ID(), warmPost.ID(), suspendedPost.ID(), removedPost.ID():
+			gotIDs = append(gotIDs, post.ID())
+		}
+	}
+
+	if len(gotIDs) != 2 {
+		t.Fatalf("expected only two visible public test posts, got %#v", gotIDs)
+	}
+	if gotIDs[0] != hotPost.ID() || gotIDs[1] != warmPost.ID() {
+		t.Fatalf("expected public hot order [%s %s], got %#v", hotPost.ID().String(), warmPost.ID().String(), gotIDs)
 	}
 }
 
@@ -147,7 +242,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requirePostSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts"} {
+	for _, table := range []string{"users", "communities", "posts", "post_votes"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -264,6 +359,34 @@ func insertTestCommunityWithStatus(ctx context.Context, t *testing.T, pool *pgxp
 	})
 
 	return id
+}
+
+func insertTestPostVote(ctx context.Context, t *testing.T, pool *pgxpool.Pool, postID postdomain.PostID, userID userdomain.UserID, value int) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO post_votes (
+			post_id,
+			user_id,
+			value,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $4)
+	`, postID.String(), userID.String(), value, testNow())
+	if err != nil {
+		t.Fatalf("insert test post vote: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `
+			DELETE FROM post_votes
+			WHERE post_id = $1::uuid
+				AND user_id = $2::uuid
+		`, postID.String(), userID.String()); err != nil {
+			t.Fatalf("cleanup test post vote post=%q user=%q: %v", postID.String(), userID.String(), err)
+		}
+	})
 }
 
 func cleanupPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id postdomain.PostID) {

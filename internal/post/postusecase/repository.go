@@ -12,8 +12,8 @@ import (
 type PostRepository interface {
 	Create(ctx context.Context, post postdomain.Post) error
 	FindVisibleByID(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
-	ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error)
-	ListVisibleInPublicCommunities(ctx context.Context, limit int, offset int) ([]postdomain.Post, error)
+	ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+	ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 }
 
 type VoteRepository interface {
