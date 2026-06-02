@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-阶段：`阶段 10 审核台增强进行中`
+阶段：`阶段 10 审核台增强已完成`
 
 代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环，以及阶段 9 hot feed / 内容分发闭环。
 
-当前推进阶段 10：在阶段 8 审核台最小闭环之上，给举报列表和举报详情增加 `target_preview`，让平台 staff 直接看到被举报帖子或评论的当前状态、作者和内容摘要。阶段 10 不新增表，不改变 staff 身份来源，也不改变 remove-target 事务边界。
+阶段 10 已完成：在阶段 8 审核台最小闭环之上，举报列表和举报详情已增加 `target_preview`，平台 staff 可以直接看到被举报帖子或评论的当前状态、作者和内容摘要。阶段 10 没有新增表，没有改变 staff 身份来源，也没有改变 remove-target 事务边界。
 
 已具备：
 
@@ -52,6 +52,7 @@
 - `GET /api/v1/moderation/reports/:id`
 - `POST /api/v1/moderation/reports/:id/dismiss`
 - `POST /api/v1/moderation/reports/:id/remove-target`
+- 审核台举报列表和详情响应 `target_preview`
 - `GET /api/v1/posts?sort=new|hot`
 - `GET /api/v1/communities/:slug/posts?sort=new|hot`
 - 移除内容和审核动作写入同一 PostgreSQL 事务
@@ -59,7 +60,7 @@
 
 下一步：
 
-- 阶段 10 优先实现 `GET /api/v1/moderation/reports` 和 `GET /api/v1/moderation/reports/:id` 的 `target_preview`。
+- 阶段 11 进入搜索。
 - 后续目标顺序是：搜索、通知。
 - 当前仍不做个性化推荐、预计算时间线、推荐系统、反作弊、评论投票、搜索或通知。
 
