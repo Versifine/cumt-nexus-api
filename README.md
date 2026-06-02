@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-阶段：`阶段 9 hot feed / 内容分发`
+阶段：`阶段 9 hot feed / 内容分发已完成`
 
-代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环，以及阶段 8 审核台最小闭环。
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环，以及阶段 9 hot feed / 内容分发闭环。
 
-当前推进阶段 9：在已有全站最新流和帖子投票事实之上，补齐最小 hot feed / 内容分发能力。阶段 9 先让全站帖子流和社区帖子列表支持 `sort=new|hot`，默认保持 `new`，`hot` 使用现有投票事实做简化热度排序。
+阶段 9 已完成：在已有全站最新流和帖子投票事实之上，补齐最小 hot feed / 内容分发能力。全站帖子流和社区帖子列表支持 `sort=new|hot`，默认保持 `new`，`hot` 使用现有投票事实做简化热度排序。
 
 已具备：
 
@@ -52,14 +52,16 @@
 - `GET /api/v1/moderation/reports/:id`
 - `POST /api/v1/moderation/reports/:id/dismiss`
 - `POST /api/v1/moderation/reports/:id/remove-target`
+- `GET /api/v1/posts?sort=new|hot`
+- `GET /api/v1/communities/:slug/posts?sort=new|hot`
 - 移除内容和审核动作写入同一 PostgreSQL 事务
 - HTTP CORS 基础配置：`HTTP_CORS_ALLOWED_ORIGINS`
 
 下一步：
 
-- 阶段 9 优先实现 `GET /api/v1/posts?sort=hot` 和 `GET /api/v1/communities/:slug/posts?sort=hot`。
+- 阶段 10 进入审核台增强。
 - 后续目标顺序是：审核台增强、搜索、通知。
-- 当前仍不做个性化推荐、预计算时间线、推荐系统、反作弊、评论投票、通知或审核台增强。
+- 当前仍不做个性化推荐、预计算时间线、推荐系统、反作弊、评论投票、搜索或通知。
 
 ## 接口
 
