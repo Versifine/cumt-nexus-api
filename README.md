@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-阶段：`阶段 12 通知进行中`
+阶段：`阶段 12 通知已完成`
 
-代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环、阶段 9 hot feed / 内容分发闭环、阶段 10 审核台增强闭环，以及阶段 11 搜索闭环。
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环、阶段 9 hot feed / 内容分发闭环、阶段 10 审核台增强闭环、阶段 11 搜索闭环，以及阶段 12 通知闭环。
 
-当前推进阶段 12：补齐最小站内通知中心，先做通知事实表、我的通知列表和标记单条通知已读。不进入 WebSocket、邮件、移动推送、通知设置或跨模块自动事件源。
+阶段 12 已完成：补齐最小站内通知中心，已提供通知事实表、我的通知列表和标记单条通知已读。不进入 WebSocket、邮件、移动推送、通知设置或跨模块自动事件源。
 
 已具备：
 
@@ -56,13 +56,15 @@
 - `GET /api/v1/posts?sort=new|hot`
 - `GET /api/v1/communities/:slug/posts?sort=new|hot`
 - `GET /api/v1/search?q=...&scope=all|communities|posts`
+- `GET /api/v1/notifications`
+- `POST /api/v1/notifications/:id/read`
 - 移除内容和审核动作写入同一 PostgreSQL 事务
 - HTTP CORS 基础配置：`HTTP_CORS_ALLOWED_ORIGINS`
 
 下一步：
 
-- 阶段 12 优先实现 `GET /api/v1/notifications` 和 `POST /api/v1/notifications/:id/read`。
-- 后续目标顺序是：阶段 12 收口后结束本轮目标。
+- 本轮目标已完成。
+- 后续若继续通知，可优先接入评论、举报处理或系统公告作为通知来源。
 - 当前仍不做全文索引、外部搜索引擎、标签搜索、评论搜索、搜索高亮、搜索分析、个性化排序、WebSocket、邮件、推送或通知设置。
 
 ## 接口
@@ -96,6 +98,8 @@ GET  /api/v1/moderation/reports/:id
 POST /api/v1/moderation/reports/:id/dismiss
 POST /api/v1/moderation/reports/:id/remove-target
 GET  /api/v1/search
+GET  /api/v1/notifications
+POST /api/v1/notifications/:id/read
 ```
 
 注册请求：
