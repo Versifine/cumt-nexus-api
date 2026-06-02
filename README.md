@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-阶段：`阶段 11 搜索进行中`
+阶段：`阶段 11 搜索已完成`
 
 代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环、阶段 9 hot feed / 内容分发闭环，以及阶段 10 审核台增强闭环。
 
-当前推进阶段 11：使用 PostgreSQL 能力补齐 V1 基础搜索，先覆盖公开可读社区名称、帖子标题和帖子正文。不引入全文索引、OpenSearch、Elasticsearch、搜索高亮或个性化排序。
+阶段 11 已完成：使用 PostgreSQL 能力补齐 V1 基础搜索，覆盖公开可读社区名称、帖子标题和帖子正文。未引入全文索引、OpenSearch、Elasticsearch、搜索高亮或个性化排序。
 
 已具备：
 
@@ -55,14 +55,15 @@
 - 审核台举报列表和详情响应 `target_preview`
 - `GET /api/v1/posts?sort=new|hot`
 - `GET /api/v1/communities/:slug/posts?sort=new|hot`
+- `GET /api/v1/search?q=...&scope=all|communities|posts`
 - 移除内容和审核动作写入同一 PostgreSQL 事务
 - HTTP CORS 基础配置：`HTTP_CORS_ALLOWED_ORIGINS`
 
 下一步：
 
-- 阶段 11 优先实现 `GET /api/v1/search?q=...&scope=all|communities|posts`。
+- 阶段 12 进入通知。
 - 后续目标顺序是：通知。
-- 当前仍不做全文索引、外部搜索引擎、标签搜索、评论搜索、搜索高亮、搜索分析、个性化排序或通知。
+- 当前仍不做全文索引、外部搜索引擎、标签搜索、评论搜索、搜索高亮、搜索分析、个性化排序、WebSocket、邮件、推送或通知设置。
 
 ## 接口
 
@@ -94,6 +95,7 @@ GET  /api/v1/moderation/reports
 GET  /api/v1/moderation/reports/:id
 POST /api/v1/moderation/reports/:id/dismiss
 POST /api/v1/moderation/reports/:id/remove-target
+GET  /api/v1/search
 ```
 
 注册请求：
