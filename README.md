@@ -6,9 +6,9 @@
 
 阶段：`阶段 8 审核台最小闭环`
 
-代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础，以及阶段 7 轻量举报与平台 staff 移除内容闭环。
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环，以及阶段 8 审核台最小闭环。
 
-当前推进阶段 8：补齐平台 staff 的最小审核处理入口，包括举报列表、举报详情、dismiss 举报，以及基于举报移除目标内容。
+当前暂停在阶段 8 里程碑。下一阶段需要先选择产品边界，候选方向包括 hot feed / 内容分发、审核台增强、搜索或通知。
 
 已具备：
 
@@ -48,13 +48,17 @@
 - `POST /api/v1/comments/:id/reports`
 - `POST /api/v1/posts/:id/moderation/remove`
 - `POST /api/v1/comments/:id/moderation/remove`
+- `GET /api/v1/moderation/reports`
+- `GET /api/v1/moderation/reports/:id`
+- `POST /api/v1/moderation/reports/:id/dismiss`
+- `POST /api/v1/moderation/reports/:id/remove-target`
 - 移除内容和审核动作写入同一 PostgreSQL 事务
 - HTTP CORS 基础配置：`HTTP_CORS_ALLOWED_ORIGINS`
 
 下一步：
 
-- 阶段 8 正在推进审核台最小闭环；优先实现 staff 可操作的举报处理主链路。
-- 当前仍不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理、hot feed 或评论投票。
+- 先选择阶段 9 产品边界，再生成下一阶段工单。
+- 当前仍不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理、hot feed、搜索或评论投票。
 
 ## 接口
 
@@ -82,6 +86,10 @@ POST /api/v1/posts/:id/reports
 POST /api/v1/comments/:id/reports
 POST /api/v1/posts/:id/moderation/remove
 POST /api/v1/comments/:id/moderation/remove
+GET  /api/v1/moderation/reports
+GET  /api/v1/moderation/reports/:id
+POST /api/v1/moderation/reports/:id/dismiss
+POST /api/v1/moderation/reports/:id/remove-target
 ```
 
 注册请求：
@@ -284,6 +292,42 @@ curl -i -X POST http://localhost:8080/api/v1/comments/<comment_id>/moderation/re
 UPDATE users SET is_platform_staff = true WHERE username = 'reviewer';
 ```
 
+举报列表：
+
+```bash
+curl -i "http://localhost:8080/api/v1/moderation/reports?status=pending&limit=20&offset=0" \
+  -H "Authorization: Bearer <staff_access_token>"
+```
+
+不传 `status` 时默认只返回 `pending` 举报。非 staff 返回 `403 forbidden`。
+
+举报详情：
+
+```bash
+curl -i http://localhost:8080/api/v1/moderation/reports/<report_id> \
+  -H "Authorization: Bearer <staff_access_token>"
+```
+
+dismiss 举报：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/moderation/reports/<report_id>/dismiss \
+  -H "Authorization: Bearer <staff_access_token>"
+```
+
+dismiss 只处理 `pending` 举报，成功后写入 `dismissed`、`reviewed_by`、`reviewed_at` 和 `updated_at`，不新增 `moderation_actions.action=dismiss`。
+
+基于举报移除目标内容：
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/moderation/reports/<report_id>/remove-target \
+  -H "Authorization: Bearer <staff_access_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"reason\":\"policy violation\"}"
+```
+
+remove-target 只处理 `pending` 举报，并复用内容移除事务：移除帖子或评论、写入 `moderation_actions(action=remove)`、解决同 target 的 pending 举报在同一 PostgreSQL 事务内完成。
+
 ## 本地运行
 
 ### 1. 准备配置
@@ -373,7 +417,7 @@ go build -buildvcs=false ./...
 - 阶段 4 评论主链路暂不做评论树优化、评论编辑、删除、评论投票、审核台和通知。
 - 阶段 6 已完成帖子 upvote/downvote 和全站最新流；暂不做 hot feed、推荐排序、评论投票、投票通知和防刷策略。
 - 阶段 7 已完成轻量举报与平台 staff 移除内容闭环。
-- 阶段 8 正在推进审核台最小闭环；暂不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理或 target 内容预览增强。
+- 阶段 8 已完成审核台最小闭环；暂不做审核后台 UI、社区 moderator 权限、通知、防刷、自动审核、申诉、批量处理或 target 内容预览增强。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License
