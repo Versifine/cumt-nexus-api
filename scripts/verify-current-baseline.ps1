@@ -71,13 +71,33 @@ function Add-SkippedStep {
 
 Push-Location $repo
 try {
-    Invoke-Step -Name 'api contract route inventory' -Command {
+    Invoke-Step -Name 'api contract route/auth inventory' -Command {
         Invoke-Native -File 'powershell' -Arguments @(
             '-NoProfile',
             '-ExecutionPolicy',
             'Bypass',
             '-File',
             (Join-Path $repo 'scripts/verify-api-contract-doc.ps1')
+        )
+    }
+
+    Invoke-Step -Name 'api schema contract inventory' -Command {
+        Invoke-Native -File 'powershell' -Arguments @(
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            (Join-Path $repo 'scripts/verify-api-schema-doc.ps1')
+        )
+    }
+
+    Invoke-Step -Name 'http error contract inventory' -Command {
+        Invoke-Native -File 'powershell' -Arguments @(
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            (Join-Path $repo 'scripts/verify-http-error-contract-doc.ps1')
         )
     }
 
