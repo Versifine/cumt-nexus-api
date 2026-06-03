@@ -71,7 +71,7 @@ function Add-SkippedStep {
 
 Push-Location $repo
 try {
-    Invoke-Step -Name 'api contract route inventory' -Command {
+    Invoke-Step -Name 'api contract route/auth inventory' -Command {
         Invoke-Native -File 'powershell' -Arguments @(
             '-NoProfile',
             '-ExecutionPolicy',
