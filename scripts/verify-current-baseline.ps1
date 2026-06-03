@@ -91,6 +91,16 @@ try {
         )
     }
 
+    Invoke-Step -Name 'http error contract inventory' -Command {
+        Invoke-Native -File 'powershell' -Arguments @(
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            (Join-Path $repo 'scripts/verify-http-error-contract-doc.ps1')
+        )
+    }
+
     Invoke-Step -Name 'configuration contract inventory' -Command {
         Invoke-Native -File 'powershell' -Arguments @(
             '-NoProfile',

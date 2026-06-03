@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-阶段：`阶段 22 HTTP API schema 契约快照已完成`
+阶段：`阶段 23 HTTP 错误契约校验已完成`
 
-代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环、阶段 9 hot feed / 内容分发闭环、阶段 10 审核台增强闭环、阶段 11 搜索闭环、阶段 12 通知闭环、阶段 13 内容系统增强闭环、阶段 14 内容编辑与删除闭环、阶段 15 R2 真实凭据 smoke 工具、阶段 16 工程验收入口、阶段 17 HTTP API 契约快照、阶段 18 配置契约清单校验、阶段 19 migration 契约与清单校验、阶段 20 配置语义契约校验、阶段 21 配置加载运行时契约测试，以及阶段 22 HTTP API request/response schema 契约快照和字段清单校验。
+代码已完成阶段 1 认证与用户基础闭环、阶段 2 社区申请与审批闭环、阶段 3 帖子发布和读取闭环、阶段 4 评论发布和读取闭环、阶段 5 完整真实冒烟、阶段 6 全站最新帖子流 + 帖子 upvote/downvote 基础、阶段 7 轻量举报与平台 staff 移除内容闭环、阶段 8 审核台最小闭环、阶段 9 hot feed / 内容分发闭环、阶段 10 审核台增强闭环、阶段 11 搜索闭环、阶段 12 通知闭环、阶段 13 内容系统增强闭环、阶段 14 内容编辑与删除闭环、阶段 15 R2 真实凭据 smoke 工具、阶段 16 工程验收入口、阶段 17 HTTP API 契约快照、阶段 18 配置契约清单校验、阶段 19 migration 契约与清单校验、阶段 20 配置语义契约校验、阶段 21 配置加载运行时契约测试、阶段 22 HTTP API request/response schema 契约快照和字段清单校验，以及阶段 23 HTTP 错误码、HTTP 状态码和错误响应形状契约校验。
 
 阶段 13 已完成：已升级内容系统，支持 Reddit-style 评论树、Markdown-like 帖子/评论正文契约、图片附件和 Cloudflare R2 图片上传。阶段 13 不做前端 UI、富文本 HTML 编辑器、任意 HTML、任意 iframe、Bilibili/网易云播放器、评论投票、通知扩展、搜索扩展、生产真实密钥配置或对象物理删除任务。
 
@@ -27,6 +27,8 @@
 阶段 21 已完成：新增配置加载运行时契约测试，覆盖 `Load()` 的 local 默认值、R2 配置加载、R2 缺凭据失败和基础解析失败路径。本阶段不改变运行时配置语义。
 
 阶段 22 已完成：新增当前 HTTP API schema 契约快照和 handler JSON 字段清单校验，并纳入当前基线脚本。本阶段不新增业务接口，不生成 OpenAPI，不改变错误码或响应格式。
+
+阶段 23 已完成：新增 HTTP 错误契约校验脚本，确保 `internal/apperr`、`internal/platform/httpserver` 和 `docs/internal/architecture/http-error-handling.md` 的错误码、HTTP 状态码和错误响应形状保持同步。本阶段不新增错误码，不改变错误响应格式。
 
 2026-06-03 合同复核：用当前源码重新启动本地 API 后，前端 `npm run check:main-path` 严格模式已无评论树 warning；此前 warning 来自旧后端进程。当前 `view=tree` 合同仍是扁平前序遍历数组，父评论先于子评论。`PATCH/DELETE /api/v1/posts/:id` 和 `PATCH/DELETE /api/v1/comments/:id` 的前端实现合同已在下方接口说明和 `docs/internal/architecture/content-lifecycle.md` 收口。
 
@@ -90,6 +92,7 @@
 - HTTP API 契约快照 `docs/internal/architecture/http-api-contract.md`
 - HTTP API schema 契约快照 `docs/internal/architecture/http-api-schema.md`
 - HTTP API schema 字段清单校验 `scripts/verify-api-schema-doc.ps1`
+- HTTP 错误契约校验 `scripts/verify-http-error-contract-doc.ps1`
 - 配置契约清单校验 `scripts/verify-config-contract-doc.ps1`
 - 配置语义契约校验 `scripts/verify-config-semantics-doc.ps1`
 - 配置加载运行时契约测试 `internal/platform/config/load_test.go`
@@ -560,7 +563,7 @@ go build -buildvcs=false ./...
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-current-baseline.ps1
 ```
 
-该脚本会依次执行 API 路由契约校验、API schema 契约校验、配置清单契约校验、配置语义契约校验、migration 契约校验、测试、构建、migration、Stage 13 内容系统 smoke、Stage 14 内容生命周期 smoke 和 Stage 15 R2 smoke/凭据门禁。默认 `-R2Mode SkipWhenMissing`：没有 R2 dev bucket 凭据时只验证 skipped 分支；如果当前环境或 `.env` 中存在 R2 dev bucket 凭据，则会执行真实 R2 上传并在 dev bucket 留下测试对象。
+该脚本会依次执行 API 路由契约校验、API schema 契约校验、HTTP 错误契约校验、配置清单契约校验、配置语义契约校验、migration 契约校验、测试、构建、migration、Stage 13 内容系统 smoke、Stage 14 内容生命周期 smoke 和 Stage 15 R2 smoke/凭据门禁。默认 `-R2Mode SkipWhenMissing`：没有 R2 dev bucket 凭据时只验证 skipped 分支；如果当前环境或 `.env` 中存在 R2 dev bucket 凭据，则会执行真实 R2 上传并在 dev bucket 留下测试对象。
 
 API 契约路由清单校验：
 
@@ -577,6 +580,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 ```
 
 该脚本会扫描 delivery 层 handler JSON struct，并与 `docs/internal/architecture/http-api-schema.md` 的 package、Go type 和 JSON 字段清单比对。它不生成 OpenAPI，不校验完整业务枚举、数值范围或错误消息全文。
+
+HTTP 错误契约校验：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-http-error-contract-doc.ps1
+```
+
+该脚本会从 `internal/apperr/apperr.go`、`internal/platform/httpserver/error.go` 和 `docs/internal/architecture/http-error-handling.md` 比对错误码集合、HTTP 状态码和错误响应形状。它不新增错误码，不改变错误响应格式。
 
 配置契约清单校验：
 
@@ -701,6 +712,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke-stage-15-r2-
 - 阶段 20 只补配置语义契约校验；不新增配置变量，不改变运行时配置语义，不写入真实 R2 凭据。
 - 阶段 21 只补配置加载运行时契约测试；不新增配置变量，不改变运行时配置语义，不写入真实 R2 凭据。
 - 阶段 22 只补 HTTP API schema 契约快照和 handler JSON 字段清单校验；不新增业务接口，不生成 OpenAPI，不改变错误码或响应格式。
+- 阶段 23 只补 HTTP 错误契约校验；不新增错误码，不改变错误响应格式，不改变认证错误语义。
 - `/healthz` 只表示进程存活，不做数据库 readiness 检查。
 
 ## License
