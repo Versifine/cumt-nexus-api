@@ -98,6 +98,84 @@ docker compose up -d
 
 如果 migration 只是新增表、新增字段或新增索引，通常可以把 API image 回滚到旧版本；如果 migration 删除或重写了旧代码依赖的字段，回滚会变复杂，不能按普通流程处理。
 
+## 已有部署骨架文件
+
+当前仓库已经提供以下部署骨架：
+
+| 文件 | 职责 |
+|---|---|
+| `Dockerfile` | 构建同一个运行镜像，包含 `api` 和 `migrate` 两个二进制以及 `migrations/` |
+| `.dockerignore` | 控制 Docker build context，排除 `.env`、本地缓存、内部 AI 记录等内容 |
+| `docker-compose.prod.yml` | 生产形态的 PostgreSQL、migration job 和 API 服务编排 |
+| `.env.production.example` | 生产/生产模拟环境变量模板，不包含真实密钥 |
+| `.github/workflows/ci.yml` | push / PR 时运行基线校验和 Docker build |
+| `.github/workflows/deploy.yml` | tag 或手动触发时构建并推送 GHCR 镜像；可选手动 SSH 部署 |
+
+## 本机模拟生产启动
+
+前提：
+
+```text
+Docker Engine 正在运行
+Docker Compose plugin 可用
+```
+
+先从示例文件生成本地生产模拟配置：
+
+```powershell
+Copy-Item .env.production.example .env.production
+```
+
+macOS/Linux:
+
+```bash
+cp .env.production.example .env.production
+```
+
+本机模拟默认使用：
+
+```text
+API_IMAGE=cumt-nexus-api:local
+OBJECT_STORAGE_PROVIDER=local
+POSTGRES_HOST=postgres
+```
+
+构建并启动：
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+```
+
+查看服务：
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml ps
+```
+
+检查 API：
+
+```bash
+curl http://localhost:8080/healthz
+```
+
+查看 migration 版本：
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml run --rm migrate version
+```
+
+停止并保留数据卷：
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml down
+```
+
+停止并删除本机模拟数据卷：
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml down -v
+```
+
 ## CI/CD 最小目标
 
 CI 至少覆盖：
@@ -113,6 +191,22 @@ go build -buildvcs=false ./...
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
 ```
 
+当前 CI 文件是：
+
+```text
+.github/workflows/ci.yml
+```
+
+它会在 `main`、`stage/**`、`fix/**`、`spike/**` 的 push 以及 pull request 上运行：
+
+```text
+1. 启动 PostgreSQL service
+2. 安装 Go
+3. go mod download
+4. verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+5. docker build -t cumt-nexus-api:ci .
+```
+
 CD 最小动作：
 
 ```text
@@ -126,6 +220,49 @@ CD 最小动作：
 ```
 
 CD 不应把未打 tag 的开发分支直接部署到生产服务器。
+
+当前部署 workflow 是：
+
+```text
+.github/workflows/deploy.yml
+```
+
+它支持两种触发：
+
+```text
+1. push v*.*.* tag：构建并推送 GHCR 镜像
+2. workflow_dispatch：手动指定版本，构建并推送 GHCR 镜像；可选择是否 SSH 部署
+```
+
+镜像名格式：
+
+```text
+ghcr.io/<owner>/<repo>:<version>
+```
+
+例如：
+
+```text
+ghcr.io/versifine/cumt-nexus-api:v0.2.0
+```
+
+手动 SSH 部署需要在 GitHub repository secrets 中配置：
+
+| Secret | 说明 |
+|---|---|
+| `DEPLOY_HOST` | 服务器地址 |
+| `DEPLOY_USER` | SSH 用户 |
+| `DEPLOY_SSH_KEY` | 私钥内容 |
+| `DEPLOY_PATH` | 服务器上的部署目录，目录内应有 `docker-compose.prod.yml` 和 `.env.production` |
+
+服务器部署目录至少包含：
+
+```text
+docker-compose.prod.yml
+.env.production
+```
+
+其中 `.env.production` 不提交到仓库，只保存在服务器上。
 
 ## 配置和密钥
 
@@ -150,14 +287,15 @@ OBJECT_STORAGE_BUCKET=<bucket-name>
 
 ## 当前阶段建议
 
-在接真实服务器前，先补齐部署骨架：
+当前已经补齐基础部署骨架。接真实服务器前还需要确认：
 
 ```text
-Dockerfile
-docker-compose.prod.yml
-.env.production.example
-.github/workflows/ci.yml
-.github/workflows/deploy.yml
+服务器已安装 Docker Engine 和 Docker Compose plugin
+服务器部署目录已放置 docker-compose.prod.yml
+服务器部署目录已配置 .env.production
+服务器可以访问 GHCR 镜像
+域名、HTTPS、反向代理方案已确定
+数据库备份策略已确定
 ```
 
 先在本机用 Docker 模拟生产启动和 migration，再接入真实服务器、域名、HTTPS 和 R2 凭据。
