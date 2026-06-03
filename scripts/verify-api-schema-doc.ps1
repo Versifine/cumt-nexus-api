@@ -39,13 +39,26 @@ function Get-StructSchemasFromFile {
     foreach ($structMatch in $structMatches) {
         $typeName = $structMatch.Groups[1].Value
         $body = $structMatch.Groups[2].Value
-        $fieldMatches = [regex]::Matches($body, 'json:"([^"]+)"')
         $fields = @()
-        foreach ($fieldMatch in $fieldMatches) {
-            $tagValue = $fieldMatch.Groups[1].Value
+        $requiredFields = @()
+        $tagMatches = [regex]::Matches($body, '`([^`]+)`')
+        foreach ($tagMatch in $tagMatches) {
+            $tagContent = $tagMatch.Groups[1].Value
+            $jsonMatch = [regex]::Match($tagContent, 'json:"([^"]+)"')
+            if (-not $jsonMatch.Success) {
+                continue
+            }
+            $tagValue = $jsonMatch.Groups[1].Value
             $fieldName = $tagValue.Split(',', 2)[0]
             if ($fieldName -ne '' -and $fieldName -ne '-') {
                 $fields += $fieldName
+                $bindingMatch = [regex]::Match($tagContent, 'binding:"([^"]+)"')
+                if ($bindingMatch.Success) {
+                    $bindingRules = @($bindingMatch.Groups[1].Value.Split(',') | ForEach-Object { $_.Trim() })
+                    if ($bindingRules -contains 'required') {
+                        $requiredFields += $fieldName
+                    }
+                }
             }
         }
         if ($fields.Count -gt 0) {
@@ -53,6 +66,7 @@ function Get-StructSchemasFromFile {
                 Package = $packageName
                 Type = $typeName
                 Fields = $fields
+                RequiredFields = $requiredFields
                 Source = (Resolve-Path -LiteralPath $Path).Path.Substring($repo.Length + 1).Replace('\', '/')
             }
         }
@@ -108,6 +122,28 @@ function Get-SchemaRefs {
         }
     }
     return $refs
+}
+
+function Read-RequiredFieldsFromDoc {
+    param([string]$Path)
+
+    $requiredFieldsBySchema = @{}
+    foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $Path) {
+        $match = [regex]::Match($line, '^\|\s*`(\w+http\.\w+)`\s*\|\s*((?:`[^`]+`(?:,\s*)?)+)\s*\|')
+        if (-not $match.Success) {
+            continue
+        }
+        $schemaKey = $match.Groups[1].Value
+        if ($requiredFieldsBySchema.ContainsKey($schemaKey)) {
+            throw "duplicate documented required-field schema key: $schemaKey"
+        }
+        $fields = @()
+        foreach ($fieldMatch in [regex]::Matches($match.Groups[2].Value, '`([^`]+)`')) {
+            $fields += $fieldMatch.Groups[1].Value
+        }
+        $requiredFieldsBySchema[$schemaKey] = $fields
+    }
+    return $requiredFieldsBySchema
 }
 
 $deliveryFiles = Get-ChildItem -LiteralPath (Join-Path $repo 'internal') -Recurse -Filter '*.go' |
@@ -176,6 +212,37 @@ foreach ($key in $actualKeys) {
     }
 }
 
+$actualRequiredFields = @{}
+foreach ($key in $actualKeys) {
+    $fields = @($actualSchemas[$key].RequiredFields)
+    if ($fields.Count -gt 0) {
+        $actualRequiredFields[$key] = $fields
+    }
+}
+
+$documentedRequiredFields = Read-RequiredFieldsFromDoc -Path $docFullPath
+$actualRequiredKeys = @($actualRequiredFields.Keys | Sort-Object)
+$documentedRequiredKeys = @($documentedRequiredFields.Keys | Sort-Object)
+$missingRequiredFieldDocs = @($actualRequiredKeys | Where-Object { -not $documentedRequiredFields.ContainsKey($_) })
+$staleRequiredFieldDocs = @($documentedRequiredKeys | Where-Object { -not $actualRequiredFields.ContainsKey($_) })
+$requiredFieldMismatches = @()
+
+foreach ($key in $actualRequiredKeys) {
+    if (-not $documentedRequiredFields.ContainsKey($key)) {
+        continue
+    }
+    $actualFields = @($actualRequiredFields[$key])
+    $documentedFields = @($documentedRequiredFields[$key])
+    if (($actualFields -join ',') -ne ($documentedFields -join ',')) {
+        $requiredFieldMismatches += [pscustomobject]@{
+            schema = $key
+            source = $actualSchemas[$key].Source
+            actual = $actualFields
+            documented = $documentedFields
+        }
+    }
+}
+
 $contractRouteKeys = Read-RouteKeysFromDoc -Path $routeDocFullPath
 $schemaRouteMappings = Read-SchemaRouteMappingsFromDoc -Path $docFullPath
 $schemaRouteKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -223,6 +290,9 @@ if (
     $missingInDoc.Count -gt 0 -or
     $staleInDoc.Count -gt 0 -or
     $fieldMismatches.Count -gt 0 -or
+    $missingRequiredFieldDocs.Count -gt 0 -or
+    $staleRequiredFieldDocs.Count -gt 0 -or
+    $requiredFieldMismatches.Count -gt 0 -or
     $missingRouteMappings.Count -gt 0 -or
     $staleRouteMappings.Count -gt 0 -or
     $invalidSchemaRefs.Count -gt 0 -or
@@ -233,6 +303,9 @@ if (
         missing_in_doc = $missingInDoc
         stale_in_doc = $staleInDoc
         field_mismatches = $fieldMismatches
+        missing_required_field_docs = $missingRequiredFieldDocs
+        stale_required_field_docs = $staleRequiredFieldDocs
+        required_field_mismatches = $requiredFieldMismatches
         missing_route_mappings = $missingRouteMappings
         stale_route_mappings = $staleRouteMappings
         invalid_schema_refs = $invalidSchemaRefs
@@ -245,6 +318,7 @@ if (
     status = 'passed'
     schema_count = $actualSchemas.Count
     route_mapping_count = $schemaRouteMappings.Count
+    required_field_schema_count = $actualRequiredFields.Count
     doc = $DocPath
     route_doc = $RouteDocPath
     schemas = $actualKeys

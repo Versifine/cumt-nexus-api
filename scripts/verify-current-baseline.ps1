@@ -81,7 +81,7 @@ try {
         )
     }
 
-    Invoke-Step -Name 'api schema contract inventory' -Command {
+    Invoke-Step -Name 'api schema fields/routes/required inventory' -Command {
         Invoke-Native -File 'powershell' -Arguments @(
             '-NoProfile',
             '-ExecutionPolicy',
