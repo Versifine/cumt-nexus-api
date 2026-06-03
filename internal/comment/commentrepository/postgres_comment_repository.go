@@ -92,6 +92,54 @@ func (repo *PostgresCommentRepository) FindVisibleByID(ctx context.Context, id c
 	return comment, nil
 }
 
+func (repo *PostgresCommentRepository) UpdateContent(ctx context.Context, comment commentdomain.Comment) error {
+	const query = `
+		UPDATE comments
+		SET
+			body = $2,
+			updated_at = $3
+		WHERE id = $1::uuid
+			AND status = 'visible'
+	`
+
+	tag, err := repo.pool.Exec(
+		ctx,
+		query,
+		comment.ID().String(),
+		comment.Body().String(),
+		comment.UpdatedAt(),
+	)
+	if err != nil {
+		return mapPostgresWriteError("update comment content", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "comment not found")
+	}
+
+	return nil
+}
+
+func (repo *PostgresCommentRepository) MarkDeleted(ctx context.Context, comment commentdomain.Comment) error {
+	const query = `
+		UPDATE comments
+		SET
+			status = 'deleted',
+			updated_at = $2
+		WHERE id = $1::uuid
+			AND status = 'visible'
+	`
+
+	tag, err := repo.pool.Exec(ctx, query, comment.ID().String(), comment.UpdatedAt())
+	if err != nil {
+		return mapPostgresWriteError("delete comment", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "comment not found")
+	}
+
+	return nil
+}
+
 func (repo *PostgresCommentRepository) ListVisibleByPost(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error) {
 	const query = `
 		SELECT
@@ -127,6 +175,44 @@ func (repo *PostgresCommentRepository) ListVisibleByPost(ctx context.Context, po
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate visible comments by post: %w", err)
+	}
+
+	return comments, nil
+}
+
+func (repo *PostgresCommentRepository) ListVisibleTreeByPost(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error) {
+	const query = `
+		SELECT
+			id::text,
+			post_id::text,
+			author_id::text,
+			parent_id::text,
+			body,
+			status,
+			created_at,
+			updated_at
+		FROM comments
+		WHERE post_id = $1::uuid
+			AND status = 'visible'
+		ORDER BY created_at DESC, id DESC
+	`
+
+	rows, err := repo.pool.Query(ctx, query, postID.String())
+	if err != nil {
+		return nil, fmt.Errorf("list visible comment tree by post: %w", err)
+	}
+	defer rows.Close()
+
+	var comments []commentdomain.Comment
+	for rows.Next() {
+		comment, err := scanComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		comments = append(comments, *comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate visible comment tree by post: %w", err)
 	}
 
 	return comments, nil

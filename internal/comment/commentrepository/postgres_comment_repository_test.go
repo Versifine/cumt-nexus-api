@@ -70,6 +70,17 @@ func TestPostgresCommentRepositoryCreateFindListAndNotFound(t *testing.T) {
 		t.Fatalf("expected newest-first ordering, got %#v", []commentdomain.CommentID{comments[0].ID(), comments[1].ID()})
 	}
 
+	treeComments, err := repo.ListVisibleTreeByPost(ctx, postID)
+	if err != nil {
+		t.Fatalf("ListVisibleTreeByPost returned error: %v", err)
+	}
+	if len(treeComments) != 2 {
+		t.Fatalf("expected two tree comments, got %d", len(treeComments))
+	}
+	if treeComments[0].ID() != newerComment.ID() || treeComments[1].ID() != parentComment.ID() {
+		t.Fatalf("expected tree comments newest-first, got %#v", []commentdomain.CommentID{treeComments[0].ID(), treeComments[1].ID()})
+	}
+
 	if _, err := repo.FindVisibleByID(ctx, commentdomain.NewGeneratedCommentID()); !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for missing comment, got %v", err)
 	}
@@ -84,6 +95,54 @@ func TestPostgresCommentRepositoryMapsForeignKeyFailure(t *testing.T) {
 	comment := mustComment(t, postdomain.NewGeneratedPostID(), authorID, nil, "Missing post", now)
 	if err := repo.Create(ctx, *comment); !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for missing related post, got %v", err)
+	}
+}
+
+func TestPostgresCommentRepositoryUpdateContentAndMarkDeleted(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommentRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "comment-update-"+randomSuffix())
+	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Comment Update Post")
+	comment := mustComment(t, postID, authorID, nil, "Original", now)
+	if err := repo.Create(ctx, *comment); err != nil {
+		t.Fatalf("Create comment returned error: %v", err)
+	}
+	cleanupComment(ctx, t, pool, comment.ID())
+
+	if err := comment.EditBody(mustCommentBody(t, "Updated body"), now.Add(time.Minute)); err != nil {
+		t.Fatalf("EditBody returned error: %v", err)
+	}
+	if err := repo.UpdateContent(ctx, *comment); err != nil {
+		t.Fatalf("UpdateContent returned error: %v", err)
+	}
+
+	updated, err := repo.FindVisibleByID(ctx, comment.ID())
+	if err != nil {
+		t.Fatalf("FindVisibleByID after update returned error: %v", err)
+	}
+	if updated.Body().String() != "Updated body" {
+		t.Fatalf("expected updated body, got %q", updated.Body().String())
+	}
+
+	if err := comment.MarkDeleted(now.Add(2 * time.Minute)); err != nil {
+		t.Fatalf("MarkDeleted returned error: %v", err)
+	}
+	if err := repo.MarkDeleted(ctx, *comment); err != nil {
+		t.Fatalf("MarkDeleted repository returned error: %v", err)
+	}
+	if _, err := repo.FindVisibleByID(ctx, comment.ID()); !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found after delete, got %v", err)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM comments WHERE id = $1::uuid`, comment.ID().String()).Scan(&status); err != nil {
+		t.Fatalf("query deleted comment status: %v", err)
+	}
+	if status != commentdomain.CommentStatusDeleted.String() {
+		t.Fatalf("expected deleted status, got %q", status)
 	}
 }
 
@@ -277,6 +336,16 @@ func mustComment(t *testing.T, postID postdomain.PostID, authorID userdomain.Use
 		t.Fatalf("NewComment returned error: %v", err)
 	}
 	return comment
+}
+
+func mustCommentBody(t *testing.T, raw string) commentdomain.CommentBody {
+	t.Helper()
+
+	body, err := commentdomain.NewCommentBody(raw)
+	if err != nil {
+		t.Fatalf("NewCommentBody returned error: %v", err)
+	}
+	return body
 }
 
 func testNow() time.Time {

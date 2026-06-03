@@ -44,6 +44,23 @@ func Load() (*Config, error) {
 	cfg.Auth.TokenSecret = requiredString("AUTH_TOKEN_SECRET", &errs)
 	cfg.Auth.AccessTokenTTL = durationDefault("AUTH_ACCESS_TOKEN_TTL", 24*time.Hour, &errs)
 
+	cfg.Storage.Provider = stringDefault("OBJECT_STORAGE_PROVIDER", "local")
+	cfg.Storage.Endpoint = stringDefault("OBJECT_STORAGE_ENDPOINT", "")
+	cfg.Storage.Region = stringDefault("OBJECT_STORAGE_REGION", "auto")
+	cfg.Storage.Bucket = stringDefault("OBJECT_STORAGE_BUCKET", "")
+	cfg.Storage.AccessKeyID = stringDefault("OBJECT_STORAGE_ACCESS_KEY_ID", "")
+	cfg.Storage.SecretAccessKey = stringDefault("OBJECT_STORAGE_SECRET_ACCESS_KEY", "")
+	cfg.Storage.PublicBaseURL = stringDefault("OBJECT_STORAGE_PUBLIC_BASE_URL", "")
+	cfg.Storage.ForcePathStyle = boolDefault("OBJECT_STORAGE_FORCE_PATH_STYLE", true, &errs)
+	cfg.Storage.LocalRoot = stringDefault("OBJECT_STORAGE_LOCAL_ROOT", "var/uploads")
+	if cfg.Storage.Provider == "local" && cfg.Storage.PublicBaseURL == "" {
+		cfg.Storage.PublicBaseURL = "http://localhost:8080/uploads"
+	}
+
+	cfg.Upload.ImageMaxBytes = intDefault("UPLOAD_IMAGE_MAX_BYTES", 5*1024*1024, &errs)
+	cfg.Upload.ImageMaxCountPerPost = intDefault("UPLOAD_IMAGE_MAX_COUNT_PER_POST", 9, &errs)
+	cfg.Upload.ImageMaxCountPerComment = intDefault("UPLOAD_IMAGE_MAX_COUNT_PER_COMMENT", 1, &errs)
+
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
@@ -101,6 +118,19 @@ func intDefault(key string, defaultValue int, errs *[]error) int {
 		return defaultValue
 	}
 	return i
+}
+
+func boolDefault(key string, defaultValue bool, errs *[]error) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseBool(strings.TrimSpace(v))
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("invalid value for %s: %v", key, err))
+		return defaultValue
+	}
+	return value
 }
 
 func durationDefault(key string, defaultValue time.Duration, errs *[]error) time.Duration {

@@ -25,7 +25,7 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	now := time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)
 	posts := &fakePostUseCase{
 		publishResult: postusecase.PublishPostResult{
-			Post: newPostResult("Hello", now),
+			Post: newPostResultWithAttachment("Hello", now),
 		},
 	}
 	router := newPostTestRouter(posts, validParserWithUserID(userID))
@@ -33,7 +33,8 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/posts", bytes.NewBufferString(`{
 		"title": "Hello",
-		"body": "Post body"
+		"body": "Post body",
+		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"]
 	}`))
 	request.Header.Set("Authorization", "Bearer valid-token")
 	request.Header.Set("Content-Type", "application/json")
@@ -52,6 +53,9 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	if posts.publishInput.CommunitySlug != "campus" {
 		t.Fatalf("expected community slug campus, got %q", posts.publishInput.CommunitySlug)
 	}
+	if len(posts.publishInput.AttachmentIDs) != 1 || posts.publishInput.AttachmentIDs[0] != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
+		t.Fatalf("unexpected attachment ids: %#v", posts.publishInput.AttachmentIDs)
+	}
 
 	var response publishPostResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -59,6 +63,12 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	}
 	if response.Post.Title != "Hello" {
 		t.Fatalf("expected title Hello, got %q", response.Post.Title)
+	}
+	if response.Post.BodyFormat != "markdown" {
+		t.Fatalf("expected body_format markdown, got %q", response.Post.BodyFormat)
+	}
+	if len(response.Post.Attachments) != 1 || response.Post.Attachments[0].URL == "" {
+		t.Fatalf("expected attachment response, got %#v", response.Post.Attachments)
 	}
 }
 
@@ -108,6 +118,9 @@ func TestListCommunityPostsReturnsPosts(t *testing.T) {
 	if response.Posts[0].UpvoteCount != 2 || response.Posts[0].DownvoteCount != 1 || response.Posts[0].Score != 1 || response.Posts[0].MyVote != 1 {
 		t.Fatalf("unexpected vote fields: %#v", response.Posts[0])
 	}
+	if response.Posts[0].BodyFormat != "markdown" {
+		t.Fatalf("expected body_format markdown, got %q", response.Posts[0].BodyFormat)
+	}
 }
 
 func TestGetPostReturnsPost(t *testing.T) {
@@ -139,6 +152,77 @@ func TestGetPostReturnsPost(t *testing.T) {
 	}
 	if posts.getInput.ViewerID != userID {
 		t.Fatalf("expected viewer %q, got %q", userID.String(), posts.getInput.ViewerID.String())
+	}
+}
+
+func TestUpdatePostReturnsUpdatedPost(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	posts := &fakePostUseCase{
+		updateResult: postusecase.UpdatePostResult{
+			Post: newPostResult("Updated", now),
+		},
+	}
+	router := newPostTestRouter(posts, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c", bytes.NewBufferString(`{
+		"title": "Updated",
+		"body": "Updated body"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !posts.updateCalled {
+		t.Fatal("expected UpdatePost to be called")
+	}
+	if posts.updateInput.ActorID != userID {
+		t.Fatalf("expected actor %q, got %q", userID.String(), posts.updateInput.ActorID.String())
+	}
+	if posts.updateInput.Title != "Updated" || posts.updateInput.Body != "Updated body" {
+		t.Fatalf("unexpected update input: %#v", posts.updateInput)
+	}
+
+	var response getPostResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Post.Title != "Updated" || response.Post.BodyFormat != "markdown" {
+		t.Fatalf("unexpected update response: %#v", response.Post)
+	}
+}
+
+func TestDeletePostReturnsNoContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	posts := &fakePostUseCase{}
+	router := newPostTestRouter(posts, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, recorder.Code, recorder.Body.String())
+	}
+	if !posts.deleteCalled {
+		t.Fatal("expected DeletePost to be called")
+	}
+	if posts.deleteInput.ActorID != userID {
+		t.Fatalf("expected actor %q, got %q", userID.String(), posts.deleteInput.ActorID.String())
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("expected empty body, got %q", recorder.Body.String())
 	}
 }
 
@@ -185,6 +269,9 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	if len(response.Posts) != 1 || response.Posts[0].Title != "Latest" {
 		t.Fatalf("unexpected latest posts response: %#v", response.Posts)
 	}
+	if response.Posts[0].BodyFormat != "markdown" {
+		t.Fatalf("expected body_format markdown, got %q", response.Posts[0].BodyFormat)
+	}
 }
 
 func TestListLatestPostsMapsInvalidSortError(t *testing.T) {
@@ -225,7 +312,7 @@ func TestPostRoutesRejectInvalidAuth(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	}
 	assertPostErrorCode(t, recorder, apperr.CodeUnauthenticated)
-	if posts.publishCalled || posts.listCalled || posts.listLatestCalled || posts.getCalled {
+	if posts.publishCalled || posts.listCalled || posts.listLatestCalled || posts.getCalled || posts.updateCalled || posts.deleteCalled {
 		t.Fatal("post usecase should not be called for invalid auth")
 	}
 }
@@ -280,18 +367,26 @@ type fakePostUseCase struct {
 	listCalled       bool
 	listLatestCalled bool
 	getCalled        bool
+	updateCalled     bool
+	deleteCalled     bool
 	publishInput     postusecase.PublishPostInput
 	listInput        postusecase.ListCommunityPostsInput
 	listLatestInput  postusecase.ListLatestPostsInput
 	getInput         postusecase.GetPostInput
+	updateInput      postusecase.UpdatePostInput
+	deleteInput      postusecase.DeletePostInput
 	publishResult    postusecase.PublishPostResult
 	listResult       postusecase.ListCommunityPostsResult
 	listLatestResult postusecase.ListLatestPostsResult
 	getResult        postusecase.GetPostResult
+	updateResult     postusecase.UpdatePostResult
+	deleteResult     postusecase.DeletePostResult
 	publishErr       error
 	listErr          error
 	listLatestErr    error
 	getErr           error
+	updateErr        error
+	deleteErr        error
 }
 
 func (f *fakePostUseCase) PublishPost(ctx context.Context, input postusecase.PublishPostInput) (postusecase.PublishPostResult, error) {
@@ -316,6 +411,18 @@ func (f *fakePostUseCase) GetPost(ctx context.Context, input postusecase.GetPost
 	f.getCalled = true
 	f.getInput = input
 	return f.getResult, f.getErr
+}
+
+func (f *fakePostUseCase) UpdatePost(ctx context.Context, input postusecase.UpdatePostInput) (postusecase.UpdatePostResult, error) {
+	f.updateCalled = true
+	f.updateInput = input
+	return f.updateResult, f.updateErr
+}
+
+func (f *fakePostUseCase) DeletePost(ctx context.Context, input postusecase.DeletePostInput) (postusecase.DeletePostResult, error) {
+	f.deleteCalled = true
+	f.deleteInput = input
+	return f.deleteResult, f.deleteErr
 }
 
 type fakeAccessTokenParser struct {
@@ -357,6 +464,7 @@ func newPostResult(title string, now time.Time) postusecase.Post {
 		AuthorID:      userdomain.NewGeneratedUserID().String(),
 		Title:         title,
 		Body:          "Post body",
+		BodyFormat:    "markdown",
 		Status:        "visible",
 		UpvoteCount:   2,
 		DownvoteCount: 1,
@@ -365,6 +473,22 @@ func newPostResult(title string, now time.Time) postusecase.Post {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+}
+
+func newPostResultWithAttachment(title string, now time.Time) postusecase.Post {
+	post := newPostResult(title, now)
+	post.Attachments = []postusecase.Attachment{
+		{
+			ID:        "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
+			Kind:      "image",
+			URL:       "http://localhost:8080/uploads/images/test.png",
+			SizeBytes: 100,
+			MimeType:  "image/png",
+			Status:    "ready",
+			CreatedAt: now,
+		},
+	}
+	return post
 }
 
 func assertPostErrorCode(t *testing.T, recorder *httptest.ResponseRecorder, wantCode apperr.Code) {

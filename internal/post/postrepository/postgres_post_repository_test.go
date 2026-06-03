@@ -112,6 +112,53 @@ func TestPostgresPostRepositoryListVisibleInPublicCommunities(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryUpdateContentAndMarkDeleted(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "post-update-"+randomSuffix())
+	post := mustPost(t, communityID, authorID, "Original update", now)
+	if err := repo.Create(ctx, *post); err != nil {
+		t.Fatalf("Create post returned error: %v", err)
+	}
+	cleanupPost(ctx, t, pool, post.ID())
+
+	if err := post.Edit(mustPostTitle(t, "Updated update"), mustPostBody(t, "Updated body"), now.Add(time.Minute)); err != nil {
+		t.Fatalf("Edit post returned error: %v", err)
+	}
+	if err := repo.UpdateContent(ctx, *post); err != nil {
+		t.Fatalf("UpdateContent returned error: %v", err)
+	}
+
+	updated, err := repo.FindVisibleByID(ctx, post.ID())
+	if err != nil {
+		t.Fatalf("FindVisibleByID after update returned error: %v", err)
+	}
+	if updated.Title().String() != "Updated update" || updated.Body().String() != "Updated body" {
+		t.Fatalf("unexpected updated content: title=%q body=%q", updated.Title().String(), updated.Body().String())
+	}
+
+	if err := post.MarkDeleted(now.Add(2 * time.Minute)); err != nil {
+		t.Fatalf("MarkDeleted returned error: %v", err)
+	}
+	if err := repo.MarkDeleted(ctx, *post); err != nil {
+		t.Fatalf("MarkDeleted repository returned error: %v", err)
+	}
+	if _, err := repo.FindVisibleByID(ctx, post.ID()); !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found after delete, got %v", err)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM posts WHERE id = $1::uuid`, post.ID().String()).Scan(&status); err != nil {
+		t.Fatalf("query deleted post status: %v", err)
+	}
+	if status != postdomain.PostStatusDeleted.String() {
+		t.Fatalf("expected deleted status, got %q", status)
+	}
+}
+
 func TestPostgresPostRepositoryListVisibleByCommunityHotSort(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)
@@ -419,6 +466,26 @@ func mustPostWithStatus(t *testing.T, communityID communitydomain.CommunityID, a
 		t.Fatalf("NewPost returned error: %v", err)
 	}
 	return post
+}
+
+func mustPostTitle(t *testing.T, raw string) postdomain.PostTitle {
+	t.Helper()
+
+	title, err := postdomain.NewPostTitle(raw)
+	if err != nil {
+		t.Fatalf("NewPostTitle returned error: %v", err)
+	}
+	return title
+}
+
+func mustPostBody(t *testing.T, raw string) postdomain.PostBody {
+	t.Helper()
+
+	body, err := postdomain.NewPostBody(raw)
+	if err != nil {
+		t.Fatalf("NewPostBody returned error: %v", err)
+	}
+	return body
 }
 
 func testNow() time.Time {

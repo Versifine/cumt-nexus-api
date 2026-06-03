@@ -86,6 +86,46 @@ func TestCommentValidation(t *testing.T) {
 	}
 }
 
+func TestCommentEditAndDelete(t *testing.T) {
+	now := time.Now().UTC()
+	comment, err := NewComment(
+		NewGeneratedCommentID(),
+		mustPostID(t),
+		userdomain.NewGeneratedUserID(),
+		nil,
+		mustCommentBody(t, "Body"),
+		now,
+	)
+	if err != nil {
+		t.Fatalf("NewComment returned error: %v", err)
+	}
+
+	editedAt := now.Add(time.Minute)
+	if err := comment.EditBody(mustCommentBody(t, "Updated body"), editedAt); err != nil {
+		t.Fatalf("EditBody returned error: %v", err)
+	}
+	if comment.Body().String() != "Updated body" {
+		t.Fatalf("comment was not edited: body=%q", comment.Body().String())
+	}
+	if !comment.UpdatedAt().Equal(editedAt) {
+		t.Fatalf("expected updated_at %s, got %s", editedAt, comment.UpdatedAt())
+	}
+
+	deletedAt := editedAt.Add(time.Minute)
+	if err := comment.MarkDeleted(deletedAt); err != nil {
+		t.Fatalf("MarkDeleted returned error: %v", err)
+	}
+	if comment.Status() != CommentStatusDeleted {
+		t.Fatalf("expected deleted status, got %q", comment.Status().String())
+	}
+	if !comment.UpdatedAt().Equal(deletedAt) {
+		t.Fatalf("expected deleted updated_at %s, got %s", deletedAt, comment.UpdatedAt())
+	}
+	if err := comment.EditBody(mustCommentBody(t, "Again"), deletedAt.Add(time.Minute)); !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict editing deleted comment, got %v", err)
+	}
+}
+
 func assertCommentStatus(t *testing.T, raw string, want CommentStatus) {
 	t.Helper()
 

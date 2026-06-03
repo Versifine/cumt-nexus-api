@@ -191,3 +191,36 @@ func (post *Post) CreatedAt() time.Time {
 func (post *Post) UpdatedAt() time.Time {
 	return post.updatedAt
 }
+
+func (post *Post) Edit(title PostTitle, body PostBody, now time.Time) error {
+	if post.status != PostStatusVisible {
+		return apperr.New(apperr.CodeConflict, "post is not editable")
+	}
+	if now.IsZero() {
+		return apperr.New(apperr.CodeInvalidArgument, "post updated time can't be zero")
+	}
+	if now.Before(post.createdAt) {
+		return apperr.New(apperr.CodeInvalidArgument, "post updated time can't be before created time")
+	}
+
+	post.title = title
+	post.body = body
+	post.updatedAt = now
+	return nil
+}
+
+func (post *Post) MarkDeleted(now time.Time) error {
+	if post.status != PostStatusVisible {
+		return apperr.New(apperr.CodeConflict, "post is not deletable")
+	}
+	if now.IsZero() {
+		return apperr.New(apperr.CodeInvalidArgument, "post updated time can't be zero")
+	}
+	if now.Before(post.createdAt) {
+		return apperr.New(apperr.CodeInvalidArgument, "post updated time can't be before created time")
+	}
+
+	post.status = PostStatusDeleted
+	post.updatedAt = now
+	return nil
+}

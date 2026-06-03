@@ -8,6 +8,8 @@ type Config struct {
 	HTTP     HTTPConfig
 	Log      LogConfig
 	Auth     AuthConfig
+	Storage  ObjectStorageConfig
+	Upload   UploadConfig
 }
 type AppConfig struct {
 	Name           string
@@ -42,4 +44,20 @@ type CacheConfig struct {
 type AuthConfig struct {
 	TokenSecret    string
 	AccessTokenTTL time.Duration
+}
+type ObjectStorageConfig struct {
+	Provider        string
+	Endpoint        string
+	Region          string
+	Bucket          string
+	AccessKeyID     string
+	SecretAccessKey string
+	PublicBaseURL   string
+	ForcePathStyle  bool
+	LocalRoot       string
+}
+type UploadConfig struct {
+	ImageMaxBytes           int
+	ImageMaxCountPerPost    int
+	ImageMaxCountPerComment int
 }
