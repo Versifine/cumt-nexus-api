@@ -1,11 +1,13 @@
 param(
-    [string]$DocPath = 'docs/internal/architecture/http-api-schema.md'
+    [string]$DocPath = 'docs/internal/architecture/http-api-schema.md',
+    [string]$RouteDocPath = 'docs/internal/architecture/http-api-contract.md'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $docFullPath = Join-Path $repo $DocPath
+$routeDocFullPath = Join-Path $repo $RouteDocPath
 
 function New-SchemaKey {
     param(
@@ -13,6 +15,14 @@ function New-SchemaKey {
         [string]$Type
     )
     return "$Package.$Type"
+}
+
+function New-RouteKey {
+    param(
+        [string]$Method,
+        [string]$Path
+    )
+    return "$($Method.ToUpperInvariant()) $Path"
 }
 
 function Get-StructSchemasFromFile {
@@ -50,6 +60,56 @@ function Get-StructSchemasFromFile {
     return $schemas
 }
 
+function Read-RouteKeysFromDoc {
+    param([string]$Path)
+
+    $routes = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $Path) {
+        $match = [regex]::Match($line, '^\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*([^|]+?)\s*\|')
+        if ($match.Success) {
+            [void]$routes.Add((New-RouteKey -Method $match.Groups[1].Value -Path $match.Groups[2].Value.Trim()))
+        }
+    }
+    return $routes
+}
+
+function Read-SchemaRouteMappingsFromDoc {
+    param([string]$Path)
+
+    $mappings = @{}
+    foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $Path) {
+        $match = [regex]::Match($line, '^\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|')
+        if (-not $match.Success) {
+            continue
+        }
+        $key = New-RouteKey -Method $match.Groups[1].Value -Path $match.Groups[2].Value.Trim()
+        if ($mappings.ContainsKey($key)) {
+            throw "duplicate API schema route mapping: $key"
+        }
+        $mappings[$key] = [pscustomobject]@{
+            Method = $match.Groups[1].Value
+            Path = $match.Groups[2].Value.Trim()
+            Request = $match.Groups[3].Value.Trim()
+            Success = $match.Groups[4].Value.Trim()
+            Status = [int]$match.Groups[5].Value
+        }
+    }
+    return $mappings
+}
+
+function Get-SchemaRefs {
+    param([string]$Cell)
+
+    $refs = @()
+    foreach ($match in [regex]::Matches($Cell, '`([^`]+)`')) {
+        $value = $match.Groups[1].Value
+        if ([regex]::IsMatch($value, '^\w+http\.\w+$')) {
+            $refs += $value
+        }
+    }
+    return $refs
+}
+
 $deliveryFiles = Get-ChildItem -LiteralPath (Join-Path $repo 'internal') -Recurse -Filter '*.go' |
     Where-Object {
         $_.FullName -match '\\delivery\\.*http\\' -and
@@ -69,6 +129,9 @@ foreach ($file in $deliveryFiles) {
 
 if (-not (Test-Path -LiteralPath $docFullPath)) {
     throw "API schema doc not found: $DocPath"
+}
+if (-not (Test-Path -LiteralPath $routeDocFullPath)) {
+    throw "API route contract doc not found: $RouteDocPath"
 }
 
 $documentedSchemas = @{}
@@ -113,12 +176,67 @@ foreach ($key in $actualKeys) {
     }
 }
 
-if ($missingInDoc.Count -gt 0 -or $staleInDoc.Count -gt 0 -or $fieldMismatches.Count -gt 0) {
+$contractRouteKeys = Read-RouteKeysFromDoc -Path $routeDocFullPath
+$schemaRouteMappings = Read-SchemaRouteMappingsFromDoc -Path $docFullPath
+$schemaRouteKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($key in $schemaRouteMappings.Keys) {
+    [void]$schemaRouteKeys.Add($key)
+}
+
+$missingRouteMappings = @($contractRouteKeys | Where-Object { -not $schemaRouteKeys.Contains($_) } | Sort-Object)
+$staleRouteMappings = @($schemaRouteKeys | Where-Object { -not $contractRouteKeys.Contains($_) } | Sort-Object)
+$invalidSchemaRefs = @()
+$invalidStatuses = @()
+
+foreach ($routeKey in ($schemaRouteMappings.Keys | Sort-Object)) {
+    $mapping = $schemaRouteMappings[$routeKey]
+    $schemaRefs = @()
+    $schemaRefs += @(Get-SchemaRefs -Cell $mapping.Request)
+    $schemaRefs += @(Get-SchemaRefs -Cell $mapping.Success)
+    foreach ($schemaRef in $schemaRefs) {
+        if ([string]::IsNullOrWhiteSpace($schemaRef)) {
+            continue
+        }
+        if (-not $documentedSchemas.ContainsKey($schemaRef) -or -not $actualSchemas.ContainsKey($schemaRef)) {
+            $invalidSchemaRefs += [pscustomobject]@{
+                route = $routeKey
+                schema = $schemaRef
+            }
+        }
+    }
+    if ($mapping.Status -notin @(200, 201, 204)) {
+        $invalidStatuses += [pscustomobject]@{
+            route = $routeKey
+            status = $mapping.Status
+        }
+    }
+    if ($mapping.Status -eq 204 -and $mapping.Success -ne 'none') {
+        $invalidStatuses += [pscustomobject]@{
+            route = $routeKey
+            status = $mapping.Status
+            reason = '204 success must be none'
+        }
+    }
+}
+
+if (
+    $missingInDoc.Count -gt 0 -or
+    $staleInDoc.Count -gt 0 -or
+    $fieldMismatches.Count -gt 0 -or
+    $missingRouteMappings.Count -gt 0 -or
+    $staleRouteMappings.Count -gt 0 -or
+    $invalidSchemaRefs.Count -gt 0 -or
+    $invalidStatuses.Count -gt 0
+) {
     [pscustomobject]@{
         status = 'failed'
         missing_in_doc = $missingInDoc
         stale_in_doc = $staleInDoc
         field_mismatches = $fieldMismatches
+        missing_route_mappings = $missingRouteMappings
+        stale_route_mappings = $staleRouteMappings
+        invalid_schema_refs = $invalidSchemaRefs
+        invalid_statuses = $invalidStatuses
     } | ConvertTo-Json -Depth 6
     throw 'API schema doc is out of sync'
 }
@@ -126,6 +244,8 @@ if ($missingInDoc.Count -gt 0 -or $staleInDoc.Count -gt 0 -or $fieldMismatches.C
 [pscustomobject]@{
     status = 'passed'
     schema_count = $actualSchemas.Count
+    route_mapping_count = $schemaRouteMappings.Count
     doc = $DocPath
+    route_doc = $RouteDocPath
     schemas = $actualKeys
 } | ConvertTo-Json -Depth 4
