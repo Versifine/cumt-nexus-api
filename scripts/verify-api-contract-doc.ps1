@@ -20,7 +20,9 @@ function Add-Route {
         [System.Collections.Generic.Dictionary[string, object]]$Routes,
         [string]$Method,
         [string]$Path,
-        [string]$Auth
+        [string]$Auth,
+        [string]$Handler = '',
+        [string]$Source = ''
     )
 
     $key = New-RouteKey -Method $Method -Path $Path
@@ -31,6 +33,8 @@ function Add-Route {
         Method = $Method.ToUpperInvariant()
         Path = $Path
         Auth = $Auth
+        Handler = $Handler
+        Source = $Source
     }
 }
 
@@ -43,12 +47,81 @@ function Add-RoutesFromFile {
     )
 
     $content = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $repo $Path)
-    $matches = [regex]::Matches($content, 'group\.(GET|POST|PUT|PATCH|DELETE)\("([^"]+)"')
+    $matches = [regex]::Matches($content, 'group\.(GET|POST|PUT|PATCH|DELETE)\("([^"]+)",\s*handler\.(\w+)\)')
     foreach ($match in $matches) {
         $method = $match.Groups[1].Value
         $routePath = $Prefix + $match.Groups[2].Value
-        Add-Route -Routes $Routes -Method $method -Path $routePath -Auth $Auth
+        $handler = $match.Groups[3].Value
+        Add-Route -Routes $Routes -Method $method -Path $routePath -Auth $Auth -Handler $handler -Source $Path
     }
+}
+
+function Get-HandlerBody {
+    param(
+        [string]$Source,
+        [string]$Handler
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Source) -or [string]::IsNullOrWhiteSpace($Handler)) {
+        return ''
+    }
+
+    $content = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $repo $Source)
+    $signature = [regex]::Match($content, "func\s+\(h \*Handler\)\s+$Handler\s*\(c \*gin\.Context\)\s*\{")
+    if (-not $signature.Success) {
+        return ''
+    }
+
+    $bodyStart = $signature.Index + $signature.Length
+    $depth = 1
+    for ($i = $bodyStart; $i -lt $content.Length; $i++) {
+        $char = $content[$i]
+        if ($char -eq '{') {
+            $depth++
+        } elseif ($char -eq '}') {
+            $depth--
+            if ($depth -eq 0) {
+                return $content.Substring($bodyStart, $i - $bodyStart)
+            }
+        }
+    }
+
+    return ''
+}
+
+function Get-QueryParamsFromBody {
+    param([string]$Body)
+
+    $params = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($match in [regex]::Matches($Body, '\b(?:Query|DefaultQuery|GetQuery)\("([^"]+)"')) {
+        [void]$params.Add($match.Groups[1].Value)
+    }
+    foreach ($match in [regex]::Matches($Body, '\b\w*Query\w*\(c,\s*"([^"]+)"')) {
+        [void]$params.Add($match.Groups[1].Value)
+    }
+    return $params
+}
+
+function Read-QueryParamDocs {
+    param([string]$Path)
+
+    $docs = [System.Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+    foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $Path) {
+        $match = [regex]::Match($line, '^\|\s*`([^`]+)`\s*\|\s*((?:`[^`]+`(?:,\s*)?)+)\s*\|')
+        if (-not $match.Success) {
+            continue
+        }
+        $routeKey = $match.Groups[1].Value.Trim()
+        if ($docs.ContainsKey($routeKey)) {
+            throw "duplicate API query parameter doc: $routeKey"
+        }
+        $params = @()
+        foreach ($paramMatch in [regex]::Matches($match.Groups[2].Value, '`([^`]+)`')) {
+            $params += $paramMatch.Groups[1].Value
+        }
+        $docs[$routeKey] = @($params | Sort-Object)
+    }
+    return $docs
 }
 
 $actualRoutes = [System.Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
@@ -99,6 +172,9 @@ foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $docFullPath) {
 $missingInDoc = @($actualRoutes.Keys | Where-Object { -not $documentedRoutes.ContainsKey($_) } | Sort-Object)
 $staleInDoc = @($documentedRoutes.Keys | Where-Object { -not $actualRoutes.ContainsKey($_) } | Sort-Object)
 $authMismatches = @()
+$actualQueryParamDocs = [System.Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+$documentedQueryParamDocs = Read-QueryParamDocs -Path $docFullPath
+$queryParamMismatches = @()
 
 foreach ($routeKey in ($actualRoutes.Keys | Sort-Object)) {
     if (-not $documentedRoutes.ContainsKey($routeKey)) {
@@ -113,22 +189,68 @@ foreach ($routeKey in ($actualRoutes.Keys | Sort-Object)) {
             documented = $documented.Auth
         }
     }
+
+    $body = Get-HandlerBody -Source $actual.Source -Handler $actual.Handler
+    $queryParams = Get-QueryParamsFromBody -Body $body
+    if ($queryParams.Count -gt 0) {
+        $actualQueryParamDocs[$routeKey] = @($queryParams | Sort-Object)
+    }
 }
 
-if ($missingInDoc.Count -gt 0 -or $staleInDoc.Count -gt 0 -or $authMismatches.Count -gt 0) {
+$missingQueryParamDocs = @($actualQueryParamDocs.Keys | Where-Object { -not $documentedQueryParamDocs.ContainsKey($_) } | Sort-Object)
+$staleQueryParamDocs = @($documentedQueryParamDocs.Keys | Where-Object { -not $actualQueryParamDocs.ContainsKey($_) } | Sort-Object)
+foreach ($routeKey in ($actualQueryParamDocs.Keys | Sort-Object)) {
+    if (-not $documentedQueryParamDocs.ContainsKey($routeKey)) {
+        continue
+    }
+    $actualParams = @($actualQueryParamDocs[$routeKey] | Sort-Object)
+    $documentedParams = @($documentedQueryParamDocs[$routeKey] | Sort-Object)
+    if (($actualParams -join ',') -ne ($documentedParams -join ',')) {
+        $queryParamMismatches += [pscustomobject]@{
+            route = $routeKey
+            actual = $actualParams
+            documented = $documentedParams
+        }
+    }
+}
+
+if (
+    $missingInDoc.Count -gt 0 -or
+    $staleInDoc.Count -gt 0 -or
+    $authMismatches.Count -gt 0 -or
+    $missingQueryParamDocs.Count -gt 0 -or
+    $staleQueryParamDocs.Count -gt 0 -or
+    $queryParamMismatches.Count -gt 0
+) {
     [pscustomobject]@{
         status = 'failed'
         missing_in_doc = $missingInDoc
         stale_in_doc = $staleInDoc
         auth_mismatches = $authMismatches
+        missing_query_param_docs = $missingQueryParamDocs
+        stale_query_param_docs = $staleQueryParamDocs
+        query_param_mismatches = $queryParamMismatches
     } | ConvertTo-Json -Depth 4
-    throw 'API contract doc route/auth inventory is out of sync'
+    throw 'API contract doc route/auth/query inventory is out of sync'
 }
 
 [pscustomobject]@{
     status = 'passed'
     route_count = $actualRoutes.Count
+    query_param_route_count = $actualQueryParamDocs.Count
     doc = $DocPath
     routes = @($actualRoutes.Keys | Sort-Object)
-    auth_boundaries = @($actualRoutes.Values | Sort-Object Method, Path)
+    auth_boundaries = @($actualRoutes.Values | Sort-Object Method, Path | ForEach-Object {
+        [pscustomobject]@{
+            Method = $_.Method
+            Path = $_.Path
+            Auth = $_.Auth
+        }
+    })
+    query_params = @($actualQueryParamDocs.Keys | Sort-Object | ForEach-Object {
+        [pscustomobject]@{
+            route = $_
+            params = @($actualQueryParamDocs[$_])
+        }
+    })
 } | ConvertTo-Json -Depth 4
