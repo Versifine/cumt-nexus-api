@@ -1,4 +1,4 @@
-name: cumt-nexus-api
+name: cumt-nexus-api-prod
 
 x-api-service: &api-service
   image: ${API_IMAGE:-cumt-nexus-api:local}
@@ -25,6 +25,7 @@ x-api-service: &api-service
     HTTP_CORS_ALLOWED_ORIGINS: ${HTTP_CORS_ALLOWED_ORIGINS}
     LOG_LEVEL: ${LOG_LEVEL}
     LOG_FORMAT: ${LOG_FORMAT}
+    GIN_MODE: ${GIN_MODE:-release}
     AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET}
     AUTH_ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TOKEN_TTL}
     OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER}

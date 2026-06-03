@@ -138,7 +138,10 @@ cp .env.production.example .env.production
 API_IMAGE=cumt-nexus-api:local
 OBJECT_STORAGE_PROVIDER=local
 POSTGRES_HOST=postgres
+GIN_MODE=release
 ```
+
+`docker-compose.prod.yml` 使用独立 project name `cumt-nexus-api-prod`，避免和本地开发 `compose.yaml` 的 PostgreSQL volume 混用。
 
 构建并启动：
 
