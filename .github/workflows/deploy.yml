@@ -64,6 +64,40 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+      - name: Verify package visibility is private
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          owner="${repo%%/*}"
+          package="${repo#*/}"
+          owner_type="$(gh api "/repos/${GITHUB_REPOSITORY}" --jq '.owner.type')"
+
+          if [[ "${owner_type}" == "Organization" ]]; then
+            endpoint="/orgs/${owner}/packages/container/${package}"
+          else
+            endpoint="/users/${owner}/packages/container/${package}"
+          fi
+
+          visibility=""
+          for _ in {1..6}; do
+            if visibility="$(gh api "${endpoint}" --jq '.visibility' 2>/dev/null)"; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ "${visibility}" != "private" ]]; then
+            echo "::error::GHCR package ${owner}/${package} visibility is '${visibility:-unknown}', expected 'private'. Public GHCR packages cannot be changed back to private; create a new private package or fix package settings before releasing."
+            exit 1
+          fi
 
   deploy:
     name: Deploy over SSH
@@ -83,9 +117,15 @@ jobs:
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Pull image and restart API
+        env:
+          GHCR_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          printf '%s\n' "${GHCR_TOKEN}" | \
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+
           ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             "cd '${{ secrets.DEPLOY_PATH }}' && \
              API_IMAGE='${{ needs.image.outputs.image }}' docker compose --env-file .env.production -f docker-compose.prod.yml pull && \

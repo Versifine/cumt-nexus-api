@@ -109,7 +109,7 @@ docker compose up -d
 | `docker-compose.prod.yml` | 生产形态的 PostgreSQL、migration job 和 API 服务编排 |
 | `.env.production.example` | 生产/生产模拟环境变量模板，不包含真实密钥 |
 | `.github/workflows/ci.yml` | push / PR 时运行基线校验和 Docker build |
-| `.github/workflows/deploy.yml` | tag 或手动触发时构建并推送 GHCR 镜像；可选手动 SSH 部署 |
+| `.github/workflows/deploy.yml` | tag 或手动触发时构建并推送 GHCR private 镜像；可选手动 SSH 部署 |
 
 ## 本机模拟生产启动
 
@@ -216,12 +216,14 @@ CD 最小动作：
 
 ```text
 1. 构建 Docker image
-2. 推送 image 到 registry
-3. SSH 到服务器
-4. 拉取指定 tag 的 image
-5. 执行 migration up
-6. 重启 API
-7. 检查 /healthz
+2. 推送 image 到 GHCR
+3. 校验 GHCR package visibility 必须是 private
+4. SSH 到服务器
+5. 在服务器上登录 GHCR
+6. 拉取指定 tag 的 image
+7. 执行 migration up
+8. 重启 API
+9. 检查 /healthz
 ```
 
 CD 不应把未打 tag 的开发分支直接部署到生产服务器。
@@ -250,6 +252,10 @@ ghcr.io/<owner>/<repo>:<version>
 ```text
 ghcr.io/versifine/cumt-nexus-api:v0.2.0
 ```
+
+GHCR package 必须保持 private。deploy workflow 在 push 完镜像后会读取 package metadata，如果 visibility 不是 `private` 会直接失败。GHCR 新 package 首次发布默认为 private；如果 package 被手动改成 public，GitHub 不允许再改回 private，应停止发布并使用新的 private package 名称或重新建立 package。
+
+由于镜像是 private，手动 SSH 部署时 workflow 会先在服务器上用当前 `GITHUB_TOKEN` 执行 `docker login ghcr.io`，再执行 `docker compose pull`。该 token 只用于本次 workflow 拉取当前私有镜像；如果要让服务器脱离 Actions 手动拉取镜像，需要单独在服务器配置具备 `read:packages` 权限的 GHCR 凭据。
 
 手动 SSH 部署需要在 GitHub repository secrets 中配置：
 
