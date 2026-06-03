@@ -26,6 +26,8 @@
 
 阶段 21 已完成：新增配置加载运行时契约测试，覆盖 `Load()` 的 local 默认值、R2 配置加载、R2 缺凭据失败和基础解析失败路径。本阶段不改变运行时配置语义。
 
+2026-06-03 合同复核：用当前源码重新启动本地 API 后，前端 `npm run check:main-path` 严格模式已无评论树 warning；此前 warning 来自旧后端进程。当前 `view=tree` 合同仍是扁平前序遍历数组，父评论先于子评论。`PATCH/DELETE /api/v1/posts/:id` 和 `PATCH/DELETE /api/v1/comments/:id` 的前端实现合同已在下方接口说明和 `docs/internal/architecture/content-lifecycle.md` 收口。
+
 已具备：
 
 - 配置加载与校验
