@@ -148,7 +148,7 @@ function Read-RequiredFieldsFromDoc {
 
 $deliveryFiles = Get-ChildItem -LiteralPath (Join-Path $repo 'internal') -Recurse -Filter '*.go' |
     Where-Object {
-        $_.FullName -match '\\delivery\\.*http\\' -and
+        ($_.FullName.Replace('\', '/') -match '/delivery/.*http/') -and
         $_.Name -notlike '*_test.go'
     }
 
