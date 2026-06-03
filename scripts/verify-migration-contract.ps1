@@ -1,6 +1,6 @@
 param(
     [string]$MigrationDir = 'migrations',
-    [string]$DocPath = 'docs/internal/engineering/migrations.md'
+    [string]$DocPath = 'docs/contracts/migrations.md'
 )
 
 $ErrorActionPreference = 'Stop'

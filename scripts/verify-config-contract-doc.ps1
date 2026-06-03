@@ -1,5 +1,5 @@
 param(
-    [string]$DocPath = 'docs/internal/engineering/configuration.md',
+    [string]$DocPath = 'docs/contracts/configuration.md',
     [string]$EnvExamplePath = '.env.example'
 )
 

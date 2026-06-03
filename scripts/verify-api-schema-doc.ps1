@@ -1,6 +1,6 @@
 param(
-    [string]$DocPath = 'docs/internal/architecture/http-api-schema.md',
-    [string]$RouteDocPath = 'docs/internal/architecture/http-api-contract.md'
+    [string]$DocPath = 'docs/contracts/http-api-schema.md',
+    [string]$RouteDocPath = 'docs/contracts/http-api-contract.md'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -148,7 +148,7 @@ function Read-RequiredFieldsFromDoc {
 
 $deliveryFiles = Get-ChildItem -LiteralPath (Join-Path $repo 'internal') -Recurse -Filter '*.go' |
     Where-Object {
-        $_.FullName -match '\\delivery\\.*http\\' -and
+        ($_.FullName.Replace('\', '/') -match '/delivery/.*http/') -and
         $_.Name -notlike '*_test.go'
     }
 

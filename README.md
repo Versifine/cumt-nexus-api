@@ -177,6 +177,8 @@ POST /api/v1/uploads/images
 
 上传使用 `multipart/form-data`，字段为 `file` 和可选 `alt_text`。
 
+完整接口合同见 [docs/contracts/http-api-contract.md](docs/contracts/http-api-contract.md)，请求/响应字段合同见 [docs/contracts/http-api-schema.md](docs/contracts/http-api-schema.md)。
+
 ### Moderation
 
 ```text
@@ -223,6 +225,8 @@ internal
 ```
 
 `DELETE` 成功时返回 `204 No Content`。
+
+错误响应、配置和 migration 的可校验合同文档集中放在 [docs/contracts/](docs/contracts/)。
 
 ## 本地开发
 
