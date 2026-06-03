@@ -82,7 +82,7 @@ jobs:
 
       - name: Verify current baseline
         shell: pwsh
-        run: ./scripts/verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+        run: ./scripts/verify-current-baseline.ps1 -SkipInternalDocChecks -SkipHttpSmoke -R2Mode Skip
 
       - name: Build Docker image
         run: docker build -t cumt-nexus-api:ci .

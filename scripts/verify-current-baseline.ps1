@@ -1,5 +1,6 @@
 param(
     [switch]$SkipHttpSmoke,
+    [switch]$SkipInternalDocChecks,
     [ValidateSet('SkipWhenMissing', 'Require', 'Skip')]
     [string]$R2Mode = 'SkipWhenMissing',
     [int]$Stage13Port = 18130,
@@ -82,64 +83,68 @@ function Add-SkippedStep {
 
 Push-Location $repo
 try {
-    Invoke-Step -Name 'api contract route/auth/query inventory' -Command {
-        Invoke-Native -File $powerShellExecutable -Arguments @(
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            (Join-Path $repo 'scripts/verify-api-contract-doc.ps1')
-        )
-    }
+    if ($SkipInternalDocChecks) {
+        Add-SkippedStep -Name 'internal docs contract inventory' -Reason 'SkipInternalDocChecks'
+    } else {
+        Invoke-Step -Name 'api contract route/auth/query inventory' -Command {
+            Invoke-Native -File $powerShellExecutable -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                (Join-Path $repo 'scripts/verify-api-contract-doc.ps1')
+            )
+        }
 
-    Invoke-Step -Name 'api schema fields/routes/required inventory' -Command {
-        Invoke-Native -File $powerShellExecutable -Arguments @(
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            (Join-Path $repo 'scripts/verify-api-schema-doc.ps1')
-        )
-    }
+        Invoke-Step -Name 'api schema fields/routes/required inventory' -Command {
+            Invoke-Native -File $powerShellExecutable -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                (Join-Path $repo 'scripts/verify-api-schema-doc.ps1')
+            )
+        }
 
-    Invoke-Step -Name 'http error contract inventory' -Command {
-        Invoke-Native -File $powerShellExecutable -Arguments @(
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            (Join-Path $repo 'scripts/verify-http-error-contract-doc.ps1')
-        )
-    }
+        Invoke-Step -Name 'http error contract inventory' -Command {
+            Invoke-Native -File $powerShellExecutable -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                (Join-Path $repo 'scripts/verify-http-error-contract-doc.ps1')
+            )
+        }
 
-    Invoke-Step -Name 'configuration contract inventory' -Command {
-        Invoke-Native -File $powerShellExecutable -Arguments @(
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            (Join-Path $repo 'scripts/verify-config-contract-doc.ps1')
-        )
-    }
+        Invoke-Step -Name 'configuration contract inventory' -Command {
+            Invoke-Native -File $powerShellExecutable -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                (Join-Path $repo 'scripts/verify-config-contract-doc.ps1')
+            )
+        }
 
-    Invoke-Step -Name 'configuration semantic contract' -Command {
-        Invoke-Native -File $powerShellExecutable -Arguments @(
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            (Join-Path $repo 'scripts/verify-config-semantics-doc.ps1')
-        )
-    }
+        Invoke-Step -Name 'configuration semantic contract' -Command {
+            Invoke-Native -File $powerShellExecutable -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                (Join-Path $repo 'scripts/verify-config-semantics-doc.ps1')
+            )
+        }
 
-    Invoke-Step -Name 'migration contract inventory' -Command {
-        Invoke-Native -File $powerShellExecutable -Arguments @(
-            '-NoProfile',
-            '-ExecutionPolicy',
-            'Bypass',
-            '-File',
-            (Join-Path $repo 'scripts/verify-migration-contract.ps1')
-        )
+        Invoke-Step -Name 'migration contract inventory' -Command {
+            Invoke-Native -File $powerShellExecutable -Arguments @(
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                (Join-Path $repo 'scripts/verify-migration-contract.ps1')
+            )
+        }
     }
 
     Invoke-Step -Name 'go test ./...' -Command {
@@ -224,6 +229,7 @@ try {
         status = 'passed'
         r2_mode = $R2Mode
         http_smoke_skipped = [bool]$SkipHttpSmoke
+        internal_doc_checks_skipped = [bool]$SkipInternalDocChecks
         steps = $results
     } | ConvertTo-Json -Depth 5
 } finally {

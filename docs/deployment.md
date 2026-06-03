@@ -206,9 +206,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-current-bas
 1. 启动 PostgreSQL service
 2. 安装 Go
 3. go mod download
-4. verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+4. verify-current-baseline.ps1 -SkipInternalDocChecks -SkipHttpSmoke -R2Mode Skip
 5. docker build -t cumt-nexus-api:ci .
 ```
+
+`docs/internal/` 是本地内部文档，不提交到 GitHub。CI 必须使用 `-SkipInternalDocChecks`，否则 GitHub checkout 中缺少内部文档会导致合同文档校验失败。本地完整验收仍应不带该参数运行。
 
 CD 最小动作：
 
