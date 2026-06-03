@@ -1,6 +1,6 @@
 param(
     [switch]$SkipHttpSmoke,
-    [switch]$SkipInternalDocChecks,
+    [switch]$SkipContractDocChecks,
     [ValidateSet('SkipWhenMissing', 'Require', 'Skip')]
     [string]$R2Mode = 'SkipWhenMissing',
     [int]$Stage13Port = 18130,
@@ -83,8 +83,8 @@ function Add-SkippedStep {
 
 Push-Location $repo
 try {
-    if ($SkipInternalDocChecks) {
-        Add-SkippedStep -Name 'internal docs contract inventory' -Reason 'SkipInternalDocChecks'
+    if ($SkipContractDocChecks) {
+        Add-SkippedStep -Name 'contract docs inventory' -Reason 'SkipContractDocChecks'
     } else {
         Invoke-Step -Name 'api contract route/auth/query inventory' -Command {
             Invoke-Native -File $powerShellExecutable -Arguments @(
@@ -229,7 +229,7 @@ try {
         status = 'passed'
         r2_mode = $R2Mode
         http_smoke_skipped = [bool]$SkipHttpSmoke
-        internal_doc_checks_skipped = [bool]$SkipInternalDocChecks
+        contract_doc_checks_skipped = [bool]$SkipContractDocChecks
         steps = $results
     } | ConvertTo-Json -Depth 5
 } finally {

@@ -1,5 +1,5 @@
 param(
-    [string]$DocPath = 'docs/internal/architecture/http-api-contract.md'
+    [string]$DocPath = 'docs/contracts/http-api-contract.md'
 )
 
 $ErrorActionPreference = 'Stop'

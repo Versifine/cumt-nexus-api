@@ -1,5 +1,5 @@
 param(
-    [string]$DocPath = 'docs/internal/architecture/http-error-handling.md'
+    [string]$DocPath = 'docs/contracts/http-error-handling.md'
 )
 
 $ErrorActionPreference = 'Stop'
