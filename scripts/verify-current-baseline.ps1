@@ -147,16 +147,16 @@ try {
         }
     }
 
+    Invoke-Step -Name 'go run ./cmd/migrate up' -Command {
+        Invoke-Native -File 'go' -Arguments @('run', './cmd/migrate', 'up')
+    }
+
     Invoke-Step -Name 'go test ./...' -Command {
         Invoke-Native -File 'go' -Arguments @('test', './...')
     }
 
     Invoke-Step -Name 'go build -buildvcs=false ./...' -Command {
         Invoke-Native -File 'go' -Arguments @('build', '-buildvcs=false', './...')
-    }
-
-    Invoke-Step -Name 'go run ./cmd/migrate up' -Command {
-        Invoke-Native -File 'go' -Arguments @('run', './cmd/migrate', 'up')
     }
 
     if ($SkipHttpSmoke) {
