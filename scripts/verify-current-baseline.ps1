@@ -81,6 +81,16 @@ try {
         )
     }
 
+    Invoke-Step -Name 'api schema contract inventory' -Command {
+        Invoke-Native -File 'powershell' -Arguments @(
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            (Join-Path $repo 'scripts/verify-api-schema-doc.ps1')
+        )
+    }
+
     Invoke-Step -Name 'configuration contract inventory' -Command {
         Invoke-Native -File 'powershell' -Arguments @(
             '-NoProfile',
