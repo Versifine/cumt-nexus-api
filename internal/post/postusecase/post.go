@@ -9,6 +9,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/media/mediadomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
@@ -17,6 +18,7 @@ import (
 const (
 	DefaultPostListLimit = 20
 	MaxPostListLimit     = 50
+	PostBodyFormat       = "markdown"
 )
 
 type PostListSort string
@@ -32,10 +34,12 @@ type CommunityPolicy interface {
 }
 
 type PostUseCase struct {
-	posts       PostRepository
-	communities CommunityPolicy
-	votes       VoteRepository
-	now         func() time.Time
+	posts             PostRepository
+	communities       CommunityPolicy
+	votes             VoteRepository
+	attachments       AttachmentRepository
+	postImageMaxCount int
+	now               func() time.Time
 }
 
 type PublishPostInput struct {
@@ -43,6 +47,7 @@ type PublishPostInput struct {
 	AuthorID      userdomain.UserID
 	Title         string
 	Body          string
+	AttachmentIDs []string
 }
 
 type ListCommunityPostsInput struct {
@@ -65,6 +70,18 @@ type GetPostInput struct {
 	ViewerID userdomain.UserID
 }
 
+type UpdatePostInput struct {
+	PostID  string
+	ActorID userdomain.UserID
+	Title   string
+	Body    string
+}
+
+type DeletePostInput struct {
+	PostID  string
+	ActorID userdomain.UserID
+}
+
 type PublishPostResult struct {
 	Post Post
 }
@@ -85,12 +102,19 @@ type GetPostResult struct {
 	Post Post
 }
 
+type UpdatePostResult struct {
+	Post Post
+}
+
+type DeletePostResult struct{}
+
 type Post struct {
 	ID            string
 	CommunityID   string
 	AuthorID      string
 	Title         string
 	Body          string
+	BodyFormat    string
 	Status        string
 	UpvoteCount   int
 	DownvoteCount int
@@ -98,6 +122,20 @@ type Post struct {
 	MyVote        int
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	Attachments   []Attachment
+}
+
+type Attachment struct {
+	ID        string
+	Kind      string
+	URL       string
+	Width     *int
+	Height    *int
+	SizeBytes int64
+	MimeType  string
+	AltText   string
+	Status    string
+	CreatedAt time.Time
 }
 
 func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func() time.Time, votes ...VoteRepository) *PostUseCase {
@@ -111,11 +149,21 @@ func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func(
 	}
 
 	return &PostUseCase{
-		posts:       posts,
-		communities: communities,
-		votes:       voteRepo,
-		now:         now,
+		posts:             posts,
+		communities:       communities,
+		votes:             voteRepo,
+		postImageMaxCount: 9,
+		now:               now,
 	}
+}
+
+func NewPostUseCaseWithAttachments(posts PostRepository, communities CommunityPolicy, attachments AttachmentRepository, postImageMaxCount int, now func() time.Time, votes ...VoteRepository) *PostUseCase {
+	uc := NewPostUseCase(posts, communities, now, votes...)
+	uc.attachments = attachments
+	if postImageMaxCount > 0 {
+		uc.postImageMaxCount = postImageMaxCount
+	}
+	return uc
 }
 
 func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) (PublishPostResult, error) {
@@ -149,6 +197,10 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	if err != nil {
 		return PublishPostResult{}, err
 	}
+	attachmentIDs, err := parseAttachmentIDs(input.AttachmentIDs, uc.postImageMaxCount)
+	if err != nil {
+		return PublishPostResult{}, err
+	}
 
 	now := uc.now().UTC()
 	post, err := postdomain.NewPost(postdomain.NewGeneratedPostID(), communityID, input.AuthorID, title, body, now)
@@ -159,9 +211,13 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	if err := uc.posts.Create(ctx, *post); err != nil {
 		return PublishPostResult{}, fmt.Errorf("create post: %w", err)
 	}
+	attachments, err := uc.bindPostAttachments(ctx, post.ID(), input.AuthorID, attachmentIDs, now)
+	if err != nil {
+		return PublishPostResult{}, err
+	}
 
 	return PublishPostResult{
-		Post: toPostDTO(*post, postVoteView{}),
+		Post: toPostDTO(*post, postVoteView{}, attachments),
 	}, nil
 }
 
@@ -200,9 +256,13 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
+	attachmentViews, err := uc.loadAttachmentViews(ctx, posts)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
 
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()]))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()]))
 	}
 
 	return result, nil
@@ -227,6 +287,10 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
+	attachmentViews, err := uc.loadAttachmentViews(ctx, posts)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
 
 	result := ListLatestPostsResult{
 		Posts:  make([]Post, 0, len(posts)),
@@ -234,7 +298,7 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 		Offset: offset,
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()]))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()]))
 	}
 
 	return result, nil
@@ -255,10 +319,87 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 	if err != nil {
 		return GetPostResult{}, err
 	}
+	attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return GetPostResult{}, err
+	}
 
 	return GetPostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()]),
+		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()]),
 	}, nil
+}
+
+func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (UpdatePostResult, error) {
+	if strings.TrimSpace(input.ActorID.String()) == "" {
+		return UpdatePostResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+
+	postID, err := postdomain.NewPostID(input.PostID)
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
+	post, err := uc.posts.FindVisibleByID(ctx, postID)
+	if err != nil {
+		return UpdatePostResult{}, fmt.Errorf("find post for update: %w", err)
+	}
+	if post.AuthorID() != input.ActorID {
+		return UpdatePostResult{}, apperr.New(apperr.CodeForbidden, "only the post author can update post")
+	}
+
+	title, err := postdomain.NewPostTitle(input.Title)
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
+	body, err := postdomain.NewPostBody(input.Body)
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
+
+	if err := post.Edit(title, body, uc.now().UTC()); err != nil {
+		return UpdatePostResult{}, err
+	}
+	if err := uc.posts.UpdateContent(ctx, *post); err != nil {
+		return UpdatePostResult{}, fmt.Errorf("update post content: %w", err)
+	}
+
+	voteViews, err := uc.loadVoteViews(ctx, []postdomain.Post{*post}, input.ActorID)
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
+	attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
+
+	return UpdatePostResult{
+		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()]),
+	}, nil
+}
+
+func (uc *PostUseCase) DeletePost(ctx context.Context, input DeletePostInput) (DeletePostResult, error) {
+	if strings.TrimSpace(input.ActorID.String()) == "" {
+		return DeletePostResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+
+	postID, err := postdomain.NewPostID(input.PostID)
+	if err != nil {
+		return DeletePostResult{}, err
+	}
+	post, err := uc.posts.FindVisibleByID(ctx, postID)
+	if err != nil {
+		return DeletePostResult{}, fmt.Errorf("find post for delete: %w", err)
+	}
+	if post.AuthorID() != input.ActorID {
+		return DeletePostResult{}, apperr.New(apperr.CodeForbidden, "only the post author can delete post")
+	}
+	if err := post.MarkDeleted(uc.now().UTC()); err != nil {
+		return DeletePostResult{}, err
+	}
+	if err := uc.posts.MarkDeleted(ctx, *post); err != nil {
+		return DeletePostResult{}, fmt.Errorf("delete post: %w", err)
+	}
+
+	return DeletePostResult{}, nil
 }
 
 func normalizePagination(limit int, offset int) (int, int, error) {
@@ -289,6 +430,29 @@ func normalizePostListSort(raw string) (PostListSort, error) {
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "post list sort is invalid")
 	}
+}
+
+func parseAttachmentIDs(rawIDs []string, maxCount int) ([]mediadomain.AttachmentID, error) {
+	if len(rawIDs) == 0 {
+		return []mediadomain.AttachmentID{}, nil
+	}
+	if maxCount <= 0 || len(rawIDs) > maxCount {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "post image attachment count is invalid")
+	}
+	ids := make([]mediadomain.AttachmentID, 0, len(rawIDs))
+	seen := make(map[mediadomain.AttachmentID]bool, len(rawIDs))
+	for _, rawID := range rawIDs {
+		id, err := mediadomain.NewAttachmentID(rawID)
+		if err != nil {
+			return nil, err
+		}
+		if seen[id] {
+			return nil, apperr.New(apperr.CodeInvalidArgument, "attachment id is duplicated")
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 type postVoteView struct {
@@ -337,7 +501,37 @@ func (uc *PostUseCase) loadVoteViews(ctx context.Context, posts []postdomain.Pos
 	return views, nil
 }
 
-func toPostDTO(post postdomain.Post, voteView postVoteView) Post {
+func (uc *PostUseCase) bindPostAttachments(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, now time.Time) ([]mediadomain.Attachment, error) {
+	if len(attachmentIDs) == 0 {
+		return []mediadomain.Attachment{}, nil
+	}
+	if uc.attachments == nil {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "post image attachments are not supported")
+	}
+	attachments, err := uc.attachments.BindReadyImagesToPost(ctx, postID, uploaderID, attachmentIDs, uc.postImageMaxCount, now)
+	if err != nil {
+		return nil, fmt.Errorf("bind post image attachments: %w", err)
+	}
+	return attachments, nil
+}
+
+func (uc *PostUseCase) loadAttachmentViews(ctx context.Context, posts []postdomain.Post) (map[postdomain.PostID][]mediadomain.Attachment, error) {
+	views := make(map[postdomain.PostID][]mediadomain.Attachment, len(posts))
+	if len(posts) == 0 || uc.attachments == nil {
+		return views, nil
+	}
+	postIDs := make([]postdomain.PostID, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID())
+	}
+	views, err := uc.attachments.ListReadyImagesByPostIDs(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list post image attachments: %w", err)
+	}
+	return views, nil
+}
+
+func toPostDTO(post postdomain.Post, voteView postVoteView, attachments []mediadomain.Attachment) Post {
 	score := voteView.upvoteCount - voteView.downvoteCount
 	return Post{
 		ID:            post.ID().String(),
@@ -345,6 +539,7 @@ func toPostDTO(post postdomain.Post, voteView postVoteView) Post {
 		AuthorID:      post.AuthorID().String(),
 		Title:         post.Title().String(),
 		Body:          post.Body().String(),
+		BodyFormat:    PostBodyFormat,
 		Status:        post.Status().String(),
 		UpvoteCount:   voteView.upvoteCount,
 		DownvoteCount: voteView.downvoteCount,
@@ -352,5 +547,25 @@ func toPostDTO(post postdomain.Post, voteView postVoteView) Post {
 		MyVote:        voteView.myVote,
 		CreatedAt:     post.CreatedAt(),
 		UpdatedAt:     post.UpdatedAt(),
+		Attachments:   toAttachmentDTOs(attachments),
 	}
+}
+
+func toAttachmentDTOs(attachments []mediadomain.Attachment) []Attachment {
+	result := make([]Attachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		result = append(result, Attachment{
+			ID:        attachment.ID().String(),
+			Kind:      attachment.Kind().String(),
+			URL:       attachment.PublicURL(),
+			Width:     attachment.Width(),
+			Height:    attachment.Height(),
+			SizeBytes: attachment.SizeBytes(),
+			MimeType:  attachment.MimeType(),
+			AltText:   attachment.AltText(),
+			Status:    attachment.Status().String(),
+			CreatedAt: attachment.CreatedAt(),
+		})
+	}
+	return result
 }

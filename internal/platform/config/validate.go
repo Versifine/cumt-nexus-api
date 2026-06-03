@@ -68,6 +68,45 @@ func validate(cfg *Config) error {
 	if cfg.Auth.AccessTokenTTL <= 0 {
 		errs = append(errs, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be > 0"))
 	}
+	switch cfg.Storage.Provider {
+	case "local":
+		if strings.TrimSpace(cfg.Storage.LocalRoot) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_LOCAL_ROOT cannot be empty for local storage"))
+		}
+		if strings.TrimSpace(cfg.Storage.PublicBaseURL) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_PUBLIC_BASE_URL cannot be empty for local storage"))
+		}
+	case "r2":
+		if strings.TrimSpace(cfg.Storage.Endpoint) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_ENDPOINT is required for r2 storage"))
+		}
+		if strings.TrimSpace(cfg.Storage.Region) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_REGION is required for r2 storage"))
+		}
+		if strings.TrimSpace(cfg.Storage.Bucket) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_BUCKET is required for r2 storage"))
+		}
+		if strings.TrimSpace(cfg.Storage.AccessKeyID) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_ACCESS_KEY_ID is required for r2 storage"))
+		}
+		if strings.TrimSpace(cfg.Storage.SecretAccessKey) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_SECRET_ACCESS_KEY is required for r2 storage"))
+		}
+		if strings.TrimSpace(cfg.Storage.PublicBaseURL) == "" {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_PUBLIC_BASE_URL is required for r2 storage"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("OBJECT_STORAGE_PROVIDER must be one of local/r2"))
+	}
+	if cfg.Upload.ImageMaxBytes <= 0 {
+		errs = append(errs, fmt.Errorf("UPLOAD_IMAGE_MAX_BYTES must be > 0"))
+	}
+	if cfg.Upload.ImageMaxCountPerPost <= 0 {
+		errs = append(errs, fmt.Errorf("UPLOAD_IMAGE_MAX_COUNT_PER_POST must be > 0"))
+	}
+	if cfg.Upload.ImageMaxCountPerComment <= 0 {
+		errs = append(errs, fmt.Errorf("UPLOAD_IMAGE_MAX_COUNT_PER_COMMENT must be > 0"))
+	}
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)

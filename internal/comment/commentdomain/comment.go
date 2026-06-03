@@ -180,6 +180,38 @@ func (comment *Comment) UpdatedAt() time.Time {
 	return comment.updatedAt
 }
 
+func (comment *Comment) EditBody(body CommentBody, now time.Time) error {
+	if comment.status != CommentStatusVisible {
+		return apperr.New(apperr.CodeConflict, "comment is not editable")
+	}
+	if now.IsZero() {
+		return apperr.New(apperr.CodeInvalidArgument, "comment updated time can't be zero")
+	}
+	if now.Before(comment.createdAt) {
+		return apperr.New(apperr.CodeInvalidArgument, "comment updated time can't be before created time")
+	}
+
+	comment.body = body
+	comment.updatedAt = now
+	return nil
+}
+
+func (comment *Comment) MarkDeleted(now time.Time) error {
+	if comment.status != CommentStatusVisible {
+		return apperr.New(apperr.CodeConflict, "comment is not deletable")
+	}
+	if now.IsZero() {
+		return apperr.New(apperr.CodeInvalidArgument, "comment updated time can't be zero")
+	}
+	if now.Before(comment.createdAt) {
+		return apperr.New(apperr.CodeInvalidArgument, "comment updated time can't be before created time")
+	}
+
+	comment.status = CommentStatusDeleted
+	comment.updatedAt = now
+	return nil
+}
+
 func cloneCommentID(id CommentID) *CommentID {
 	copied := id
 	return &copied

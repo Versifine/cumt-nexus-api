@@ -91,6 +91,46 @@ func TestPostValidation(t *testing.T) {
 	}
 }
 
+func TestPostEditAndDelete(t *testing.T) {
+	now := time.Now().UTC()
+	post, err := NewPost(
+		mustPostID(t),
+		mustCommunityID(t),
+		mustUserID(t),
+		mustPostTitle(t, "Hello"),
+		mustPostBody(t, "Body"),
+		now,
+	)
+	if err != nil {
+		t.Fatalf("NewPost returned error: %v", err)
+	}
+
+	editedAt := now.Add(time.Minute)
+	if err := post.Edit(mustPostTitle(t, "Updated"), mustPostBody(t, "Updated body"), editedAt); err != nil {
+		t.Fatalf("Edit returned error: %v", err)
+	}
+	if post.Title().String() != "Updated" || post.Body().String() != "Updated body" {
+		t.Fatalf("post was not edited: title=%q body=%q", post.Title().String(), post.Body().String())
+	}
+	if !post.UpdatedAt().Equal(editedAt) {
+		t.Fatalf("expected updated_at %s, got %s", editedAt, post.UpdatedAt())
+	}
+
+	deletedAt := editedAt.Add(time.Minute)
+	if err := post.MarkDeleted(deletedAt); err != nil {
+		t.Fatalf("MarkDeleted returned error: %v", err)
+	}
+	if post.Status() != PostStatusDeleted {
+		t.Fatalf("expected deleted status, got %q", post.Status().String())
+	}
+	if !post.UpdatedAt().Equal(deletedAt) {
+		t.Fatalf("expected deleted updated_at %s, got %s", deletedAt, post.UpdatedAt())
+	}
+	if err := post.Edit(mustPostTitle(t, "Again"), mustPostBody(t, "Again body"), deletedAt.Add(time.Minute)); !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict editing deleted post, got %v", err)
+	}
+}
+
 func assertPostStatus(t *testing.T, raw string, want PostStatus) {
 	t.Helper()
 

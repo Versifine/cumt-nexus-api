@@ -21,6 +21,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/community/delivery/communityhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/media/delivery/mediahttp"
+	"github.com/Versifine/cumt-nexus-api/internal/media/mediarepository"
+	"github.com/Versifine/cumt-nexus-api/internal/media/mediausecase"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/delivery/moderationhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
@@ -37,6 +40,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/search/delivery/searchhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/search/searchrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/search/searchusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/storage"
 	"github.com/Versifine/cumt-nexus-api/internal/user/delivery/userhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
@@ -84,6 +88,11 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	moderationRepo := moderationrepository.NewPostgresModerationRepository(pool)
 	searchRepo := searchrepository.NewPostgresSearchRepository(pool)
 	notificationRepo := notificationrepository.NewPostgresNotificationRepository(pool)
+	mediaRepo := mediarepository.NewPostgresMediaRepository(pool)
+	objectStorage, err := newObjectStorage(ctx, cfg.Storage)
+	if err != nil {
+		return err
+	}
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
@@ -98,14 +107,17 @@ func run(cfg *config.Config, log *slog.Logger) error {
 		communityTxManager,
 		time.Now,
 	)
-	postUC := postusecase.NewPostUseCase(postRepo, communityReadUC, time.Now, voteRepo)
-	commentUC := commentusecase.NewCommentUseCase(commentRepo, postRepo, time.Now)
+	postUC := postusecase.NewPostUseCaseWithAttachments(postRepo, communityReadUC, mediaRepo, cfg.Upload.ImageMaxCountPerPost, time.Now, voteRepo)
+	commentUC := commentusecase.NewCommentUseCaseWithAttachments(commentRepo, postRepo, mediaRepo, cfg.Upload.ImageMaxCountPerComment, time.Now)
 	voteUC := voteusecase.NewPostVoteUseCase(postRepo, voteRepo, time.Now)
 	reportUC := moderationusecase.NewReportUseCase(moderationRepo, postRepo, commentRepo, time.Now)
 	removeUC := moderationusecase.NewRemoveUseCase(moderationRepo, platformStaffRepo, time.Now)
 	consoleUC := moderationusecase.NewConsoleUseCase(moderationRepo, moderationRepo, moderationRepo, platformStaffRepo, time.Now)
 	searchUC := searchusecase.NewUseCase(searchRepo)
 	notificationUC := notificationusecase.NewUseCase(notificationRepo, time.Now)
+	mediaUC := mediausecase.NewUseCase(mediaRepo, objectStorage, mediausecase.UploadLimits{
+		ImageMaxBytes: cfg.Upload.ImageMaxBytes,
+	}, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
@@ -118,8 +130,12 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	moderationHandler := moderationhttp.NewHandler(reportUC, removeUC, consoleUC)
 	searchHandler := searchhttp.NewHandler(searchUC)
 	notificationHandler := notificationhttp.NewHandler(notificationUC)
+	mediaHandler := mediahttp.NewHandler(mediaUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
+	if cfg.Storage.Provider == "local" {
+		router.Static("/uploads", cfg.Storage.LocalRoot)
+	}
 	apiV1 := router.Group("/api/v1")
 	authhttp.RegisterRoutes(apiV1.Group("/auth"), authHandler)
 	protectedV1 := apiV1.Group("")
@@ -132,9 +148,25 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	moderationhttp.RegisterRoutes(protectedV1, moderationHandler)
 	searchhttp.RegisterRoutes(protectedV1, searchHandler)
 	notificationhttp.RegisterRoutes(protectedV1, notificationHandler)
+	mediahttp.RegisterRoutes(protectedV1, mediaHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)
+}
+
+func newObjectStorage(ctx context.Context, cfg config.ObjectStorageConfig) (mediausecase.ObjectStorage, error) {
+	switch cfg.Provider {
+	case "local":
+		return storage.NewLocalObjectStorage(cfg), nil
+	case "r2":
+		client, err := storage.NewR2ObjectStorage(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("create r2 object storage: %w", err)
+		}
+		return client, nil
+	default:
+		return nil, fmt.Errorf("unsupported object storage provider %q", cfg.Provider)
+	}
 }
 
 func openDB(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.Pool, error) {

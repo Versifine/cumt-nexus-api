@@ -90,6 +90,56 @@ func (repo *PostgresPostRepository) FindVisibleByID(ctx context.Context, id post
 	return post, nil
 }
 
+func (repo *PostgresPostRepository) UpdateContent(ctx context.Context, post postdomain.Post) error {
+	const query = `
+		UPDATE posts
+		SET
+			title = $2,
+			body = $3,
+			updated_at = $4
+		WHERE id = $1::uuid
+			AND status = 'visible'
+	`
+
+	tag, err := repo.pool.Exec(
+		ctx,
+		query,
+		post.ID().String(),
+		post.Title().String(),
+		post.Body().String(),
+		post.UpdatedAt(),
+	)
+	if err != nil {
+		return mapPostgresWriteError("update post content", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "post not found")
+	}
+
+	return nil
+}
+
+func (repo *PostgresPostRepository) MarkDeleted(ctx context.Context, post postdomain.Post) error {
+	const query = `
+		UPDATE posts
+		SET
+			status = 'deleted',
+			updated_at = $2
+		WHERE id = $1::uuid
+			AND status = 'visible'
+	`
+
+	tag, err := repo.pool.Exec(ctx, query, post.ID().String(), post.UpdatedAt())
+	if err != nil {
+		return mapPostgresWriteError("delete post", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "post not found")
+	}
+
+	return nil
+}
+
 func (repo *PostgresPostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
 	if sort == postusecase.PostListSortHot {
 		return repo.listVisibleByCommunityHot(ctx, communityID, limit, offset)
