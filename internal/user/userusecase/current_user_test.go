@@ -14,9 +14,10 @@ func TestGetCurrentUserSuccess(t *testing.T) {
 	now := time.Date(2026, 5, 30, 10, 30, 0, 0, time.UTC)
 	user := newCurrentUserTestUser(t, "alice", "active", now)
 	repo := &fakeCurrentUserRepository{
-		user: user,
+		user:            user,
+		isPlatformStaff: true,
 	}
-	uc := NewCurrentUserUseCase(repo)
+	uc := NewCurrentUserUseCase(repo, repo)
 
 	result, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
 		UserID: user.ID(),
@@ -40,6 +41,9 @@ func TestGetCurrentUserSuccess(t *testing.T) {
 	if result.User.Status != "active" {
 		t.Fatalf("expected status %q, got %q", "active", result.User.Status)
 	}
+	if !result.User.IsPlatformStaff {
+		t.Fatal("expected current user to be platform staff")
+	}
 	if !result.User.CreatedAt.Equal(now) {
 		t.Fatalf("expected created_at %s, got %s", now, result.User.CreatedAt)
 	}
@@ -47,7 +51,7 @@ func TestGetCurrentUserSuccess(t *testing.T) {
 
 func TestGetCurrentUserRejectsMissingUserID(t *testing.T) {
 	repo := &fakeCurrentUserRepository{}
-	uc := NewCurrentUserUseCase(repo)
+	uc := NewCurrentUserUseCase(repo, repo)
 
 	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{})
 	if !hasAppCode(err, apperr.CodeUnauthenticated) {
@@ -56,6 +60,9 @@ func TestGetCurrentUserRejectsMissingUserID(t *testing.T) {
 	if repo.findByIDCalled {
 		t.Fatal("FindByID should not be called for missing user id")
 	}
+	if repo.isPlatformStaffCalled {
+		t.Fatal("IsPlatformStaff should not be called for missing user id")
+	}
 }
 
 func TestGetCurrentUserNotFoundReturnsUnauthenticated(t *testing.T) {
@@ -63,7 +70,7 @@ func TestGetCurrentUserNotFoundReturnsUnauthenticated(t *testing.T) {
 	repo := &fakeCurrentUserRepository{
 		err: apperr.New(apperr.CodeNotFound, "user not found"),
 	}
-	uc := NewCurrentUserUseCase(repo)
+	uc := NewCurrentUserUseCase(repo, repo)
 
 	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
 		UserID: userID,
@@ -81,13 +88,16 @@ func TestGetCurrentUserDisabledReturnsForbidden(t *testing.T) {
 	repo := &fakeCurrentUserRepository{
 		user: user,
 	}
-	uc := NewCurrentUserUseCase(repo)
+	uc := NewCurrentUserUseCase(repo, repo)
 
 	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
 		UserID: user.ID(),
 	})
 	if !hasAppCode(err, apperr.CodeForbidden) {
 		t.Fatalf("expected forbidden, got %v", err)
+	}
+	if repo.isPlatformStaffCalled {
+		t.Fatal("IsPlatformStaff should not be called for disabled user")
 	}
 }
 
@@ -96,7 +106,7 @@ func TestGetCurrentUserRepositoryError(t *testing.T) {
 	repo := &fakeCurrentUserRepository{
 		err: errors.New("database failed"),
 	}
-	uc := NewCurrentUserUseCase(repo)
+	uc := NewCurrentUserUseCase(repo, repo)
 
 	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
 		UserID: userID,
@@ -109,17 +119,50 @@ func TestGetCurrentUserRepositoryError(t *testing.T) {
 	}
 }
 
+func TestGetCurrentUserPropagatesPlatformStaffError(t *testing.T) {
+	user := newCurrentUserTestUser(t, "alice", "active", time.Now().UTC())
+	staffErr := errors.New("staff lookup failed")
+	repo := &fakeCurrentUserRepository{
+		user:     user,
+		staffErr: staffErr,
+	}
+	uc := NewCurrentUserUseCase(repo, repo)
+
+	_, err := uc.GetCurrentUser(context.Background(), CurrentUserInput{
+		UserID: user.ID(),
+	})
+	if !errors.Is(err, staffErr) {
+		t.Fatalf("expected staff lookup error to be wrapped, got %v", err)
+	}
+	if !repo.isPlatformStaffCalled {
+		t.Fatal("expected IsPlatformStaff to be called")
+	}
+}
+
 type fakeCurrentUserRepository struct {
-	findByIDCalled bool
-	findByID       userdomain.UserID
-	user           *userdomain.User
-	err            error
+	findByIDCalled        bool
+	isPlatformStaffCalled bool
+	findByID              userdomain.UserID
+	staffUserID           userdomain.UserID
+	user                  *userdomain.User
+	isPlatformStaff       bool
+	err                   error
+	staffErr              error
 }
 
 func (f *fakeCurrentUserRepository) FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error) {
 	f.findByIDCalled = true
 	f.findByID = id
 	return f.user, f.err
+}
+
+func (f *fakeCurrentUserRepository) IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error) {
+	f.isPlatformStaffCalled = true
+	f.staffUserID = userID
+	if f.staffErr != nil {
+		return false, f.staffErr
+	}
+	return f.isPlatformStaff, nil
 }
 
 func newCurrentUserTestUser(t *testing.T, username string, status string, now time.Time) *userdomain.User {

@@ -3,6 +3,8 @@ package communityhttp
 import (
 	"context"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
@@ -23,6 +25,8 @@ type CommunityReadUseCase interface {
 
 type CommunityApplicationUseCase interface {
 	SubmitCommunityApplication(ctx context.Context, input communityusecase.SubmitCommunityApplicationInput) (communityusecase.SubmitCommunityApplicationResult, error)
+	ListCommunityApplications(ctx context.Context, input communityusecase.ListCommunityApplicationsInput) (communityusecase.ListCommunityApplicationsResult, error)
+	GetCommunityApplication(ctx context.Context, input communityusecase.GetCommunityApplicationInput) (communityusecase.GetCommunityApplicationResult, error)
 	ApproveCommunityApplication(ctx context.Context, input communityusecase.ReviewCommunityApplicationInput) (communityusecase.ApproveCommunityApplicationResult, error)
 	RejectCommunityApplication(ctx context.Context, input communityusecase.ReviewCommunityApplicationInput) (communityusecase.RejectCommunityApplicationResult, error)
 }
@@ -52,11 +56,21 @@ type communityApplicationResponse struct {
 	RequestedName string     `json:"requested_name"`
 	Reason        string     `json:"reason"`
 	Status        string     `json:"status"`
-	ReviewedBy    string     `json:"reviewed_by,omitempty"`
-	ReviewedAt    *time.Time `json:"reviewed_at,omitempty"`
-	RejectReason  string     `json:"reject_reason,omitempty"`
+	ReviewedBy    *string    `json:"reviewed_by"`
+	ReviewedAt    *time.Time `json:"reviewed_at"`
+	RejectReason  string     `json:"reject_reason"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+type listCommunityApplicationsResponse struct {
+	Applications []communityApplicationResponse `json:"applications"`
+	Limit        int                            `json:"limit"`
+	Offset       int                            `json:"offset"`
+}
+
+type getCommunityApplicationResponse struct {
+	Application communityApplicationResponse `json:"application"`
 }
 
 type submitCommunityApplicationResponse struct {
@@ -95,6 +109,8 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities", handler.ListCommunities)
 	group.GET("/communities/:slug", handler.GetCommunity)
 	group.POST("/community-applications", handler.SubmitCommunityApplication)
+	group.GET("/community-applications", handler.ListCommunityApplications)
+	group.GET("/community-applications/:id", handler.GetCommunityApplication)
 	group.POST("/community-applications/:id/approve", handler.ApproveCommunityApplication)
 	group.POST("/community-applications/:id/reject", handler.RejectCommunityApplication)
 }
@@ -164,6 +180,74 @@ func (h *Handler) SubmitCommunityApplication(c *gin.Context) {
 	})
 }
 
+func (h *Handler) ListCommunityApplications(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.applications.ListCommunityApplications(c.Request.Context(), communityusecase.ListCommunityApplicationsInput{
+		ReviewerID: userID,
+		Status:     c.Query("status"),
+		Limit:      limit,
+		Offset:     offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityApplicationsResponse{
+		Applications: make([]communityApplicationResponse, 0, len(result.Applications)),
+		Limit:        result.Limit,
+		Offset:       result.Offset,
+	}
+	for _, application := range result.Applications {
+		response.Applications = append(response.Applications, toCommunityApplicationResponse(application))
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) GetCommunityApplication(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.applications.GetCommunityApplication(c.Request.Context(), communityusecase.GetCommunityApplicationInput{
+		ReviewerID:    userID,
+		ApplicationID: c.Param("id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, getCommunityApplicationResponse{
+		Application: toCommunityApplicationResponse(result.Application),
+	})
+}
+
 func (h *Handler) ApproveCommunityApplication(c *gin.Context) {
 	userID, ok := authcontext.CurrentUserID(c.Request.Context())
 	if !ok {
@@ -219,6 +303,18 @@ func (h *Handler) RejectCommunityApplication(c *gin.Context) {
 	})
 }
 
+func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, apperr.New(apperr.CodeInvalidArgument, "invalid "+key+" query")
+	}
+	return value, nil
+}
+
 func toCommunityResponse(community communityusecase.Community) communityResponse {
 	return communityResponse{
 		ID:          community.ID,
@@ -234,17 +330,21 @@ func toCommunityResponse(community communityusecase.Community) communityResponse
 }
 
 func toCommunityApplicationResponse(application communityusecase.CommunityApplication) communityApplicationResponse {
-	return communityApplicationResponse{
+	response := communityApplicationResponse{
 		ID:            application.ID,
 		ApplicantID:   application.ApplicantID,
 		RequestedSlug: application.RequestedSlug,
 		RequestedName: application.RequestedName,
 		Reason:        application.Reason,
 		Status:        application.Status,
-		ReviewedBy:    application.ReviewedBy,
 		ReviewedAt:    application.ReviewedAt,
 		RejectReason:  application.RejectReason,
 		CreatedAt:     application.CreatedAt,
 		UpdatedAt:     application.UpdatedAt,
 	}
+	if application.ReviewedBy != "" {
+		reviewedBy := application.ReviewedBy
+		response.ReviewedBy = &reviewedBy
+	}
+	return response
 }

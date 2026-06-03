@@ -27,10 +27,11 @@ func TestMeReturnsCurrentUser(t *testing.T) {
 	currentUser := &fakeCurrentUserUseCase{
 		result: userusecase.CurrentUserResult{
 			User: userusecase.CurrentUser{
-				ID:        userID.String(),
-				Username:  "alice",
-				Status:    "active",
-				CreatedAt: createdAt,
+				ID:              userID.String(),
+				Username:        "alice",
+				Status:          "active",
+				IsPlatformStaff: true,
+				CreatedAt:       createdAt,
 			},
 		},
 	}
@@ -69,6 +70,9 @@ func TestMeReturnsCurrentUser(t *testing.T) {
 	}
 	if response.Status != "active" {
 		t.Fatalf("expected status %q, got %q", "active", response.Status)
+	}
+	if !response.IsPlatformStaff {
+		t.Fatal("expected is_platform_staff=true")
 	}
 	if !response.CreatedAt.Equal(createdAt) {
 		t.Fatalf("expected created_at %s, got %s", createdAt, response.CreatedAt)

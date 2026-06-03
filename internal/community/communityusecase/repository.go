@@ -22,6 +22,7 @@ type CommunityApplicationRepository interface {
 	Create(ctx context.Context, application communitydomain.CommunityApplication) error
 	FindByID(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error)
 	FindByIDForUpdate(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error)
+	ListByStatus(ctx context.Context, status communitydomain.ApplicationStatus, limit int, offset int) ([]communitydomain.CommunityApplication, error)
 	Save(ctx context.Context, application communitydomain.CommunityApplication) error
 }
 

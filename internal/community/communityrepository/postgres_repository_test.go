@@ -140,6 +140,31 @@ func TestPostgresApplicationRepositoryCreateFindSaveAndConflict(t *testing.T) {
 		t.Fatalf("expected reviewer %q, got %q present=%t", reviewerID.String(), gotReviewerID.String(), ok)
 	}
 
+	pendingApplication := mustApplication(t, applicantID, mustCommunitySlug(t, "repo-"+randomSuffix()), now.Add(2*time.Minute))
+	if err := repo.Create(ctx, *pendingApplication); err != nil {
+		t.Fatalf("Create second pending application returned error: %v", err)
+	}
+	cleanupApplication(ctx, t, pool, pendingApplication.ID())
+
+	pendingApplications, err := repo.ListByStatus(ctx, communitydomain.ApplicationStatusPending, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByStatus pending returned error: %v", err)
+	}
+	if !containsApplicationID(pendingApplications, pendingApplication.ID()) {
+		t.Fatalf("expected pending application %q in pending list", pendingApplication.ID().String())
+	}
+	if containsApplicationID(pendingApplications, application.ID()) {
+		t.Fatalf("did not expect approved application %q in pending list", application.ID().String())
+	}
+
+	approvedApplications, err := repo.ListByStatus(ctx, communitydomain.ApplicationStatusApproved, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByStatus approved returned error: %v", err)
+	}
+	if !containsApplicationID(approvedApplications, application.ID()) {
+		t.Fatalf("expected approved application %q in approved list", application.ID().String())
+	}
+
 	if _, err := repo.FindByID(ctx, communitydomain.NewGeneratedCommunityApplicationID()); !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for missing application, got %v", err)
 	}
@@ -613,6 +638,15 @@ func assertSameCommunity(t *testing.T, got *communitydomain.Community, want *com
 func containsCommunitySlug(communities []communitydomain.Community, slug communitydomain.CommunitySlug) bool {
 	for _, community := range communities {
 		if community.Slug() == slug {
+			return true
+		}
+	}
+	return false
+}
+
+func containsApplicationID(applications []communitydomain.CommunityApplication, id communitydomain.CommunityApplicationID) bool {
+	for _, application := range applications {
+		if application.ID() == id {
 			return true
 		}
 	}

@@ -31,6 +31,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/communities | Bearer | 社区列表 |
 | GET | /api/v1/communities/:slug | Bearer | 社区详情 |
 | POST | /api/v1/community-applications | Bearer | 提交社区申请 |
+| GET | /api/v1/community-applications | Bearer | 平台 staff 查看社区申请列表 |
+| GET | /api/v1/community-applications/:id | Bearer | 平台 staff 查看社区申请详情 |
 | POST | /api/v1/community-applications/:id/approve | Bearer | 平台 staff 审批通过社区申请 |
 | POST | /api/v1/community-applications/:id/reject | Bearer | 平台 staff 拒绝社区申请 |
 | POST | /api/v1/communities/:slug/posts | Bearer | 发帖 |
@@ -62,6 +64,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 | 接口 | 参数 | 约定 |
 |---|---|---|
+| `GET /api/v1/community-applications` | `status`, `limit`, `offset` | `status=pending|approved|rejected`，平台 staff 视角 |
 | `GET /api/v1/communities/:slug/posts` | `sort`, `limit`, `offset` | `sort=new|hot`，分页默认由 usecase 收口 |
 | `GET /api/v1/posts` | `sort`, `limit`, `offset` | `sort=new|hot`，全站公开可读社区帖子流 |
 | `GET /api/v1/posts/:id/comments` | `view`, `sort`, `limit`, `offset`, `max_depth` | `view=flat|tree`，tree view 返回前序遍历扁平数组 |

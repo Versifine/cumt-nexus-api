@@ -130,6 +130,139 @@ func TestSubmitCommunityApplicationRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestListCommunityApplicationsChecksStaffAndNormalizesInput(t *testing.T) {
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	reviewerID := userdomain.NewGeneratedUserID()
+	applicantID := userdomain.NewGeneratedUserID()
+	pending := mustApplicationWithSlug(t, applicantID, "campus", now)
+
+	var gotStatus communitydomain.ApplicationStatus
+	var gotLimit int
+	var gotOffset int
+	applications := &fakeApplicationRepository{
+		listByStatusFunc: func(ctx context.Context, status communitydomain.ApplicationStatus, limit int, offset int) ([]communitydomain.CommunityApplication, error) {
+			gotStatus = status
+			gotLimit = limit
+			gotOffset = offset
+			return []communitydomain.CommunityApplication{*pending}, nil
+		},
+	}
+	uc := NewCommunityApplicationUseCase(
+		&fakeCommunityRepository{},
+		applications,
+		&fakePlatformStaffRepository{isStaff: true},
+		&fakeCommunityTransactionManager{},
+		time.Now,
+	)
+
+	result, err := uc.ListCommunityApplications(context.Background(), ListCommunityApplicationsInput{
+		ReviewerID: reviewerID,
+		Status:     "",
+		Limit:      100,
+		Offset:     5,
+	})
+	if err != nil {
+		t.Fatalf("ListCommunityApplications returned error: %v", err)
+	}
+
+	if gotStatus != communitydomain.ApplicationStatusPending {
+		t.Fatalf("expected default pending status, got %q", gotStatus.String())
+	}
+	if gotLimit != maxCommunityApplicationListLimit || result.Limit != maxCommunityApplicationListLimit {
+		t.Fatalf("expected capped limit %d, got repo=%d result=%d", maxCommunityApplicationListLimit, gotLimit, result.Limit)
+	}
+	if gotOffset != 5 || result.Offset != 5 {
+		t.Fatalf("expected offset 5, got repo=%d result=%d", gotOffset, result.Offset)
+	}
+	if len(result.Applications) != 1 || result.Applications[0].ID != pending.ID().String() {
+		t.Fatalf("unexpected applications result: %#v", result.Applications)
+	}
+}
+
+func TestListCommunityApplicationsRejectsNonStaffAndInvalidInput(t *testing.T) {
+	applications := &fakeApplicationRepository{
+		listByStatusFunc: func(ctx context.Context, status communitydomain.ApplicationStatus, limit int, offset int) ([]communitydomain.CommunityApplication, error) {
+			t.Fatal("ListByStatus should not be called")
+			return nil, nil
+		},
+	}
+	uc := NewCommunityApplicationUseCase(
+		&fakeCommunityRepository{},
+		applications,
+		&fakePlatformStaffRepository{isStaff: false},
+		&fakeCommunityTransactionManager{},
+		time.Now,
+	)
+
+	_, err := uc.ListCommunityApplications(context.Background(), ListCommunityApplicationsInput{
+		ReviewerID: userdomain.NewGeneratedUserID(),
+		Status:     "pending",
+	})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden for non-staff reviewer, got %v", err)
+	}
+
+	uc = NewCommunityApplicationUseCase(
+		&fakeCommunityRepository{},
+		applications,
+		&fakePlatformStaffRepository{isStaff: true},
+		&fakeCommunityTransactionManager{},
+		time.Now,
+	)
+
+	_, err = uc.ListCommunityApplications(context.Background(), ListCommunityApplicationsInput{
+		ReviewerID: userdomain.NewGeneratedUserID(),
+		Status:     "canceled",
+	})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for unsupported status, got %v", err)
+	}
+
+	_, err = uc.ListCommunityApplications(context.Background(), ListCommunityApplicationsInput{
+		ReviewerID: userdomain.NewGeneratedUserID(),
+		Status:     "pending",
+		Limit:      -1,
+	})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for negative limit, got %v", err)
+	}
+}
+
+func TestGetCommunityApplicationChecksStaffAndReturnsApplication(t *testing.T) {
+	now := time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC)
+	reviewerID := userdomain.NewGeneratedUserID()
+	application := mustApplicationWithSlug(t, userdomain.NewGeneratedUserID(), "campus", now)
+
+	var gotID communitydomain.CommunityApplicationID
+	applications := &fakeApplicationRepository{
+		findByIDFunc: func(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error) {
+			gotID = id
+			return application, nil
+		},
+	}
+	uc := NewCommunityApplicationUseCase(
+		&fakeCommunityRepository{},
+		applications,
+		&fakePlatformStaffRepository{isStaff: true},
+		&fakeCommunityTransactionManager{},
+		time.Now,
+	)
+
+	result, err := uc.GetCommunityApplication(context.Background(), GetCommunityApplicationInput{
+		ReviewerID:    reviewerID,
+		ApplicationID: application.ID().String(),
+	})
+	if err != nil {
+		t.Fatalf("GetCommunityApplication returned error: %v", err)
+	}
+	if gotID != application.ID() {
+		t.Fatalf("expected application id %q, got %q", application.ID().String(), gotID.String())
+	}
+	if result.Application.ID != application.ID().String() {
+		t.Fatalf("expected application result %q, got %q", application.ID().String(), result.Application.ID)
+	}
+}
+
 func TestApproveCommunityApplicationCreatesCommunityAndOwnerInTransaction(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	applicantID := userdomain.NewGeneratedUserID()
@@ -266,6 +399,7 @@ type fakeApplicationRepository struct {
 	createFunc            func(ctx context.Context, application communitydomain.CommunityApplication) error
 	findByIDFunc          func(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error)
 	findByIDForUpdateFunc func(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error)
+	listByStatusFunc      func(ctx context.Context, status communitydomain.ApplicationStatus, limit int, offset int) ([]communitydomain.CommunityApplication, error)
 	saveFunc              func(ctx context.Context, application communitydomain.CommunityApplication) error
 }
 
@@ -288,6 +422,13 @@ func (f *fakeApplicationRepository) FindByIDForUpdate(ctx context.Context, id co
 		return f.findByIDForUpdateFunc(ctx, id)
 	}
 	return f.FindByID(ctx, id)
+}
+
+func (f *fakeApplicationRepository) ListByStatus(ctx context.Context, status communitydomain.ApplicationStatus, limit int, offset int) ([]communitydomain.CommunityApplication, error) {
+	if f.listByStatusFunc != nil {
+		return f.listByStatusFunc(ctx, status, limit, offset)
+	}
+	return nil, nil
 }
 
 func (f *fakeApplicationRepository) Save(ctx context.Context, application communitydomain.CommunityApplication) error {

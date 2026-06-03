@@ -12,10 +12,15 @@ import (
 
 type CurrentUserUseCase struct {
 	users CurrentUserFinder
+	staff CurrentUserStaffFinder
 }
 
 type CurrentUserFinder interface {
 	FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error)
+}
+
+type CurrentUserStaffFinder interface {
+	IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error)
 }
 
 type CurrentUserInput struct {
@@ -27,15 +32,17 @@ type CurrentUserResult struct {
 }
 
 type CurrentUser struct {
-	ID        string
-	Username  string
-	Status    string
-	CreatedAt time.Time
+	ID              string
+	Username        string
+	Status          string
+	IsPlatformStaff bool
+	CreatedAt       time.Time
 }
 
-func NewCurrentUserUseCase(users CurrentUserFinder) *CurrentUserUseCase {
+func NewCurrentUserUseCase(users CurrentUserFinder, staff CurrentUserStaffFinder) *CurrentUserUseCase {
 	return &CurrentUserUseCase{
 		users: users,
+		staff: staff,
 	}
 }
 
@@ -56,12 +63,18 @@ func (uc *CurrentUserUseCase) GetCurrentUser(ctx context.Context, input CurrentU
 		return CurrentUserResult{}, apperr.New(apperr.CodeForbidden, "user is forbidden")
 	}
 
+	isPlatformStaff, err := uc.staff.IsPlatformStaff(ctx, input.UserID)
+	if err != nil {
+		return CurrentUserResult{}, fmt.Errorf("check current user platform staff: %w", err)
+	}
+
 	return CurrentUserResult{
 		User: CurrentUser{
-			ID:        user.ID().String(),
-			Username:  user.Username().String(),
-			Status:    user.Status().String(),
-			CreatedAt: user.CreatedAt(),
+			ID:              user.ID().String(),
+			Username:        user.Username().String(),
+			Status:          user.Status().String(),
+			IsPlatformStaff: isPlatformStaff,
+			CreatedAt:       user.CreatedAt(),
 		},
 	}, nil
 }

@@ -97,7 +97,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
 	loginUC := authusecase.NewLoginUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
-	currentUserUC := userusecase.NewCurrentUserUseCase(userRepo)
+	currentUserUC := userusecase.NewCurrentUserUseCase(userRepo, platformStaffRepo)
 	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
 	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
 	communityApplicationUC := communityusecase.NewCommunityApplicationUseCase(

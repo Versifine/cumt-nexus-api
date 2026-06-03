@@ -30,6 +30,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/communities | none | `communityhttp.listCommunitiesResponse` | 200 |
 | GET | /api/v1/communities/:slug | none | `communityhttp.getCommunityResponse` | 200 |
 | POST | /api/v1/community-applications | `communityhttp.submitCommunityApplicationRequest` | `communityhttp.submitCommunityApplicationResponse` | 201 |
+| GET | /api/v1/community-applications | query | `communityhttp.listCommunityApplicationsResponse` | 200 |
+| GET | /api/v1/community-applications/:id | none | `communityhttp.getCommunityApplicationResponse` | 200 |
 | POST | /api/v1/community-applications/:id/approve | none | `communityhttp.approveCommunityApplicationResponse` | 200 |
 | POST | /api/v1/community-applications/:id/reject | `communityhttp.rejectCommunityApplicationRequest` | `communityhttp.rejectCommunityApplicationResponse` | 200 |
 | POST | /api/v1/communities/:slug/posts | `posthttp.publishPostRequest` | `posthttp.publishPostResponse` | 201 |
@@ -83,12 +85,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `authhttp` | `userResponse` | `id`, `username`, `status`, `created_at` |
 | `authhttp` | `loginRequest` | `username`, `password` |
 | `authhttp` | `loginResponse` | `access_token`, `token_type`, `expires_in`, `user` |
-| `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `created_at` |
+| `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at` |
 | `communityhttp` | `listCommunitiesResponse` | `communities` |
 | `communityhttp` | `getCommunityResponse` | `community` |
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `communityhttp` | `rejectCommunityApplicationRequest` | `reject_reason` |
 | `communityhttp` | `communityApplicationResponse` | `id`, `applicant_id`, `requested_slug`, `requested_name`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `reject_reason`, `created_at`, `updated_at` |
+| `communityhttp` | `listCommunityApplicationsResponse` | `applications`, `limit`, `offset` |
+| `communityhttp` | `getCommunityApplicationResponse` | `application` |
 | `communityhttp` | `submitCommunityApplicationResponse` | `application` |
 | `communityhttp` | `approveCommunityApplicationResponse` | `application`, `community` |
 | `communityhttp` | `rejectCommunityApplicationResponse` | `application` |

@@ -11,6 +11,11 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
+const (
+	defaultCommunityApplicationListLimit = 20
+	maxCommunityApplicationListLimit     = 50
+)
+
 type CommunityApplicationUseCase struct {
 	communities  CommunityRepository
 	applications CommunityApplicationRepository
@@ -32,7 +37,29 @@ type ReviewCommunityApplicationInput struct {
 	RejectReason  string
 }
 
+type ListCommunityApplicationsInput struct {
+	ReviewerID userdomain.UserID
+	Status     string
+	Limit      int
+	Offset     int
+}
+
+type GetCommunityApplicationInput struct {
+	ReviewerID    userdomain.UserID
+	ApplicationID string
+}
+
 type SubmitCommunityApplicationResult struct {
+	Application CommunityApplication
+}
+
+type ListCommunityApplicationsResult struct {
+	Applications []CommunityApplication
+	Limit        int
+	Offset       int
+}
+
+type GetCommunityApplicationResult struct {
 	Application CommunityApplication
 }
 
@@ -119,6 +146,57 @@ func (uc *CommunityApplicationUseCase) SubmitCommunityApplication(ctx context.Co
 	}
 
 	return SubmitCommunityApplicationResult{
+		Application: toCommunityApplicationDTO(*application),
+	}, nil
+}
+
+func (uc *CommunityApplicationUseCase) ListCommunityApplications(ctx context.Context, input ListCommunityApplicationsInput) (ListCommunityApplicationsResult, error) {
+	if err := uc.ensureReviewerIsPlatformStaff(ctx, input.ReviewerID); err != nil {
+		return ListCommunityApplicationsResult{}, err
+	}
+
+	status, err := parseApplicationListStatusDefaultPending(input.Status)
+	if err != nil {
+		return ListCommunityApplicationsResult{}, err
+	}
+	limit, offset, err := normalizeCommunityApplicationPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListCommunityApplicationsResult{}, err
+	}
+
+	applications, err := uc.applications.ListByStatus(ctx, status, limit, offset)
+	if err != nil {
+		return ListCommunityApplicationsResult{}, fmt.Errorf("list community applications: %w", err)
+	}
+
+	result := ListCommunityApplicationsResult{
+		Applications: make([]CommunityApplication, 0, len(applications)),
+		Limit:        limit,
+		Offset:       offset,
+	}
+	for _, application := range applications {
+		result.Applications = append(result.Applications, toCommunityApplicationDTO(application))
+	}
+
+	return result, nil
+}
+
+func (uc *CommunityApplicationUseCase) GetCommunityApplication(ctx context.Context, input GetCommunityApplicationInput) (GetCommunityApplicationResult, error) {
+	if err := uc.ensureReviewerIsPlatformStaff(ctx, input.ReviewerID); err != nil {
+		return GetCommunityApplicationResult{}, err
+	}
+
+	applicationID, err := communitydomain.NewCommunityApplicationID(input.ApplicationID)
+	if err != nil {
+		return GetCommunityApplicationResult{}, err
+	}
+
+	application, err := uc.applications.FindByID(ctx, applicationID)
+	if err != nil {
+		return GetCommunityApplicationResult{}, fmt.Errorf("find community application: %w", err)
+	}
+
+	return GetCommunityApplicationResult{
 		Application: toCommunityApplicationDTO(*application),
 	}, nil
 }
@@ -255,6 +333,36 @@ func (uc *CommunityApplicationUseCase) ensureReviewerIsPlatformStaff(ctx context
 	}
 
 	return nil
+}
+
+func parseApplicationListStatusDefaultPending(raw string) (communitydomain.ApplicationStatus, error) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	switch normalized {
+	case "":
+		return communitydomain.ApplicationStatusPending, nil
+	case communitydomain.ApplicationStatusPending.String(),
+		communitydomain.ApplicationStatusApproved.String(),
+		communitydomain.ApplicationStatusRejected.String():
+		return communitydomain.NewApplicationStatus(normalized)
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "community application status is invalid")
+	}
+}
+
+func normalizeCommunityApplicationPagination(limit int, offset int) (int, int, error) {
+	if limit < 0 {
+		return 0, 0, apperr.New(apperr.CodeInvalidArgument, "limit must be non-negative")
+	}
+	if offset < 0 {
+		return 0, 0, apperr.New(apperr.CodeInvalidArgument, "offset must be non-negative")
+	}
+	if limit == 0 {
+		limit = defaultCommunityApplicationListLimit
+	}
+	if limit > maxCommunityApplicationListLimit {
+		limit = maxCommunityApplicationListLimit
+	}
+	return limit, offset, nil
 }
 
 func toCommunityApplicationDTO(application communitydomain.CommunityApplication) CommunityApplication {

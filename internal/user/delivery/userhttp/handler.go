@@ -20,10 +20,11 @@ type CurrentUserUseCase interface {
 }
 
 type currentUserResponse struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	Username        string    `json:"username"`
+	Status          string    `json:"status"`
+	IsPlatformStaff bool      `json:"is_platform_staff"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func NewHandler(currentUser CurrentUserUseCase) *Handler {
@@ -54,9 +55,10 @@ func (h *Handler) Me(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, currentUserResponse{
-		ID:        result.User.ID,
-		Username:  result.User.Username,
-		Status:    result.User.Status,
-		CreatedAt: result.User.CreatedAt,
+		ID:              result.User.ID,
+		Username:        result.User.Username,
+		Status:          result.User.Status,
+		IsPlatformStaff: result.User.IsPlatformStaff,
+		CreatedAt:       result.User.CreatedAt,
 	})
 }

@@ -109,7 +109,7 @@ func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	}
 	assertCommunityErrorCode(t, recorder, apperr.CodeUnauthenticated)
-	if communities.listCalled || communities.getCalled || applications.submitCalled || applications.approveCalled || applications.rejectCalled {
+	if communities.listCalled || communities.getCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
 		t.Fatal("community usecase should not be called for invalid auth")
 	}
 }
@@ -231,6 +231,117 @@ func TestSubmitCommunityApplicationUseCaseErrorMapsToHTTPError(t *testing.T) {
 	assertCommunityErrorCode(t, recorder, apperr.CodeConflict)
 }
 
+func TestListCommunityApplicationsReturnsApplications(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	applications := &fakeCommunityApplicationUseCase{
+		listResult: communityusecase.ListCommunityApplicationsResult{
+			Applications: []communityusecase.CommunityApplication{
+				newApplicationResult("campus", "approved", now),
+			},
+			Limit:  10,
+			Offset: 5,
+		},
+	}
+	router := newCommunityTestRouter(&fakeCommunityReadUseCase{}, applications, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/community-applications?status=approved&limit=10&offset=5", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !applications.listCalled {
+		t.Fatal("expected ListCommunityApplications to be called")
+	}
+	if applications.listInput.ReviewerID != userID {
+		t.Fatalf("expected reviewer %q, got %q", userID.String(), applications.listInput.ReviewerID.String())
+	}
+	if applications.listInput.Status != "approved" || applications.listInput.Limit != 10 || applications.listInput.Offset != 5 {
+		t.Fatalf("unexpected list input: %#v", applications.listInput)
+	}
+
+	var response listCommunityApplicationsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Limit != 10 || response.Offset != 5 {
+		t.Fatalf("expected pagination limit=10 offset=5, got limit=%d offset=%d", response.Limit, response.Offset)
+	}
+	if len(response.Applications) != 1 || response.Applications[0].Status != "approved" {
+		t.Fatalf("unexpected applications response: %#v", response.Applications)
+	}
+	if response.Applications[0].ReviewedBy != nil || response.Applications[0].ReviewedAt != nil || response.Applications[0].RejectReason != "" {
+		t.Fatalf("expected empty review fields, got %#v", response.Applications[0])
+	}
+}
+
+func TestListCommunityApplicationsRejectsInvalidQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	applications := &fakeCommunityApplicationUseCase{}
+	router := newCommunityTestRouter(&fakeCommunityReadUseCase{}, applications, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/community-applications?limit=bad", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	assertCommunityErrorCode(t, recorder, apperr.CodeInvalidArgument)
+	if applications.listCalled {
+		t.Fatal("ListCommunityApplications should not be called for invalid query")
+	}
+}
+
+func TestGetCommunityApplicationReturnsApplication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC)
+	applications := &fakeCommunityApplicationUseCase{
+		getResult: communityusecase.GetCommunityApplicationResult{
+			Application: newApplicationResult("campus", "pending", now),
+		},
+	}
+	router := newCommunityTestRouter(&fakeCommunityReadUseCase{}, applications, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/community-applications/8f92e975-5323-4a58-bac1-1336b668183c", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !applications.getCalled {
+		t.Fatal("expected GetCommunityApplication to be called")
+	}
+	if applications.getInput.ReviewerID != userID {
+		t.Fatalf("expected reviewer %q, got %q", userID.String(), applications.getInput.ReviewerID.String())
+	}
+	if applications.getInput.ApplicationID != "8f92e975-5323-4a58-bac1-1336b668183c" {
+		t.Fatalf("unexpected application id %q", applications.getInput.ApplicationID)
+	}
+
+	var response getCommunityApplicationResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Application.ID != "8f92e975-5323-4a58-bac1-1336b668183c" {
+		t.Fatalf("unexpected application response: %#v", response.Application)
+	}
+}
+
 func TestApproveCommunityApplicationReturnsCommunity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -338,15 +449,23 @@ func (f *fakeCommunityReadUseCase) GetCommunityBySlug(ctx context.Context, input
 
 type fakeCommunityApplicationUseCase struct {
 	submitCalled  bool
+	listCalled    bool
+	getCalled     bool
 	approveCalled bool
 	rejectCalled  bool
 	submitInput   communityusecase.SubmitCommunityApplicationInput
+	listInput     communityusecase.ListCommunityApplicationsInput
+	getInput      communityusecase.GetCommunityApplicationInput
 	approveInput  communityusecase.ReviewCommunityApplicationInput
 	rejectInput   communityusecase.ReviewCommunityApplicationInput
 	submitResult  communityusecase.SubmitCommunityApplicationResult
+	listResult    communityusecase.ListCommunityApplicationsResult
+	getResult     communityusecase.GetCommunityApplicationResult
 	approveResult communityusecase.ApproveCommunityApplicationResult
 	rejectResult  communityusecase.RejectCommunityApplicationResult
 	submitErr     error
+	listErr       error
+	getErr        error
 	approveErr    error
 	rejectErr     error
 }
@@ -355,6 +474,18 @@ func (f *fakeCommunityApplicationUseCase) SubmitCommunityApplication(ctx context
 	f.submitCalled = true
 	f.submitInput = input
 	return f.submitResult, f.submitErr
+}
+
+func (f *fakeCommunityApplicationUseCase) ListCommunityApplications(ctx context.Context, input communityusecase.ListCommunityApplicationsInput) (communityusecase.ListCommunityApplicationsResult, error) {
+	f.listCalled = true
+	f.listInput = input
+	return f.listResult, f.listErr
+}
+
+func (f *fakeCommunityApplicationUseCase) GetCommunityApplication(ctx context.Context, input communityusecase.GetCommunityApplicationInput) (communityusecase.GetCommunityApplicationResult, error) {
+	f.getCalled = true
+	f.getInput = input
+	return f.getResult, f.getErr
 }
 
 func (f *fakeCommunityApplicationUseCase) ApproveCommunityApplication(ctx context.Context, input communityusecase.ReviewCommunityApplicationInput) (communityusecase.ApproveCommunityApplicationResult, error) {

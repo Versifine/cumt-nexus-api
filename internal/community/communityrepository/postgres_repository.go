@@ -279,6 +279,47 @@ func (repo *PostgresApplicationRepository) FindByIDForUpdate(ctx context.Context
 	return repo.findByID(ctx, id, true)
 }
 
+func (repo *PostgresApplicationRepository) ListByStatus(ctx context.Context, status communitydomain.ApplicationStatus, limit int, offset int) ([]communitydomain.CommunityApplication, error) {
+	const query = `
+		SELECT
+			id::text,
+			applicant_id::text,
+			requested_slug,
+			requested_name,
+			reason,
+			status,
+			reviewed_by::text,
+			reviewed_at,
+			reject_reason,
+			created_at,
+			updated_at
+		FROM community_applications
+		WHERE status = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := repo.db.Query(ctx, query, status.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list community applications by status: %w", err)
+	}
+	defer rows.Close()
+
+	var applications []communitydomain.CommunityApplication
+	for rows.Next() {
+		application, err := scanCommunityApplication(rows)
+		if err != nil {
+			return nil, err
+		}
+		applications = append(applications, *application)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate community applications by status: %w", err)
+	}
+
+	return applications, nil
+}
+
 func (repo *PostgresApplicationRepository) findByID(ctx context.Context, id communitydomain.CommunityApplicationID, forUpdate bool) (*communitydomain.CommunityApplication, error) {
 	const query = `
 		SELECT

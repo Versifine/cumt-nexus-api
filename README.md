@@ -5,7 +5,7 @@
 ## 功能概览
 
 - 用户注册、登录、Bearer JWT 认证和当前用户读取
-- 社区列表、社区详情、社区创建申请和平台 staff 审批
+- 社区列表、社区详情、社区创建申请、申请审核读取和平台 staff 审批
 - 帖子发布、列表、详情、编辑、软删除
 - 评论发布、列表、树状读取、编辑、软删除
 - 帖子 upvote/downvote/cancel 和 `new` / `hot` 排序
@@ -137,6 +137,8 @@ GET  /api/v1/me
 GET  /api/v1/communities
 GET  /api/v1/communities/:slug
 POST /api/v1/community-applications
+GET  /api/v1/community-applications
+GET  /api/v1/community-applications/:id
 POST /api/v1/community-applications/:id/approve
 POST /api/v1/community-applications/:id/reject
 ```
