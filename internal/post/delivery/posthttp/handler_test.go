@@ -64,8 +64,8 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	if response.Post.Title != "Hello" {
 		t.Fatalf("expected title Hello, got %q", response.Post.Title)
 	}
-	if response.Post.BodyFormat != "markdown" {
-		t.Fatalf("expected body_format markdown, got %q", response.Post.BodyFormat)
+	if response.Post.Format != "nexus_markdown" {
+		t.Fatalf("expected format nexus_markdown, got %q", response.Post.Format)
 	}
 	if len(response.Post.Attachments) != 1 || response.Post.Attachments[0].URL == "" {
 		t.Fatalf("expected attachment response, got %#v", response.Post.Attachments)
@@ -118,8 +118,8 @@ func TestListCommunityPostsReturnsPosts(t *testing.T) {
 	if response.Posts[0].UpvoteCount != 2 || response.Posts[0].DownvoteCount != 1 || response.Posts[0].Score != 1 || response.Posts[0].MyVote != 1 {
 		t.Fatalf("unexpected vote fields: %#v", response.Posts[0])
 	}
-	if response.Posts[0].BodyFormat != "markdown" {
-		t.Fatalf("expected body_format markdown, got %q", response.Posts[0].BodyFormat)
+	if response.Posts[0].Format != "nexus_markdown" {
+		t.Fatalf("expected format nexus_markdown, got %q", response.Posts[0].Format)
 	}
 }
 
@@ -249,7 +249,7 @@ func TestUpdatePostReturnsUpdatedPost(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if response.Post.Title != "Updated" || response.Post.BodyFormat != "markdown" {
+	if response.Post.Title != "Updated" || response.Post.Format != "nexus_markdown" {
 		t.Fatalf("unexpected update response: %#v", response.Post)
 	}
 }
@@ -324,8 +324,8 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	if len(response.Posts) != 1 || response.Posts[0].Title != "Latest" {
 		t.Fatalf("unexpected latest posts response: %#v", response.Posts)
 	}
-	if response.Posts[0].BodyFormat != "markdown" {
-		t.Fatalf("expected body_format markdown, got %q", response.Posts[0].BodyFormat)
+	if response.Posts[0].Format != "nexus_markdown" {
+		t.Fatalf("expected format nexus_markdown, got %q", response.Posts[0].Format)
 	}
 }
 
@@ -354,6 +354,37 @@ func TestListLatestPostsAllowsAnonymousViewer(t *testing.T) {
 	}
 	if posts.listLatestInput.ViewerID.String() != "" {
 		t.Fatalf("expected empty anonymous viewer, got %q", posts.listLatestInput.ViewerID.String())
+	}
+}
+
+func TestListUserPostsAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 1, 13, 45, 0, 0, time.UTC)
+	posts := &fakePostUseCase{
+		listUserResult: postusecase.ListUserPostsResult{
+			Posts: []postusecase.Post{newPostResult("User post", now)},
+			Limit: 20,
+		},
+	}
+	router := newPostTestRouter(posts, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/users/alice/posts?sort=new&limit=20", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !posts.listUserCalled {
+		t.Fatal("expected ListUserPosts to be called")
+	}
+	if posts.listUserInput.Username != "alice" || posts.listUserInput.Sort != "new" || posts.listUserInput.Limit != 20 {
+		t.Fatalf("unexpected list user posts input: %#v", posts.listUserInput)
+	}
+	if posts.listUserInput.ViewerID.String() != "" {
+		t.Fatalf("expected empty anonymous viewer, got %q", posts.listUserInput.ViewerID.String())
 	}
 }
 
@@ -474,24 +505,28 @@ type fakePostUseCase struct {
 	publishCalled    bool
 	listCalled       bool
 	listLatestCalled bool
+	listUserCalled   bool
 	getCalled        bool
 	updateCalled     bool
 	deleteCalled     bool
 	publishInput     postusecase.PublishPostInput
 	listInput        postusecase.ListCommunityPostsInput
 	listLatestInput  postusecase.ListLatestPostsInput
+	listUserInput    postusecase.ListUserPostsInput
 	getInput         postusecase.GetPostInput
 	updateInput      postusecase.UpdatePostInput
 	deleteInput      postusecase.DeletePostInput
 	publishResult    postusecase.PublishPostResult
 	listResult       postusecase.ListCommunityPostsResult
 	listLatestResult postusecase.ListLatestPostsResult
+	listUserResult   postusecase.ListUserPostsResult
 	getResult        postusecase.GetPostResult
 	updateResult     postusecase.UpdatePostResult
 	deleteResult     postusecase.DeletePostResult
 	publishErr       error
 	listErr          error
 	listLatestErr    error
+	listUserErr      error
 	getErr           error
 	updateErr        error
 	deleteErr        error
@@ -513,6 +548,12 @@ func (f *fakePostUseCase) ListLatestPosts(ctx context.Context, input postusecase
 	f.listLatestCalled = true
 	f.listLatestInput = input
 	return f.listLatestResult, f.listLatestErr
+}
+
+func (f *fakePostUseCase) ListUserPosts(ctx context.Context, input postusecase.ListUserPostsInput) (postusecase.ListUserPostsResult, error) {
+	f.listUserCalled = true
+	f.listUserInput = input
+	return f.listUserResult, f.listUserErr
 }
 
 func (f *fakePostUseCase) GetPost(ctx context.Context, input postusecase.GetPostInput) (postusecase.GetPostResult, error) {
@@ -577,7 +618,7 @@ func newPostResult(title string, now time.Time) postusecase.Post {
 		AuthorID:      userdomain.NewGeneratedUserID().String(),
 		Title:         title,
 		Body:          "Post body",
-		BodyFormat:    "markdown",
+		Format:        "nexus_markdown",
 		Status:        "visible",
 		UpvoteCount:   2,
 		DownvoteCount: 1,

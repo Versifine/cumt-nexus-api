@@ -17,6 +17,7 @@ import (
 )
 
 var _ communityusecase.CommunityRepository = (*PostgresCommunityRepository)(nil)
+var _ communityusecase.CommunityStatsRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityMembershipRepository = (*PostgresMembershipRepository)(nil)
 var _ communityusecase.CommunityApplicationRepository = (*PostgresApplicationRepository)(nil)
 var _ communityusecase.PlatformStaffRepository = (*PostgresPlatformStaffRepository)(nil)
@@ -175,6 +176,68 @@ func (repo *PostgresCommunityRepository) ListActivePublic(ctx context.Context) (
 	}
 
 	return communities, nil
+}
+
+func (repo *PostgresCommunityRepository) LoadPublicStatsByCommunityIDs(ctx context.Context, communityIDs []communitydomain.CommunityID) (map[communitydomain.CommunityID]communityusecase.CommunityStats, error) {
+	result := make(map[communitydomain.CommunityID]communityusecase.CommunityStats, len(communityIDs))
+	if len(communityIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			communities.id::text,
+			(
+				SELECT COUNT(*)::int
+				FROM community_memberships
+				WHERE community_memberships.community_id = communities.id
+					AND community_memberships.status = 'active'
+			) AS member_count,
+			(
+				SELECT COUNT(*)::int
+				FROM posts
+				WHERE posts.community_id = communities.id
+					AND posts.status = 'visible'
+			) AS post_count
+		FROM communities
+		WHERE communities.id = ANY($1::uuid[])
+	`
+
+	rows, err := repo.db.Query(ctx, query, communityIDStrings(communityIDs))
+	if err != nil {
+		return nil, fmt.Errorf("load public community stats: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommunityID string
+		var memberCount int
+		var postCount int
+		if err := rows.Scan(&rawCommunityID, &memberCount, &postCount); err != nil {
+			return nil, err
+		}
+		communityID, err := communitydomain.NewCommunityID(rawCommunityID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate community stats id: %v", err)
+		}
+		result[communityID] = communityusecase.CommunityStats{
+			MemberCount: memberCount,
+			PostCount:   postCount,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate public community stats: %w", err)
+	}
+
+	return result, nil
+}
+
+func communityIDStrings(communityIDs []communitydomain.CommunityID) []string {
+	rawIDs := make([]string, 0, len(communityIDs))
+	for _, communityID := range communityIDs {
+		rawIDs = append(rawIDs, communityID.String())
+	}
+	return rawIDs
 }
 
 type PostgresMembershipRepository struct {

@@ -21,6 +21,7 @@ type PostUseCase interface {
 	PublishPost(ctx context.Context, input postusecase.PublishPostInput) (postusecase.PublishPostResult, error)
 	ListCommunityPosts(ctx context.Context, input postusecase.ListCommunityPostsInput) (postusecase.ListCommunityPostsResult, error)
 	ListLatestPosts(ctx context.Context, input postusecase.ListLatestPostsInput) (postusecase.ListLatestPostsResult, error)
+	ListUserPosts(ctx context.Context, input postusecase.ListUserPostsInput) (postusecase.ListUserPostsResult, error)
 	GetPost(ctx context.Context, input postusecase.GetPostInput) (postusecase.GetPostResult, error)
 	UpdatePost(ctx context.Context, input postusecase.UpdatePostInput) (postusecase.UpdatePostResult, error)
 	DeletePost(ctx context.Context, input postusecase.DeletePostInput) (postusecase.DeletePostResult, error)
@@ -38,20 +39,80 @@ type updatePostRequest struct {
 }
 
 type postResponse struct {
-	ID            string               `json:"id"`
-	CommunityID   string               `json:"community_id"`
-	AuthorID      string               `json:"author_id"`
-	Title         string               `json:"title"`
-	Body          string               `json:"body"`
-	BodyFormat    string               `json:"body_format"`
-	Status        string               `json:"status"`
-	UpvoteCount   int                  `json:"upvote_count"`
-	DownvoteCount int                  `json:"downvote_count"`
-	Score         int                  `json:"score"`
-	MyVote        int                  `json:"my_vote"`
-	CreatedAt     time.Time            `json:"created_at"`
-	UpdatedAt     time.Time            `json:"updated_at"`
-	Attachments   []attachmentResponse `json:"attachments"`
+	ID                string                    `json:"id"`
+	CommunityID       string                    `json:"community_id"`
+	AuthorID          string                    `json:"author_id"`
+	Title             string                    `json:"title"`
+	Body              string                    `json:"body"`
+	BodyExcerpt       string                    `json:"body_excerpt"`
+	Format            string                    `json:"format"`
+	ContentRefs       []contentRefResponse      `json:"content_refs"`
+	Status            string                    `json:"status"`
+	Community         communitySummaryResponse  `json:"community"`
+	Author            userSummaryResponse       `json:"author"`
+	UpvoteCount       int                       `json:"upvote_count"`
+	DownvoteCount     int                       `json:"downvote_count"`
+	CommentCount      int                       `json:"comment_count"`
+	SaveCount         int                       `json:"save_count"`
+	Score             int                       `json:"score"`
+	MyVote            int                       `json:"my_vote"`
+	IsSaved           bool                      `json:"is_saved"`
+	Preview           postPreviewResponse       `json:"preview"`
+	ViewerPermissions viewerPermissionsResponse `json:"viewer_permissions"`
+	CreatedAt         time.Time                 `json:"created_at"`
+	UpdatedAt         time.Time                 `json:"updated_at"`
+	Attachments       []attachmentResponse      `json:"attachments"`
+}
+
+type contentRefResponse struct {
+	Kind  string `json:"kind"`
+	RefID string `json:"ref_id"`
+}
+
+type userSummaryResponse struct {
+	ID          string   `json:"id"`
+	Username    string   `json:"username"`
+	DisplayName string   `json:"display_name"`
+	AvatarURL   string   `json:"avatar_url"`
+	Headline    string   `json:"headline"`
+	Badges      []string `json:"badges"`
+}
+
+type communitySummaryResponse struct {
+	ID                string                    `json:"id"`
+	Slug              string                    `json:"slug"`
+	Name              string                    `json:"name"`
+	Description       string                    `json:"description"`
+	AvatarURL         string                    `json:"avatar_url"`
+	BannerURL         string                    `json:"banner_url"`
+	MemberCount       int                       `json:"member_count"`
+	PostCount         int                       `json:"post_count"`
+	ViewerIsFollowing bool                      `json:"viewer_is_following"`
+	ViewerRole        string                    `json:"viewer_role"`
+	ViewerPermissions viewerPermissionsResponse `json:"viewer_permissions"`
+}
+
+type postPreviewResponse struct {
+	Kind  string                    `json:"kind"`
+	Image *postPreviewImageResponse `json:"image"`
+}
+
+type postPreviewImageResponse struct {
+	URL       string `json:"url"`
+	Width     *int   `json:"width"`
+	Height    *int   `json:"height"`
+	MimeType  string `json:"mime_type"`
+	AltText   string `json:"alt_text"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
+type viewerPermissionsResponse struct {
+	CanComment  bool `json:"can_comment"`
+	CanVote     bool `json:"can_vote"`
+	CanReport   bool `json:"can_report"`
+	CanEdit     bool `json:"can_edit"`
+	CanDelete   bool `json:"can_delete"`
+	CanModerate bool `json:"can_moderate"`
 }
 
 type attachmentResponse struct {
@@ -96,6 +157,7 @@ func RegisterReadRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities/:slug/posts", handler.ListCommunityPosts)
 	group.GET("/posts", handler.ListLatestPosts)
 	group.GET("/posts/:id", handler.GetPost)
+	group.GET("/users/:username/posts", handler.ListUserPosts)
 }
 
 func RegisterWriteRoutes(group *gin.RouterGroup, handler *Handler) {
@@ -218,6 +280,47 @@ func (h *Handler) ListLatestPosts(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+func (h *Handler) ListUserPosts(c *gin.Context) {
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.posts.ListUserPosts(c.Request.Context(), postusecase.ListUserPostsInput{
+		Username: c.Param("username"),
+		ViewerID: userID,
+		Sort:     c.Query("sort"),
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityPostsResponse{
+		Posts:  make([]postResponse, 0, len(result.Posts)),
+		Limit:  result.Limit,
+		Offset: result.Offset,
+	}
+	for _, post := range result.Posts {
+		response.Posts = append(response.Posts, toPostResponse(post))
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 func (h *Handler) GetPost(c *gin.Context) {
 	userID, _ := authcontext.CurrentUserID(c.Request.Context())
 
@@ -302,20 +405,96 @@ func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
 
 func toPostResponse(post postusecase.Post) postResponse {
 	return postResponse{
-		ID:            post.ID,
-		CommunityID:   post.CommunityID,
-		AuthorID:      post.AuthorID,
-		Title:         post.Title,
-		Body:          post.Body,
-		BodyFormat:    post.BodyFormat,
-		Status:        post.Status,
-		UpvoteCount:   post.UpvoteCount,
-		DownvoteCount: post.DownvoteCount,
-		Score:         post.Score,
-		MyVote:        post.MyVote,
-		CreatedAt:     post.CreatedAt,
-		UpdatedAt:     post.UpdatedAt,
-		Attachments:   toAttachmentResponses(post.Attachments),
+		ID:                post.ID,
+		CommunityID:       post.CommunityID,
+		AuthorID:          post.AuthorID,
+		Title:             post.Title,
+		Body:              post.Body,
+		BodyExcerpt:       post.BodyExcerpt,
+		Format:            post.Format,
+		ContentRefs:       toContentRefResponses(post.ContentRefs),
+		Status:            post.Status,
+		Community:         toCommunitySummaryResponse(post.Community),
+		Author:            toUserSummaryResponse(post.Author),
+		UpvoteCount:       post.UpvoteCount,
+		DownvoteCount:     post.DownvoteCount,
+		CommentCount:      post.CommentCount,
+		SaveCount:         post.SaveCount,
+		Score:             post.Score,
+		MyVote:            post.MyVote,
+		IsSaved:           post.IsSaved,
+		Preview:           toPostPreviewResponse(post.Preview),
+		ViewerPermissions: toViewerPermissionsResponse(post.ViewerPermissions),
+		CreatedAt:         post.CreatedAt,
+		UpdatedAt:         post.UpdatedAt,
+		Attachments:       toAttachmentResponses(post.Attachments),
+	}
+}
+
+func toContentRefResponses(refs []postusecase.ContentRef) []contentRefResponse {
+	response := make([]contentRefResponse, 0, len(refs))
+	for range refs {
+		response = append(response, contentRefResponse{})
+	}
+	return response
+}
+
+func toUserSummaryResponse(user postusecase.UserSummary) userSummaryResponse {
+	badges := user.Badges
+	if badges == nil {
+		badges = []string{}
+	}
+	return userSummaryResponse{
+		ID:          user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		AvatarURL:   user.AvatarURL,
+		Headline:    user.Headline,
+		Badges:      badges,
+	}
+}
+
+func toCommunitySummaryResponse(community postusecase.CommunitySummary) communitySummaryResponse {
+	return communitySummaryResponse{
+		ID:                community.ID,
+		Slug:              community.Slug,
+		Name:              community.Name,
+		Description:       community.Description,
+		AvatarURL:         community.AvatarURL,
+		BannerURL:         community.BannerURL,
+		MemberCount:       community.MemberCount,
+		PostCount:         community.PostCount,
+		ViewerIsFollowing: community.ViewerIsFollowing,
+		ViewerRole:        community.ViewerRole,
+		ViewerPermissions: toViewerPermissionsResponse(community.ViewerPermissions),
+	}
+}
+
+func toPostPreviewResponse(preview postusecase.PostPreview) postPreviewResponse {
+	response := postPreviewResponse{
+		Kind: preview.Kind,
+	}
+	if preview.Image != nil {
+		response.Image = &postPreviewImageResponse{
+			URL:       preview.Image.URL,
+			Width:     preview.Image.Width,
+			Height:    preview.Image.Height,
+			MimeType:  preview.Image.MimeType,
+			AltText:   preview.Image.AltText,
+			SizeBytes: preview.Image.SizeBytes,
+		}
+	}
+	return response
+}
+
+func toViewerPermissionsResponse(permissions postusecase.ViewerPermissions) viewerPermissionsResponse {
+	return viewerPermissionsResponse{
+		CanComment:  permissions.CanComment,
+		CanVote:     permissions.CanVote,
+		CanReport:   permissions.CanReport,
+		CanEdit:     permissions.CanEdit,
+		CanDelete:   permissions.CanDelete,
+		CanModerate: permissions.CanModerate,
 	}
 }
 

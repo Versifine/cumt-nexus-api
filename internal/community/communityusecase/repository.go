@@ -14,6 +14,10 @@ type CommunityRepository interface {
 	ListActivePublic(ctx context.Context) ([]communitydomain.Community, error)
 }
 
+type CommunityStatsRepository interface {
+	LoadPublicStatsByCommunityIDs(ctx context.Context, communityIDs []communitydomain.CommunityID) (map[communitydomain.CommunityID]CommunityStats, error)
+}
+
 type CommunityMembershipRepository interface {
 	Create(ctx context.Context, membership communitydomain.CommunityMembership) error
 }

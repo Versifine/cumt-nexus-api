@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	DefaultPostListLimit = 20
-	MaxPostListLimit     = 50
-	PostBodyFormat       = "markdown"
+	DefaultPostListLimit  = 20
+	MaxPostListLimit      = 50
+	PostFormat            = "nexus_markdown"
+	DefaultPostExcerptMax = 180
 )
 
 type PostListSort string
@@ -38,6 +39,8 @@ type PostUseCase struct {
 	communities       CommunityPolicy
 	votes             VoteRepository
 	attachments       AttachmentRepository
+	users             PublicUserFinder
+	metadata          PostMetadataRepository
 	postImageMaxCount int
 	now               func() time.Time
 }
@@ -59,6 +62,14 @@ type ListCommunityPostsInput struct {
 }
 
 type ListLatestPostsInput struct {
+	ViewerID userdomain.UserID
+	Sort     string
+	Limit    int
+	Offset   int
+}
+
+type ListUserPostsInput struct {
+	Username string
 	ViewerID userdomain.UserID
 	Sort     string
 	Limit    int
@@ -98,6 +109,12 @@ type ListLatestPostsResult struct {
 	Offset int
 }
 
+type ListUserPostsResult struct {
+	Posts  []Post
+	Limit  int
+	Offset int
+}
+
 type GetPostResult struct {
 	Post Post
 }
@@ -109,20 +126,83 @@ type UpdatePostResult struct {
 type DeletePostResult struct{}
 
 type Post struct {
-	ID            string
-	CommunityID   string
-	AuthorID      string
-	Title         string
-	Body          string
-	BodyFormat    string
-	Status        string
-	UpvoteCount   int
-	DownvoteCount int
-	Score         int
-	MyVote        int
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	Attachments   []Attachment
+	ID                string
+	CommunityID       string
+	AuthorID          string
+	Title             string
+	Body              string
+	BodyExcerpt       string
+	Format            string
+	ContentRefs       []ContentRef
+	Status            string
+	Community         CommunitySummary
+	Author            UserSummary
+	UpvoteCount       int
+	DownvoteCount     int
+	CommentCount      int
+	SaveCount         int
+	Score             int
+	MyVote            int
+	IsSaved           bool
+	Preview           PostPreview
+	ViewerPermissions ViewerPermissions
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	Attachments       []Attachment
+}
+
+type ContentRef struct{}
+
+type UserSummary struct {
+	ID          string
+	Username    string
+	DisplayName string
+	AvatarURL   string
+	Headline    string
+	Badges      []string
+}
+
+type CommunitySummary struct {
+	ID                string
+	Slug              string
+	Name              string
+	Description       string
+	AvatarURL         string
+	BannerURL         string
+	MemberCount       int
+	PostCount         int
+	ViewerIsFollowing bool
+	ViewerRole        string
+	ViewerPermissions ViewerPermissions
+}
+
+type PostPreview struct {
+	Kind  string
+	Image *PostPreviewImage
+}
+
+type PostPreviewImage struct {
+	URL       string
+	Width     *int
+	Height    *int
+	MimeType  string
+	AltText   string
+	SizeBytes int64
+}
+
+type ViewerPermissions struct {
+	CanComment  bool
+	CanVote     bool
+	CanReport   bool
+	CanEdit     bool
+	CanDelete   bool
+	CanModerate bool
+}
+
+type PostMetadata struct {
+	Author       UserSummary
+	Community    CommunitySummary
+	CommentCount int
 }
 
 type Attachment struct {
@@ -147,11 +227,16 @@ func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func(
 	if len(votes) > 0 {
 		voteRepo = votes[0]
 	}
+	var metadataRepo PostMetadataRepository
+	if repo, ok := posts.(PostMetadataRepository); ok {
+		metadataRepo = repo
+	}
 
 	return &PostUseCase{
 		posts:             posts,
 		communities:       communities,
 		votes:             voteRepo,
+		metadata:          metadataRepo,
 		postImageMaxCount: 9,
 		now:               now,
 	}
@@ -164,6 +249,10 @@ func NewPostUseCaseWithAttachments(posts PostRepository, communities CommunityPo
 		uc.postImageMaxCount = postImageMaxCount
 	}
 	return uc
+}
+
+func (uc *PostUseCase) SetPublicUserFinder(users PublicUserFinder) {
+	uc.users = users
 }
 
 func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) (PublishPostResult, error) {
@@ -216,8 +305,13 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 		return PublishPostResult{}, err
 	}
 
+	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return PublishPostResult{}, err
+	}
+
 	return PublishPostResult{
-		Post: toPostDTO(*post, postVoteView{}, attachments),
+		Post: toPostDTO(*post, postVoteView{}, attachments, metadataViews[post.ID()], input.AuthorID),
 	}, nil
 }
 
@@ -260,9 +354,12 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
-
+	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()]))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -297,10 +394,57 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 		Limit:  limit,
 		Offset: offset,
 	}
+	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()]))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 
+	return result, nil
+}
+
+func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInput) (ListUserPostsResult, error) {
+	limit, offset, err := normalizePagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
+	sort, err := normalizePostListSort(input.Sort)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
+	author, err := uc.findActivePublicUser(ctx, input.Username)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
+
+	posts, err := uc.posts.ListVisibleByAuthorInPublicCommunities(ctx, author.ID(), sort, limit, offset)
+	if err != nil {
+		return ListUserPostsResult{}, fmt.Errorf("list public user posts: %w", err)
+	}
+
+	voteViews, err := uc.loadVoteViews(ctx, posts, input.ViewerID)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
+	attachmentViews, err := uc.loadAttachmentViews(ctx, posts)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
+	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
+
+	result := ListUserPostsResult{
+		Posts:  make([]Post, 0, len(posts)),
+		Limit:  limit,
+		Offset: offset,
+	}
+	for _, post := range posts {
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+	}
 	return result, nil
 }
 
@@ -323,9 +467,13 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 	if err != nil {
 		return GetPostResult{}, err
 	}
+	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return GetPostResult{}, err
+	}
 
 	return GetPostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()]),
+		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID),
 	}, nil
 }
 
@@ -370,9 +518,13 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
+	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
 
 	return UpdatePostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()]),
+		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ActorID),
 	}, nil
 }
 
@@ -531,23 +683,146 @@ func (uc *PostUseCase) loadAttachmentViews(ctx context.Context, posts []postdoma
 	return views, nil
 }
 
-func toPostDTO(post postdomain.Post, voteView postVoteView, attachments []mediadomain.Attachment) Post {
+func (uc *PostUseCase) loadMetadataViews(ctx context.Context, posts []postdomain.Post) (map[postdomain.PostID]PostMetadata, error) {
+	views := make(map[postdomain.PostID]PostMetadata, len(posts))
+	if len(posts) == 0 {
+		return views, nil
+	}
+	for _, post := range posts {
+		views[post.ID()] = fallbackPostMetadata(post)
+	}
+	if uc.metadata == nil {
+		return views, nil
+	}
+
+	postIDs := make([]postdomain.PostID, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID())
+	}
+	loaded, err := uc.metadata.LoadMetadataByPostIDs(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load post metadata: %w", err)
+	}
+	for postID, metadata := range loaded {
+		views[postID] = normalizePostMetadata(metadata)
+	}
+	return views, nil
+}
+
+func (uc *PostUseCase) findActivePublicUser(ctx context.Context, rawUsername string) (*userdomain.User, error) {
+	if uc.users == nil {
+		return nil, apperr.New(apperr.CodeInternal, "public user finder is not configured")
+	}
+	username, err := userdomain.NewUsername(rawUsername)
+	if err != nil {
+		return nil, err
+	}
+	user, err := uc.users.FindByUsername(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("find public user by username: %w", err)
+	}
+	if !user.CanLogin() {
+		return nil, apperr.New(apperr.CodeNotFound, "user not found")
+	}
+	return user, nil
+}
+
+func toPostDTO(post postdomain.Post, voteView postVoteView, attachments []mediadomain.Attachment, metadata PostMetadata, viewerID userdomain.UserID) Post {
 	score := voteView.upvoteCount - voteView.downvoteCount
+	metadata = normalizePostMetadata(metadata)
+	attachmentDTOs := toAttachmentDTOs(attachments)
 	return Post{
-		ID:            post.ID().String(),
-		CommunityID:   post.CommunityID().String(),
-		AuthorID:      post.AuthorID().String(),
-		Title:         post.Title().String(),
-		Body:          post.Body().String(),
-		BodyFormat:    PostBodyFormat,
-		Status:        post.Status().String(),
-		UpvoteCount:   voteView.upvoteCount,
-		DownvoteCount: voteView.downvoteCount,
-		Score:         score,
-		MyVote:        voteView.myVote,
-		CreatedAt:     post.CreatedAt(),
-		UpdatedAt:     post.UpdatedAt(),
-		Attachments:   toAttachmentDTOs(attachments),
+		ID:                post.ID().String(),
+		CommunityID:       post.CommunityID().String(),
+		AuthorID:          post.AuthorID().String(),
+		Title:             post.Title().String(),
+		Body:              post.Body().String(),
+		BodyExcerpt:       makeExcerpt(post.Body().String(), DefaultPostExcerptMax),
+		Format:            PostFormat,
+		ContentRefs:       []ContentRef{},
+		Status:            post.Status().String(),
+		Community:         metadata.Community,
+		Author:            metadata.Author,
+		UpvoteCount:       voteView.upvoteCount,
+		DownvoteCount:     voteView.downvoteCount,
+		CommentCount:      metadata.CommentCount,
+		SaveCount:         0,
+		Score:             score,
+		MyVote:            voteView.myVote,
+		IsSaved:           false,
+		Preview:           buildPostPreview(attachmentDTOs),
+		ViewerPermissions: postViewerPermissions(post, viewerID),
+		CreatedAt:         post.CreatedAt(),
+		UpdatedAt:         post.UpdatedAt(),
+		Attachments:       attachmentDTOs,
+	}
+}
+
+func fallbackPostMetadata(post postdomain.Post) PostMetadata {
+	return PostMetadata{
+		Author: UserSummary{
+			ID:     post.AuthorID().String(),
+			Badges: []string{},
+		},
+		Community: CommunitySummary{
+			ID:                post.CommunityID().String(),
+			ViewerPermissions: ViewerPermissions{},
+		},
+	}
+}
+
+func normalizePostMetadata(metadata PostMetadata) PostMetadata {
+	if metadata.Author.Badges == nil {
+		metadata.Author.Badges = []string{}
+	}
+	if metadata.Author.DisplayName == "" {
+		metadata.Author.DisplayName = metadata.Author.Username
+	}
+	return metadata
+}
+
+func makeExcerpt(body string, maxRunes int) string {
+	body = strings.TrimSpace(body)
+	if maxRunes <= 0 {
+		return body
+	}
+	runes := []rune(body)
+	if len(runes) <= maxRunes {
+		return body
+	}
+	return strings.TrimSpace(string(runes[:maxRunes]))
+}
+
+func buildPostPreview(attachments []Attachment) PostPreview {
+	for _, attachment := range attachments {
+		if attachment.Kind == "image" {
+			return PostPreview{
+				Kind: "image",
+				Image: &PostPreviewImage{
+					URL:       attachment.URL,
+					Width:     attachment.Width,
+					Height:    attachment.Height,
+					MimeType:  attachment.MimeType,
+					AltText:   attachment.AltText,
+					SizeBytes: attachment.SizeBytes,
+				},
+			}
+		}
+	}
+	return PostPreview{Kind: "text"}
+}
+
+func postViewerPermissions(post postdomain.Post, viewerID userdomain.UserID) ViewerPermissions {
+	if strings.TrimSpace(viewerID.String()) == "" {
+		return ViewerPermissions{}
+	}
+	isAuthor := post.AuthorID() == viewerID
+	return ViewerPermissions{
+		CanComment: true,
+		CanVote:    true,
+		CanReport:  true,
+		CanEdit:    isAuthor,
+		CanDelete:  isAuthor,
 	}
 }
 

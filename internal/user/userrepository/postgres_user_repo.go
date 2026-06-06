@@ -90,6 +90,44 @@ func (ur *PostgresUserRepository) FindByUsername(ctx context.Context, username u
 	return scanUser(row)
 }
 
+func (ur *PostgresUserRepository) CountVisiblePostsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error) {
+	const query = `
+		SELECT COUNT(*)::int
+		FROM posts
+		INNER JOIN communities ON communities.id = posts.community_id
+		WHERE posts.author_id = $1::uuid
+			AND posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+	`
+
+	var count int
+	if err := ur.pool.QueryRow(ctx, query, authorID.String()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count visible public posts by author: %w", err)
+	}
+	return count, nil
+}
+
+func (ur *PostgresUserRepository) CountVisibleCommentsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error) {
+	const query = `
+		SELECT COUNT(*)::int
+		FROM comments
+		INNER JOIN posts ON posts.id = comments.post_id
+		INNER JOIN communities ON communities.id = posts.community_id
+		WHERE comments.author_id = $1::uuid
+			AND comments.status = 'visible'
+			AND posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+	`
+
+	var count int
+	if err := ur.pool.QueryRow(ctx, query, authorID.String()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count visible public comments by author: %w", err)
+	}
+	return count, nil
+}
+
 func scanUser(row pgx.Row) (*userdomain.User, error) {
 	var rawID string
 	var rawUsername string

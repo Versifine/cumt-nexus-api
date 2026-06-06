@@ -24,6 +24,7 @@ type PublicCommunityBootstrapUseCase struct {
 
 type CommunityReadUseCase struct {
 	communities CommunityRepository
+	stats       CommunityStatsRepository
 }
 
 type GetCommunityInput struct {
@@ -48,15 +49,33 @@ type CanPostInCommunityResult struct {
 }
 
 type Community struct {
-	ID          string
-	Slug        string
-	Name        string
-	Description string
-	Kind        string
-	Status      string
-	Visibility  string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID                string
+	Slug              string
+	Name              string
+	Description       string
+	AvatarURL         string
+	BannerURL         string
+	Kind              string
+	Status            string
+	Visibility        string
+	MemberCount       int
+	PostCount         int
+	ViewerIsFollowing bool
+	ViewerRole        string
+	ViewerPermissions ViewerPermissions
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type CommunityStats struct {
+	MemberCount int
+	PostCount   int
+}
+
+type ViewerPermissions struct {
+	CanPost     bool
+	CanManage   bool
+	CanModerate bool
 }
 
 func NewPublicCommunityBootstrapUseCase(communities CommunityRepository, now func() time.Time) *PublicCommunityBootstrapUseCase {
@@ -71,9 +90,13 @@ func NewPublicCommunityBootstrapUseCase(communities CommunityRepository, now fun
 }
 
 func NewCommunityReadUseCase(communities CommunityRepository) *CommunityReadUseCase {
-	return &CommunityReadUseCase{
+	uc := &CommunityReadUseCase{
 		communities: communities,
 	}
+	if repo, ok := communities.(CommunityStatsRepository); ok {
+		uc.stats = repo
+	}
+	return uc
 }
 
 func (uc *PublicCommunityBootstrapUseCase) EnsurePublicCommunity(ctx context.Context) error {
@@ -134,8 +157,12 @@ func (uc *CommunityReadUseCase) ListCommunities(ctx context.Context) (ListCommun
 	result := ListCommunitiesResult{
 		Communities: make([]Community, 0, len(communities)),
 	}
+	stats, err := uc.loadCommunityStats(ctx, communities)
+	if err != nil {
+		return ListCommunitiesResult{}, err
+	}
 	for _, community := range communities {
-		result.Communities = append(result.Communities, toCommunityDTO(community))
+		result.Communities = append(result.Communities, toCommunityDTO(community, stats[community.ID()]))
 	}
 
 	return result, nil
@@ -154,9 +181,13 @@ func (uc *CommunityReadUseCase) GetCommunityBySlug(ctx context.Context, input Ge
 	if !isPubliclyReadableCommunity(community) {
 		return GetCommunityResult{}, apperr.New(apperr.CodeNotFound, "community not found")
 	}
+	stats, err := uc.loadCommunityStats(ctx, []communitydomain.Community{*community})
+	if err != nil {
+		return GetCommunityResult{}, err
+	}
 
 	return GetCommunityResult{
-		Community: toCommunityDTO(*community),
+		Community: toCommunityDTO(*community, stats[community.ID()]),
 	}, nil
 }
 
@@ -183,7 +214,7 @@ func (uc *CommunityReadUseCase) CanPostInCommunity(ctx context.Context, input Ca
 	}
 
 	return CanPostInCommunityResult{
-		Community: toCommunityDTO(*community),
+		Community: toCommunityDTO(*community, CommunityStats{}),
 	}, nil
 }
 
@@ -220,16 +251,35 @@ func isPostableCommunity(community *communitydomain.Community) bool {
 	return isPubliclyReadableCommunity(community)
 }
 
-func toCommunityDTO(community communitydomain.Community) Community {
+func (uc *CommunityReadUseCase) loadCommunityStats(ctx context.Context, communities []communitydomain.Community) (map[communitydomain.CommunityID]CommunityStats, error) {
+	stats := make(map[communitydomain.CommunityID]CommunityStats, len(communities))
+	if len(communities) == 0 || uc.stats == nil {
+		return stats, nil
+	}
+	communityIDs := make([]communitydomain.CommunityID, 0, len(communities))
+	for _, community := range communities {
+		communityIDs = append(communityIDs, community.ID())
+	}
+	loaded, err := uc.stats.LoadPublicStatsByCommunityIDs(ctx, communityIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load community stats: %w", err)
+	}
+	return loaded, nil
+}
+
+func toCommunityDTO(community communitydomain.Community, stats CommunityStats) Community {
 	return Community{
-		ID:          community.ID().String(),
-		Slug:        community.Slug().String(),
-		Name:        community.Name().String(),
-		Description: community.Description().String(),
-		Kind:        community.Kind().String(),
-		Status:      community.Status().String(),
-		Visibility:  community.Visibility().String(),
-		CreatedAt:   community.CreatedAt(),
-		UpdatedAt:   community.UpdatedAt(),
+		ID:                community.ID().String(),
+		Slug:              community.Slug().String(),
+		Name:              community.Name().String(),
+		Description:       community.Description().String(),
+		Kind:              community.Kind().String(),
+		Status:            community.Status().String(),
+		Visibility:        community.Visibility().String(),
+		MemberCount:       stats.MemberCount,
+		PostCount:         stats.PostCount,
+		ViewerPermissions: ViewerPermissions{},
+		CreatedAt:         community.CreatedAt(),
+		UpdatedAt:         community.UpdatedAt(),
 	}
 }

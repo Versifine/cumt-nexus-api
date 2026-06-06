@@ -7,6 +7,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediadomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -17,6 +18,23 @@ type CommentRepository interface {
 	MarkDeleted(ctx context.Context, comment commentdomain.Comment) error
 	ListVisibleByPost(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error)
 	ListVisibleTreeByPost(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error)
+	ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]commentdomain.Comment, error)
+}
+
+type PostReader interface {
+	FindVisibleByID(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
+}
+
+type PublicUserFinder interface {
+	FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error)
+}
+
+type CommentMetadataRepository interface {
+	LoadMetadataByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]CommentMetadata, error)
+}
+
+type CommentMetadata struct {
+	Author postusecase.UserSummary
 }
 
 type AttachmentRepository interface {

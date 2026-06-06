@@ -27,6 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/auth/register | `authhttp.registerRequest` | `authhttp.registerResponse` | 201 |
 | POST | /api/v1/auth/login | `authhttp.loginRequest` | `authhttp.loginResponse` | 200 |
 | GET | /api/v1/me | none | `userhttp.currentUserResponse` | 200 |
+| GET | /api/v1/users/:username | none | `userhttp.getPublicUserResponse` | 200 |
 | GET | /api/v1/communities | none | `communityhttp.listCommunitiesResponse` | 200 |
 | GET | /api/v1/communities/:slug | none | `communityhttp.getCommunityResponse` | 200 |
 | POST | /api/v1/community-applications | `communityhttp.submitCommunityApplicationRequest` | `communityhttp.submitCommunityApplicationResponse` | 201 |
@@ -38,10 +39,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/communities/:slug/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/posts/:id | none | `posthttp.getPostResponse` | 200 |
+| GET | /api/v1/users/:username/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | PATCH | /api/v1/posts/:id | `posthttp.updatePostRequest` | `posthttp.getPostResponse` | 200 |
 | DELETE | /api/v1/posts/:id | none | none | 204 |
 | POST | /api/v1/posts/:id/comments | `commenthttp.publishCommentRequest` | `commenthttp.publishCommentResponse` | 201 |
 | GET | /api/v1/posts/:id/comments | query | `commenthttp.listPostCommentsResponse` | 200 |
+| GET | /api/v1/users/:username/comments | query | `commenthttp.listUserCommentsResponse` | 200 |
 | PATCH | /api/v1/comments/:id | `commenthttp.updateCommentRequest` | `commenthttp.publishCommentResponse` | 200 |
 | DELETE | /api/v1/comments/:id | none | none | 204 |
 | PUT | /api/v1/posts/:id/vote | `votehttp.setPostVoteRequest` | `votehttp.setPostVoteResponse` | 200 |
@@ -86,6 +89,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `authhttp` | `loginRequest` | `username`, `password` |
 | `authhttp` | `loginResponse` | `access_token`, `token_type`, `expires_in`, `user` |
 | `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at` |
+| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `created_at` |
+| `userhttp` | `publicUserStatsResponse` | `post_count`, `comment_count` |
+| `userhttp` | `getPublicUserResponse` | `user` |
 | `communityhttp` | `listCommunitiesResponse` | `communities` |
 | `communityhttp` | `getCommunityResponse` | `community` |
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
@@ -96,20 +102,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `submitCommunityApplicationResponse` | `application` |
 | `communityhttp` | `approveCommunityApplicationResponse` | `application`, `community` |
 | `communityhttp` | `rejectCommunityApplicationResponse` | `application` |
-| `communityhttp` | `communityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_at`, `updated_at` |
+| `communityhttp` | `communityResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `kind`, `status`, `visibility`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions`, `created_at`, `updated_at` |
+| `communityhttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate` |
 | `posthttp` | `publishPostRequest` | `title`, `body`, `attachment_ids` |
 | `posthttp` | `updatePostRequest` | `title`, `body` |
-| `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_format`, `status`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `created_at`, `updated_at`, `attachments` |
+| `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments` |
+| `posthttp` | `contentRefResponse` | `kind`, `ref_id` |
+| `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
+| `posthttp` | `communitySummaryResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions` |
+| `posthttp` | `postPreviewResponse` | `kind`, `image` |
+| `posthttp` | `postPreviewImageResponse` | `url`, `width`, `height`, `mime_type`, `alt_text`, `size_bytes` |
+| `posthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
 | `posthttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `posthttp` | `publishPostResponse` | `post` |
 | `posthttp` | `listCommunityPostsResponse` | `posts`, `limit`, `offset` |
 | `posthttp` | `getPostResponse` | `post` |
 | `commenthttp` | `publishCommentRequest` | `body`, `parent_id`, `attachment_ids` |
 | `commenthttp` | `updateCommentRequest` | `body` |
-| `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `body_format`, `status`, `depth`, `reply_count`, `has_more_replies`, `created_at`, `updated_at`, `attachments` |
+| `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `format`, `content_refs`, `author`, `status`, `depth`, `reply_count`, `has_more_replies`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `viewer_permissions`, `children`, `created_at`, `updated_at`, `attachments` |
+| `commenthttp` | `contentRefResponse` | `kind`, `ref_id` |
+| `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
+| `commenthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
 | `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `commenthttp` | `publishCommentResponse` | `comment` |
 | `commenthttp` | `listPostCommentsResponse` | `comments`, `view`, `sort`, `limit`, `offset`, `max_depth` |
+| `commenthttp` | `listUserCommentsResponse` | `comments`, `limit`, `offset` |
 | `votehttp` | `setPostVoteRequest` | `value` |
 | `votehttp` | `postVoteResponse` | `post_id`, `user_id`, `value`, `created_at`, `updated_at` |
 | `votehttp` | `setPostVoteResponse` | `vote` |

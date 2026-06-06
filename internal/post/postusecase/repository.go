@@ -18,6 +18,15 @@ type PostRepository interface {
 	MarkDeleted(ctx context.Context, post postdomain.Post) error
 	ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 	ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+	ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+}
+
+type PublicUserFinder interface {
+	FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error)
+}
+
+type PostMetadataRepository interface {
+	LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]PostMetadata, error)
 }
 
 type VoteRepository interface {

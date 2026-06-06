@@ -257,7 +257,7 @@ func (uc *CommunityApplicationUseCase) ApproveCommunityApplication(ctx context.C
 
 		result = ApproveCommunityApplicationResult{
 			Application: toCommunityApplicationDTO(*application),
-			Community:   toCommunityDTO(*community),
+			Community:   toCommunityDTO(*community, CommunityStats{}),
 		}
 		return nil
 	}); err != nil {

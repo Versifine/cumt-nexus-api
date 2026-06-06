@@ -143,9 +143,6 @@ if ([regex]::IsMatch($mainContent, 'router\.Static\("/uploads"')) {
 Add-RoutesFromFile -Routes $actualRoutes -Path 'internal/auth/delivery/authhttp/register.go' -Prefix '/api/v1/auth' -Auth 'public'
 
 $protectedRouteFiles = @(
-    'internal/user/delivery/userhttp/handler.go',
-    'internal/community/delivery/communityhttp/handler.go',
-    'internal/comment/delivery/commenthttp/handler.go',
     'internal/vote/delivery/votehttp/handler.go',
     'internal/moderation/delivery/moderationhttp/handler.go',
     'internal/search/delivery/searchhttp/handler.go',
@@ -159,10 +156,38 @@ foreach ($file in $protectedRouteFiles) {
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
+    -Path 'internal/user/delivery/userhttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'optional Bearer' `
+    -IncludeHandlers @('GetPublicUser')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/user/delivery/userhttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'Bearer' `
+    -IncludeHandlers @('Me')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/community/delivery/communityhttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'optional Bearer' `
+    -IncludeHandlers @('ListCommunities', 'GetCommunity')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/community/delivery/communityhttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'Bearer' `
+    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
     -Path 'internal/post/delivery/posthttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'optional Bearer' `
-    -IncludeHandlers @('ListCommunityPosts', 'ListLatestPosts', 'GetPost')
+    -IncludeHandlers @('ListCommunityPosts', 'ListLatestPosts', 'ListUserPosts', 'GetPost')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
@@ -170,6 +195,20 @@ Add-RoutesFromFile `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
     -IncludeHandlers @('PublishPost', 'UpdatePost', 'DeletePost')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/comment/delivery/commenthttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'optional Bearer' `
+    -IncludeHandlers @('ListPostComments', 'ListUserComments')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/comment/delivery/commenthttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'Bearer' `
+    -IncludeHandlers @('PublishComment', 'UpdateComment', 'DeleteComment')
 
 if (-not (Test-Path -LiteralPath $docFullPath)) {
     throw "contract doc not found: $DocPath"

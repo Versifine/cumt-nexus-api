@@ -303,8 +303,8 @@ func TestListPostCommentsBuildsTreePreorder(t *testing.T) {
 	if result.Comments[1].ID != child.ID().String() || result.Comments[1].Depth != 1 || result.Comments[1].ReplyCount != 1 || !result.Comments[1].HasMoreReplies {
 		t.Fatalf("unexpected child comment: %#v", result.Comments[1])
 	}
-	if result.Comments[0].BodyFormat != CommentBodyFormat || result.Comments[1].BodyFormat != CommentBodyFormat {
-		t.Fatalf("expected body format %q, got %#v", CommentBodyFormat, result.Comments)
+	if result.Comments[0].Format != CommentFormat || result.Comments[1].Format != CommentFormat {
+		t.Fatalf("expected format %q, got %#v", CommentFormat, result.Comments)
 	}
 }
 
@@ -370,7 +370,7 @@ func TestUpdateCommentAllowsAuthor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateComment returned error: %v", err)
 	}
-	if result.Comment.Body != "Updated body" || result.Comment.BodyFormat != CommentBodyFormat {
+	if result.Comment.Body != "Updated body" || result.Comment.Format != CommentFormat {
 		t.Fatalf("unexpected updated comment result: %#v", result.Comment)
 	}
 }
@@ -464,6 +464,7 @@ type fakeCommentRepository struct {
 	markDeletedFunc           func(ctx context.Context, comment commentdomain.Comment) error
 	listVisibleByPostFunc     func(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error)
 	listVisibleTreeByPostFunc func(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error)
+	listVisibleByAuthorFunc   func(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]commentdomain.Comment, error)
 }
 
 type fakeAttachmentRepository struct {
@@ -523,6 +524,13 @@ func (f *fakeCommentRepository) ListVisibleByPost(ctx context.Context, postID po
 func (f *fakeCommentRepository) ListVisibleTreeByPost(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error) {
 	if f.listVisibleTreeByPostFunc != nil {
 		return f.listVisibleTreeByPostFunc(ctx, postID)
+	}
+	return nil, nil
+}
+
+func (f *fakeCommentRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]commentdomain.Comment, error) {
+	if f.listVisibleByAuthorFunc != nil {
+		return f.listVisibleByAuthorFunc(ctx, authorID, limit, offset)
 	}
 	return nil, nil
 }

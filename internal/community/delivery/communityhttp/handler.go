@@ -87,15 +87,28 @@ type rejectCommunityApplicationResponse struct {
 }
 
 type communityResponse struct {
-	ID          string    `json:"id"`
-	Slug        string    `json:"slug"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Kind        string    `json:"kind"`
-	Status      string    `json:"status"`
-	Visibility  string    `json:"visibility"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                string                             `json:"id"`
+	Slug              string                             `json:"slug"`
+	Name              string                             `json:"name"`
+	Description       string                             `json:"description"`
+	AvatarURL         string                             `json:"avatar_url"`
+	BannerURL         string                             `json:"banner_url"`
+	Kind              string                             `json:"kind"`
+	Status            string                             `json:"status"`
+	Visibility        string                             `json:"visibility"`
+	MemberCount       int                                `json:"member_count"`
+	PostCount         int                                `json:"post_count"`
+	ViewerIsFollowing bool                               `json:"viewer_is_following"`
+	ViewerRole        string                             `json:"viewer_role"`
+	ViewerPermissions communityViewerPermissionsResponse `json:"viewer_permissions"`
+	CreatedAt         time.Time                          `json:"created_at"`
+	UpdatedAt         time.Time                          `json:"updated_at"`
+}
+
+type communityViewerPermissionsResponse struct {
+	CanPost     bool `json:"can_post"`
+	CanManage   bool `json:"can_manage"`
+	CanModerate bool `json:"can_moderate"`
 }
 
 func NewHandler(communities CommunityReadUseCase, applications CommunityApplicationUseCase) *Handler {
@@ -106,8 +119,16 @@ func NewHandler(communities CommunityReadUseCase, applications CommunityApplicat
 }
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
+	RegisterReadRoutes(group, handler)
+	RegisterApplicationRoutes(group, handler)
+}
+
+func RegisterReadRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities", handler.ListCommunities)
 	group.GET("/communities/:slug", handler.GetCommunity)
+}
+
+func RegisterApplicationRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/community-applications", handler.SubmitCommunityApplication)
 	group.GET("/community-applications", handler.ListCommunityApplications)
 	group.GET("/community-applications/:id", handler.GetCommunityApplication)
@@ -317,15 +338,26 @@ func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
 
 func toCommunityResponse(community communityusecase.Community) communityResponse {
 	return communityResponse{
-		ID:          community.ID,
-		Slug:        community.Slug,
-		Name:        community.Name,
-		Description: community.Description,
-		Kind:        community.Kind,
-		Status:      community.Status,
-		Visibility:  community.Visibility,
-		CreatedAt:   community.CreatedAt,
-		UpdatedAt:   community.UpdatedAt,
+		ID:                community.ID,
+		Slug:              community.Slug,
+		Name:              community.Name,
+		Description:       community.Description,
+		AvatarURL:         community.AvatarURL,
+		BannerURL:         community.BannerURL,
+		Kind:              community.Kind,
+		Status:            community.Status,
+		Visibility:        community.Visibility,
+		MemberCount:       community.MemberCount,
+		PostCount:         community.PostCount,
+		ViewerIsFollowing: community.ViewerIsFollowing,
+		ViewerRole:        community.ViewerRole,
+		ViewerPermissions: communityViewerPermissionsResponse{
+			CanPost:     community.ViewerPermissions.CanPost,
+			CanManage:   community.ViewerPermissions.CanManage,
+			CanModerate: community.ViewerPermissions.CanModerate,
+		},
+		CreatedAt: community.CreatedAt,
+		UpdatedAt: community.UpdatedAt,
 	}
 }
 

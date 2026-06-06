@@ -10,6 +10,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authcontext"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,6 +21,7 @@ type Handler struct {
 type CommentUseCase interface {
 	PublishComment(ctx context.Context, input commentusecase.PublishCommentInput) (commentusecase.PublishCommentResult, error)
 	ListPostComments(ctx context.Context, input commentusecase.ListPostCommentsInput) (commentusecase.ListPostCommentsResult, error)
+	ListUserComments(ctx context.Context, input commentusecase.ListUserCommentsInput) (commentusecase.ListUserCommentsResult, error)
 	UpdateComment(ctx context.Context, input commentusecase.UpdateCommentInput) (commentusecase.UpdateCommentResult, error)
 	DeleteComment(ctx context.Context, input commentusecase.DeleteCommentInput) (commentusecase.DeleteCommentResult, error)
 }
@@ -35,19 +37,50 @@ type updateCommentRequest struct {
 }
 
 type commentResponse struct {
-	ID             string               `json:"id"`
-	PostID         string               `json:"post_id"`
-	AuthorID       string               `json:"author_id"`
-	ParentID       *string              `json:"parent_id"`
-	Body           string               `json:"body"`
-	BodyFormat     string               `json:"body_format"`
-	Status         string               `json:"status"`
-	Depth          int                  `json:"depth"`
-	ReplyCount     int                  `json:"reply_count"`
-	HasMoreReplies bool                 `json:"has_more_replies"`
-	CreatedAt      time.Time            `json:"created_at"`
-	UpdatedAt      time.Time            `json:"updated_at"`
-	Attachments    []attachmentResponse `json:"attachments"`
+	ID                string                    `json:"id"`
+	PostID            string                    `json:"post_id"`
+	AuthorID          string                    `json:"author_id"`
+	ParentID          *string                   `json:"parent_id"`
+	Body              string                    `json:"body"`
+	Format            string                    `json:"format"`
+	ContentRefs       []contentRefResponse      `json:"content_refs"`
+	Author            userSummaryResponse       `json:"author"`
+	Status            string                    `json:"status"`
+	Depth             int                       `json:"depth"`
+	ReplyCount        int                       `json:"reply_count"`
+	HasMoreReplies    bool                      `json:"has_more_replies"`
+	UpvoteCount       int                       `json:"upvote_count"`
+	DownvoteCount     int                       `json:"downvote_count"`
+	Score             int                       `json:"score"`
+	MyVote            int                       `json:"my_vote"`
+	ViewerPermissions viewerPermissionsResponse `json:"viewer_permissions"`
+	Children          []commentResponse         `json:"children"`
+	CreatedAt         time.Time                 `json:"created_at"`
+	UpdatedAt         time.Time                 `json:"updated_at"`
+	Attachments       []attachmentResponse      `json:"attachments"`
+}
+
+type contentRefResponse struct {
+	Kind  string `json:"kind"`
+	RefID string `json:"ref_id"`
+}
+
+type userSummaryResponse struct {
+	ID          string   `json:"id"`
+	Username    string   `json:"username"`
+	DisplayName string   `json:"display_name"`
+	AvatarURL   string   `json:"avatar_url"`
+	Headline    string   `json:"headline"`
+	Badges      []string `json:"badges"`
+}
+
+type viewerPermissionsResponse struct {
+	CanComment  bool `json:"can_comment"`
+	CanVote     bool `json:"can_vote"`
+	CanReport   bool `json:"can_report"`
+	CanEdit     bool `json:"can_edit"`
+	CanDelete   bool `json:"can_delete"`
+	CanModerate bool `json:"can_moderate"`
 }
 
 type attachmentResponse struct {
@@ -76,6 +109,12 @@ type listPostCommentsResponse struct {
 	MaxDepth int               `json:"max_depth"`
 }
 
+type listUserCommentsResponse struct {
+	Comments []commentResponse `json:"comments"`
+	Limit    int               `json:"limit"`
+	Offset   int               `json:"offset"`
+}
+
 func NewHandler(comments CommentUseCase) *Handler {
 	return &Handler{
 		comments: comments,
@@ -83,8 +122,17 @@ func NewHandler(comments CommentUseCase) *Handler {
 }
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
-	group.POST("/posts/:id/comments", handler.PublishComment)
+	RegisterReadRoutes(group, handler)
+	RegisterWriteRoutes(group, handler)
+}
+
+func RegisterReadRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/posts/:id/comments", handler.ListPostComments)
+	group.GET("/users/:username/comments", handler.ListUserComments)
+}
+
+func RegisterWriteRoutes(group *gin.RouterGroup, handler *Handler) {
+	group.POST("/posts/:id/comments", handler.PublishComment)
 	group.PATCH("/comments/:id", handler.UpdateComment)
 	group.DELETE("/comments/:id", handler.DeleteComment)
 }
@@ -123,6 +171,8 @@ func (h *Handler) PublishComment(c *gin.Context) {
 }
 
 func (h *Handler) ListPostComments(c *gin.Context) {
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
+
 	limit, err := parseOptionalIntQuery(c, "limit")
 	if err != nil {
 		_ = c.Error(err)
@@ -144,6 +194,7 @@ func (h *Handler) ListPostComments(c *gin.Context) {
 
 	result, err := h.comments.ListPostComments(c.Request.Context(), commentusecase.ListPostCommentsInput{
 		PostID:   c.Param("id"),
+		ViewerID: userID,
 		View:     c.Query("view"),
 		Sort:     c.Query("sort"),
 		Limit:    limit,
@@ -163,6 +214,46 @@ func (h *Handler) ListPostComments(c *gin.Context) {
 		Limit:    result.Limit,
 		Offset:   result.Offset,
 		MaxDepth: result.MaxDepth,
+	}
+	for _, comment := range result.Comments {
+		response.Comments = append(response.Comments, toCommentResponse(comment))
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) ListUserComments(c *gin.Context) {
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.comments.ListUserComments(c.Request.Context(), commentusecase.ListUserCommentsInput{
+		Username: c.Param("username"),
+		ViewerID: userID,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listUserCommentsResponse{
+		Comments: make([]commentResponse, 0, len(result.Comments)),
+		Limit:    result.Limit,
+		Offset:   result.Offset,
 	}
 	for _, comment := range result.Comments {
 		response.Comments = append(response.Comments, toCommentResponse(comment))
@@ -240,19 +331,69 @@ func toCommentResponse(comment commentusecase.Comment) commentResponse {
 		parentID = &comment.ParentID
 	}
 	return commentResponse{
-		ID:             comment.ID,
-		PostID:         comment.PostID,
-		AuthorID:       comment.AuthorID,
-		ParentID:       parentID,
-		Body:           comment.Body,
-		BodyFormat:     comment.BodyFormat,
-		Status:         comment.Status,
-		Depth:          comment.Depth,
-		ReplyCount:     comment.ReplyCount,
-		HasMoreReplies: comment.HasMoreReplies,
-		CreatedAt:      comment.CreatedAt,
-		UpdatedAt:      comment.UpdatedAt,
-		Attachments:    toAttachmentResponses(comment.Attachments),
+		ID:                comment.ID,
+		PostID:            comment.PostID,
+		AuthorID:          comment.AuthorID,
+		ParentID:          parentID,
+		Body:              comment.Body,
+		Format:            comment.Format,
+		ContentRefs:       toContentRefResponses(comment.ContentRefs),
+		Author:            toUserSummaryResponse(comment.Author),
+		Status:            comment.Status,
+		Depth:             comment.Depth,
+		ReplyCount:        comment.ReplyCount,
+		HasMoreReplies:    comment.HasMoreReplies,
+		UpvoteCount:       comment.UpvoteCount,
+		DownvoteCount:     comment.DownvoteCount,
+		Score:             comment.Score,
+		MyVote:            comment.MyVote,
+		ViewerPermissions: toViewerPermissionsResponse(comment.ViewerPermissions),
+		Children:          toCommentResponses(comment.Children),
+		CreatedAt:         comment.CreatedAt,
+		UpdatedAt:         comment.UpdatedAt,
+		Attachments:       toAttachmentResponses(comment.Attachments),
+	}
+}
+
+func toCommentResponses(comments []commentusecase.Comment) []commentResponse {
+	response := make([]commentResponse, 0, len(comments))
+	for _, comment := range comments {
+		response = append(response, toCommentResponse(comment))
+	}
+	return response
+}
+
+func toContentRefResponses(refs []postusecase.ContentRef) []contentRefResponse {
+	response := make([]contentRefResponse, 0, len(refs))
+	for range refs {
+		response = append(response, contentRefResponse{})
+	}
+	return response
+}
+
+func toUserSummaryResponse(user postusecase.UserSummary) userSummaryResponse {
+	badges := user.Badges
+	if badges == nil {
+		badges = []string{}
+	}
+	return userSummaryResponse{
+		ID:          user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		AvatarURL:   user.AvatarURL,
+		Headline:    user.Headline,
+		Badges:      badges,
+	}
+}
+
+func toViewerPermissionsResponse(permissions postusecase.ViewerPermissions) viewerPermissionsResponse {
+	return viewerPermissionsResponse{
+		CanComment:  permissions.CanComment,
+		CanVote:     permissions.CanVote,
+		CanReport:   permissions.CanReport,
+		CanEdit:     permissions.CanEdit,
+		CanDelete:   permissions.CanDelete,
+		CanModerate: permissions.CanModerate,
 	}
 }
 

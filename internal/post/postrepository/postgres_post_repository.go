@@ -17,6 +17,7 @@ import (
 )
 
 var _ postusecase.PostRepository = (*PostgresPostRepository)(nil)
+var _ postusecase.PostMetadataRepository = (*PostgresPostRepository)(nil)
 
 type PostgresPostRepository struct {
 	pool *pgxpool.Pool
@@ -248,6 +249,13 @@ func (repo *PostgresPostRepository) ListVisibleInPublicCommunities(ctx context.C
 	return repo.listVisibleInPublicCommunitiesNew(ctx, limit, offset)
 }
 
+func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+	if sort == postusecase.PostListSortHot {
+		return repo.listVisibleByAuthorInPublicCommunitiesHot(ctx, authorID, limit, offset)
+	}
+	return repo.listVisibleByAuthorInPublicCommunitiesNew(ctx, authorID, limit, offset)
+}
+
 func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesNew(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
 	const query = `
 		SELECT
@@ -288,6 +296,215 @@ func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesNew(ctx contex
 	}
 
 	return posts, nil
+}
+
+func (repo *PostgresPostRepository) listVisibleByAuthorInPublicCommunitiesNew(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error) {
+	const query = `
+		SELECT
+			posts.id::text,
+			posts.community_id::text,
+			posts.author_id::text,
+			posts.title,
+			posts.body,
+			posts.status,
+			posts.created_at,
+			posts.updated_at
+		FROM posts
+		INNER JOIN communities ON communities.id = posts.community_id
+		WHERE posts.author_id = $1::uuid
+			AND posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+		ORDER BY posts.created_at DESC, posts.id DESC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, authorID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list visible posts by author in public communities: %w", err)
+	}
+	defer rows.Close()
+
+	var posts []postdomain.Post
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, *post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate visible posts by author in public communities: %w", err)
+	}
+
+	return posts, nil
+}
+
+func (repo *PostgresPostRepository) listVisibleByAuthorInPublicCommunitiesHot(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error) {
+	const query = `
+		SELECT
+			posts.id::text,
+			posts.community_id::text,
+			posts.author_id::text,
+			posts.title,
+			posts.body,
+			posts.status,
+			posts.created_at,
+			posts.updated_at
+		FROM posts
+		INNER JOIN communities ON communities.id = posts.community_id
+		LEFT JOIN post_votes ON post_votes.post_id = posts.id
+		WHERE posts.author_id = $1::uuid
+			AND posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+		GROUP BY
+			posts.id,
+			posts.community_id,
+			posts.author_id,
+			posts.title,
+			posts.body,
+			posts.status,
+			posts.created_at,
+			posts.updated_at
+		ORDER BY
+			COALESCE(SUM(post_votes.value), 0) DESC,
+			COUNT(post_votes.value) FILTER (WHERE post_votes.value = 1) DESC,
+			posts.created_at DESC,
+			posts.id DESC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, authorID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list visible hot posts by author in public communities: %w", err)
+	}
+	defer rows.Close()
+
+	var posts []postdomain.Post
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, *post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate visible hot posts by author in public communities: %w", err)
+	}
+
+	return posts, nil
+}
+
+func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]postusecase.PostMetadata, error) {
+	result := make(map[postdomain.PostID]postusecase.PostMetadata, len(postIDs))
+	if len(postIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			posts.id::text,
+			users.id::text,
+			users.username,
+			communities.id::text,
+			communities.slug,
+			communities.name,
+			communities.description,
+			(
+				SELECT COUNT(*)::int
+				FROM comments
+				WHERE comments.post_id = posts.id
+					AND comments.status = 'visible'
+			) AS comment_count,
+			(
+				SELECT COUNT(*)::int
+				FROM posts AS community_posts
+				WHERE community_posts.community_id = communities.id
+					AND community_posts.status = 'visible'
+			) AS community_post_count,
+			(
+				SELECT COUNT(*)::int
+				FROM community_memberships
+				WHERE community_memberships.community_id = communities.id
+					AND community_memberships.status = 'active'
+			) AS community_member_count
+		FROM posts
+		INNER JOIN users ON users.id = posts.author_id
+		INNER JOIN communities ON communities.id = posts.community_id
+		WHERE posts.id = ANY($1::uuid[])
+	`
+
+	rows, err := repo.pool.Query(ctx, query, postIDStrings(postIDs))
+	if err != nil {
+		return nil, fmt.Errorf("load post metadata: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawPostID string
+		var rawAuthorID string
+		var rawUsername string
+		var rawCommunityID string
+		var rawCommunitySlug string
+		var rawCommunityName string
+		var rawCommunityDescription string
+		var commentCount int
+		var communityPostCount int
+		var communityMemberCount int
+
+		if err := rows.Scan(
+			&rawPostID,
+			&rawAuthorID,
+			&rawUsername,
+			&rawCommunityID,
+			&rawCommunitySlug,
+			&rawCommunityName,
+			&rawCommunityDescription,
+			&commentCount,
+			&communityPostCount,
+			&communityMemberCount,
+		); err != nil {
+			return nil, err
+		}
+
+		postID, err := postdomain.NewPostID(rawPostID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate metadata post id: %v", err)
+		}
+		result[postID] = postusecase.PostMetadata{
+			Author: postusecase.UserSummary{
+				ID:          rawAuthorID,
+				Username:    rawUsername,
+				DisplayName: rawUsername,
+				Badges:      []string{},
+			},
+			Community: postusecase.CommunitySummary{
+				ID:          rawCommunityID,
+				Slug:        rawCommunitySlug,
+				Name:        rawCommunityName,
+				Description: rawCommunityDescription,
+				PostCount:   communityPostCount,
+				MemberCount: communityMemberCount,
+			},
+			CommentCount: commentCount,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate post metadata: %w", err)
+	}
+
+	return result, nil
+}
+
+func postIDStrings(postIDs []postdomain.PostID) []string {
+	rawIDs := make([]string, 0, len(postIDs))
+	for _, postID := range postIDs {
+		rawIDs = append(rawIDs, postID.String())
+	}
+	return rawIDs
 }
 
 func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesHot(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {

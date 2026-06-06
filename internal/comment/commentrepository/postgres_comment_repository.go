@@ -10,6 +10,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -18,6 +19,7 @@ import (
 )
 
 var _ commentusecase.CommentRepository = (*PostgresCommentRepository)(nil)
+var _ commentusecase.CommentMetadataRepository = (*PostgresCommentRepository)(nil)
 
 type PostgresCommentRepository struct {
 	pool *pgxpool.Pool
@@ -216,6 +218,108 @@ func (repo *PostgresCommentRepository) ListVisibleTreeByPost(ctx context.Context
 	}
 
 	return comments, nil
+}
+
+func (repo *PostgresCommentRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]commentdomain.Comment, error) {
+	const query = `
+		SELECT
+			comments.id::text,
+			comments.post_id::text,
+			comments.author_id::text,
+			comments.parent_id::text,
+			comments.body,
+			comments.status,
+			comments.created_at,
+			comments.updated_at
+		FROM comments
+		INNER JOIN posts ON posts.id = comments.post_id
+		INNER JOIN communities ON communities.id = posts.community_id
+		WHERE comments.author_id = $1::uuid
+			AND comments.status = 'visible'
+			AND posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+		ORDER BY comments.created_at DESC, comments.id DESC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, authorID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list visible comments by author in public communities: %w", err)
+	}
+	defer rows.Close()
+
+	var comments []commentdomain.Comment
+	for rows.Next() {
+		comment, err := scanComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		comments = append(comments, *comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate visible comments by author in public communities: %w", err)
+	}
+
+	return comments, nil
+}
+
+func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]commentusecase.CommentMetadata, error) {
+	result := make(map[commentdomain.CommentID]commentusecase.CommentMetadata, len(commentIDs))
+	if len(commentIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			comments.id::text,
+			users.id::text,
+			users.username
+		FROM comments
+		INNER JOIN users ON users.id = comments.author_id
+		WHERE comments.id = ANY($1::uuid[])
+	`
+
+	rows, err := repo.pool.Query(ctx, query, commentIDStrings(commentIDs))
+	if err != nil {
+		return nil, fmt.Errorf("load comment metadata: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommentID string
+		var rawAuthorID string
+		var rawUsername string
+		if err := rows.Scan(&rawCommentID, &rawAuthorID, &rawUsername); err != nil {
+			return nil, err
+		}
+		commentID, err := commentdomain.NewCommentID(rawCommentID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate metadata comment id: %v", err)
+		}
+		result[commentID] = commentusecase.CommentMetadata{
+			Author: postusecase.UserSummary{
+				ID:          rawAuthorID,
+				Username:    rawUsername,
+				DisplayName: rawUsername,
+				Badges:      []string{},
+			},
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate comment metadata: %w", err)
+	}
+
+	return result, nil
+}
+
+func commentIDStrings(commentIDs []commentdomain.CommentID) []string {
+	rawIDs := make([]string, 0, len(commentIDs))
+	for _, commentID := range commentIDs {
+		rawIDs = append(rawIDs, commentID.String())
+	}
+	return rawIDs
 }
 
 type rowScanner interface {

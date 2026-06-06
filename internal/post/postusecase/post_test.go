@@ -54,8 +54,8 @@ func TestPublishPostCreatesVisiblePost(t *testing.T) {
 	if result.Post.Status != postdomain.PostStatusVisible.String() {
 		t.Fatalf("expected visible result, got %q", result.Post.Status)
 	}
-	if result.Post.BodyFormat != PostBodyFormat {
-		t.Fatalf("expected body format %q, got %q", PostBodyFormat, result.Post.BodyFormat)
+	if result.Post.Format != PostFormat {
+		t.Fatalf("expected format %q, got %q", PostFormat, result.Post.Format)
 	}
 	if !communities.getCalled || !communities.canPostCalled {
 		t.Fatal("expected community lookup and permission check")
@@ -204,8 +204,8 @@ func TestListCommunityPostsNormalizesPagination(t *testing.T) {
 	if len(result.Posts) != 1 {
 		t.Fatalf("expected one post, got %d", len(result.Posts))
 	}
-	if result.Posts[0].BodyFormat != PostBodyFormat {
-		t.Fatalf("expected body format %q, got %q", PostBodyFormat, result.Posts[0].BodyFormat)
+	if result.Posts[0].Format != PostFormat {
+		t.Fatalf("expected format %q, got %q", PostFormat, result.Posts[0].Format)
 	}
 	if result.Posts[0].UpvoteCount != 2 || result.Posts[0].DownvoteCount != 1 || result.Posts[0].Score != 1 || result.Posts[0].MyVote != 1 {
 		t.Fatalf("unexpected vote view: %#v", result.Posts[0])
@@ -405,8 +405,8 @@ func TestGetPostReturnsVisiblePost(t *testing.T) {
 	if result.Post.ID != post.ID().String() {
 		t.Fatalf("expected post id %q, got %q", post.ID().String(), result.Post.ID)
 	}
-	if result.Post.BodyFormat != PostBodyFormat {
-		t.Fatalf("expected body format %q, got %q", PostBodyFormat, result.Post.BodyFormat)
+	if result.Post.Format != PostFormat {
+		t.Fatalf("expected format %q, got %q", PostFormat, result.Post.Format)
 	}
 	if result.Post.UpvoteCount != 3 || result.Post.DownvoteCount != 1 || result.Post.Score != 2 || result.Post.MyVote != -1 {
 		t.Fatalf("unexpected vote view: %#v", result.Post)
@@ -474,8 +474,8 @@ func TestUpdatePostAllowsAuthor(t *testing.T) {
 	if result.Post.Title != "Updated" || result.Post.Body != "Updated body" {
 		t.Fatalf("unexpected updated post result: %#v", result.Post)
 	}
-	if result.Post.BodyFormat != PostBodyFormat {
-		t.Fatalf("expected body format %q, got %q", PostBodyFormat, result.Post.BodyFormat)
+	if result.Post.Format != PostFormat {
+		t.Fatalf("expected format %q, got %q", PostFormat, result.Post.Format)
 	}
 }
 
@@ -556,6 +556,7 @@ type fakePostRepository struct {
 	markDeletedFunc                    func(ctx context.Context, post postdomain.Post) error
 	listVisibleByCommunityFunc         func(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 	listVisibleInPublicCommunitiesFunc func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+	listVisibleByAuthorFunc            func(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 }
 
 func (f *fakePostRepository) Create(ctx context.Context, post postdomain.Post) error {
@@ -596,6 +597,13 @@ func (f *fakePostRepository) ListVisibleByCommunity(ctx context.Context, communi
 func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
 	if f.listVisibleInPublicCommunitiesFunc != nil {
 		return f.listVisibleInPublicCommunitiesFunc(ctx, sort, limit, offset)
+	}
+	return nil, nil
+}
+
+func (f *fakePostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+	if f.listVisibleByAuthorFunc != nil {
+		return f.listVisibleByAuthorFunc(ctx, authorID, sort, limit, offset)
 	}
 	return nil, nil
 }

@@ -117,14 +117,76 @@ func TestListPostCommentsReturnsComments(t *testing.T) {
 	if response.Comments[0].ParentID != nil {
 		t.Fatalf("expected root parent_id null, got %#v", response.Comments[0].ParentID)
 	}
-	if response.Comments[0].BodyFormat != "markdown" || response.Comments[1].BodyFormat != "markdown" {
-		t.Fatalf("expected markdown body format, got %#v", response.Comments)
+	if response.Comments[0].Format != "nexus_markdown" || response.Comments[1].Format != "nexus_markdown" {
+		t.Fatalf("expected nexus_markdown format, got %#v", response.Comments)
 	}
 	if response.Comments[1].ParentID == nil || *response.Comments[1].ParentID != parentID {
 		t.Fatalf("expected child parent id %q, got %#v", parentID, response.Comments[1].ParentID)
 	}
 	if len(response.Comments[1].Attachments) != 1 || response.Comments[1].Attachments[0].Kind != "image" {
 		t.Fatalf("expected child comment attachment, got %#v", response.Comments[1].Attachments)
+	}
+}
+
+func TestListPostCommentsAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 1, 14, 0, 0, 0, time.UTC)
+	comments := &fakeCommentUseCase{
+		listResult: commentusecase.ListPostCommentsResult{
+			Comments: []commentusecase.Comment{newCommentResult("Anonymous", now)},
+			View:     "flat",
+			Sort:     "new",
+			Limit:    20,
+			MaxDepth: 6,
+		},
+	}
+	router := newCommentTestRouter(comments, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c/comments?limit=20", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !comments.listCalled {
+		t.Fatal("expected ListPostComments to be called")
+	}
+	if comments.listInput.ViewerID.String() != "" {
+		t.Fatalf("expected empty anonymous viewer, got %q", comments.listInput.ViewerID.String())
+	}
+}
+
+func TestListUserCommentsAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 1, 14, 15, 0, 0, time.UTC)
+	comments := &fakeCommentUseCase{
+		listUserResult: commentusecase.ListUserCommentsResult{
+			Comments: []commentusecase.Comment{newCommentResult("User comment", now)},
+			Limit:    20,
+		},
+	}
+	router := newCommentTestRouter(comments, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/users/alice/comments?limit=20", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !comments.listUserCalled {
+		t.Fatal("expected ListUserComments to be called")
+	}
+	if comments.listUserInput.Username != "alice" || comments.listUserInput.Limit != 20 {
+		t.Fatalf("unexpected list user comments input: %#v", comments.listUserInput)
+	}
+	if comments.listUserInput.ViewerID.String() != "" {
+		t.Fatalf("expected empty anonymous viewer, got %q", comments.listUserInput.ViewerID.String())
 	}
 }
 
@@ -166,7 +228,7 @@ func TestUpdateCommentReturnsUpdatedComment(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if response.Comment.Body != "Updated body" || response.Comment.BodyFormat != "markdown" {
+	if response.Comment.Body != "Updated body" || response.Comment.Format != "nexus_markdown" {
 		t.Fatalf("unexpected update response: %#v", response.Comment)
 	}
 }
@@ -206,6 +268,7 @@ func TestCommentRoutesRejectInvalidAuth(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c/comments", nil)
+	request.Header.Set("Authorization", "Bearer invalid-token")
 
 	router.ServeHTTP(recorder, request)
 
@@ -263,22 +326,26 @@ func TestCommentUseCaseErrorMapsToHTTPError(t *testing.T) {
 }
 
 type fakeCommentUseCase struct {
-	publishCalled bool
-	listCalled    bool
-	updateCalled  bool
-	deleteCalled  bool
-	publishInput  commentusecase.PublishCommentInput
-	listInput     commentusecase.ListPostCommentsInput
-	updateInput   commentusecase.UpdateCommentInput
-	deleteInput   commentusecase.DeleteCommentInput
-	publishResult commentusecase.PublishCommentResult
-	listResult    commentusecase.ListPostCommentsResult
-	updateResult  commentusecase.UpdateCommentResult
-	deleteResult  commentusecase.DeleteCommentResult
-	publishErr    error
-	listErr       error
-	updateErr     error
-	deleteErr     error
+	publishCalled  bool
+	listCalled     bool
+	listUserCalled bool
+	updateCalled   bool
+	deleteCalled   bool
+	publishInput   commentusecase.PublishCommentInput
+	listInput      commentusecase.ListPostCommentsInput
+	listUserInput  commentusecase.ListUserCommentsInput
+	updateInput    commentusecase.UpdateCommentInput
+	deleteInput    commentusecase.DeleteCommentInput
+	publishResult  commentusecase.PublishCommentResult
+	listResult     commentusecase.ListPostCommentsResult
+	listUserResult commentusecase.ListUserCommentsResult
+	updateResult   commentusecase.UpdateCommentResult
+	deleteResult   commentusecase.DeleteCommentResult
+	publishErr     error
+	listErr        error
+	listUserErr    error
+	updateErr      error
+	deleteErr      error
 }
 
 func (f *fakeCommentUseCase) PublishComment(ctx context.Context, input commentusecase.PublishCommentInput) (commentusecase.PublishCommentResult, error) {
@@ -291,6 +358,12 @@ func (f *fakeCommentUseCase) ListPostComments(ctx context.Context, input comment
 	f.listCalled = true
 	f.listInput = input
 	return f.listResult, f.listErr
+}
+
+func (f *fakeCommentUseCase) ListUserComments(ctx context.Context, input commentusecase.ListUserCommentsInput) (commentusecase.ListUserCommentsResult, error) {
+	f.listUserCalled = true
+	f.listUserInput = input
+	return f.listUserResult, f.listUserErr
 }
 
 func (f *fakeCommentUseCase) UpdateComment(ctx context.Context, input commentusecase.UpdateCommentInput) (commentusecase.UpdateCommentResult, error) {
@@ -318,9 +391,13 @@ func newCommentTestRouter(comments CommentUseCase, parser authhttp.AccessTokenPa
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
 
+	publicRead := router.Group("/api/v1")
+	publicRead.Use(authhttp.OptionalAuth(parser))
+	RegisterReadRoutes(publicRead, NewHandler(comments))
+
 	protected := router.Group("/api/v1")
 	protected.Use(authhttp.RequireAuth(parser))
-	RegisterRoutes(protected, NewHandler(comments))
+	RegisterWriteRoutes(protected, NewHandler(comments))
 
 	return router
 }
@@ -343,7 +420,7 @@ func newCommentResult(body string, now time.Time) commentusecase.Comment {
 		PostID:         "8f92e975-5323-4a58-bac1-1336b668183c",
 		AuthorID:       userdomain.NewGeneratedUserID().String(),
 		Body:           body,
-		BodyFormat:     "markdown",
+		Format:         "nexus_markdown",
 		Status:         "visible",
 		Depth:          0,
 		ReplyCount:     0,

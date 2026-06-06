@@ -34,6 +34,7 @@ func TestListCommunitiesReturnsCommunities(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities", nil)
+	request.Header.Set("Authorization", "Bearer invalid-token")
 	request.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(recorder, request)
@@ -54,6 +55,31 @@ func TestListCommunitiesReturnsCommunities(t *testing.T) {
 	}
 	if response.Communities[0].Slug != "public" || response.Communities[1].Slug != "campus" {
 		t.Fatalf("unexpected communities response: %#v", response.Communities)
+	}
+}
+
+func TestListCommunitiesAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		listResult: communityusecase.ListCommunitiesResult{
+			Communities: []communityusecase.Community{newCommunityResult("public", now)},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities", nil)
+	request.Header.Set("Authorization", "Bearer invalid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.listCalled {
+		t.Fatal("expected ListCommunities to be called")
 	}
 }
 
@@ -102,6 +128,7 @@ func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities", nil)
+	request.Header.Set("Authorization", "Bearer invalid-token")
 
 	router.ServeHTTP(recorder, request)
 
@@ -513,9 +540,13 @@ func newCommunityTestRouter(communities CommunityReadUseCase, applications Commu
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
 
+	publicRead := router.Group("/api/v1")
+	publicRead.Use(authhttp.OptionalAuth(parser))
+	RegisterReadRoutes(publicRead, NewHandler(communities, applications))
+
 	protected := router.Group("/api/v1")
 	protected.Use(authhttp.RequireAuth(parser))
-	RegisterRoutes(protected, NewHandler(communities, applications))
+	RegisterApplicationRoutes(protected, NewHandler(communities, applications))
 
 	return router
 }

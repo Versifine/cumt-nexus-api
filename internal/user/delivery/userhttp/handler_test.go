@@ -156,11 +156,92 @@ func TestMeUseCaseErrorMapsToHTTPError(t *testing.T) {
 	}
 }
 
+func TestGetPublicUserAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	createdAt := time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC)
+	publicUsers := &fakePublicUserUseCase{
+		result: userusecase.GetPublicUserResult{
+			User: userusecase.PublicUser{
+				ID:          userdomain.NewGeneratedUserID().String(),
+				Username:    "alice",
+				DisplayName: "alice",
+				Badges:      []string{},
+				Roles:       []string{},
+				Status:      "active",
+				Stats: userusecase.PublicUserStats{
+					PostCount:    2,
+					CommentCount: 3,
+				},
+				CreatedAt: createdAt,
+			},
+		},
+	}
+	router := newPublicUserTestRouter(publicUsers, &fakeAccessTokenParser{})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/users/alice", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !publicUsers.called {
+		t.Fatal("expected public user usecase to be called")
+	}
+	if publicUsers.input.Username != "alice" {
+		t.Fatalf("expected username alice, got %q", publicUsers.input.Username)
+	}
+
+	var response getPublicUserResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.User.Username != "alice" || response.User.Stats.PostCount != 2 || response.User.Stats.CommentCount != 3 {
+		t.Fatalf("unexpected public user response: %#v", response.User)
+	}
+}
+
+func TestPublicUserReadRejectsInvalidAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	publicUsers := &fakePublicUserUseCase{}
+	router := newPublicUserTestRouter(publicUsers, &fakeAccessTokenParser{})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/users/alice", nil)
+	request.Header.Set("Authorization", "Bearer invalid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	}
+	assertMeErrorCode(t, recorder, apperr.CodeUnauthenticated)
+	if publicUsers.called {
+		t.Fatal("public user usecase should not be called for invalid auth")
+	}
+}
+
 type fakeCurrentUserUseCase struct {
 	called bool
 	input  userusecase.CurrentUserInput
 	result userusecase.CurrentUserResult
 	err    error
+}
+
+type fakePublicUserUseCase struct {
+	called bool
+	input  userusecase.GetPublicUserInput
+	result userusecase.GetPublicUserResult
+	err    error
+}
+
+func (f *fakePublicUserUseCase) GetPublicUser(ctx context.Context, input userusecase.GetPublicUserInput) (userusecase.GetPublicUserResult, error) {
+	f.called = true
+	f.input = input
+	return f.result, f.err
 }
 
 func (f *fakeCurrentUserUseCase) GetCurrentUser(ctx context.Context, input userusecase.CurrentUserInput) (userusecase.CurrentUserResult, error) {
@@ -189,6 +270,17 @@ func newMeTestRouter(currentUser CurrentUserUseCase, parser authhttp.AccessToken
 	protected := router.Group("/api/v1")
 	protected.Use(authhttp.RequireAuth(parser))
 	RegisterRoutes(protected, NewHandler(currentUser))
+
+	return router
+}
+
+func newPublicUserTestRouter(publicUsers PublicUserUseCase, parser authhttp.AccessTokenParser) *gin.Engine {
+	router := gin.New()
+	router.Use(httpserver.ErrorMiddleware())
+
+	publicRead := router.Group("/api/v1")
+	publicRead.Use(authhttp.OptionalAuth(parser))
+	RegisterPublicRoutes(publicRead, NewHandler(&fakeCurrentUserUseCase{}, publicUsers))
 
 	return router
 }
