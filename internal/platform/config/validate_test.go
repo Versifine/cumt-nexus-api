@@ -60,6 +60,22 @@ func TestValidateRejectsInvalidObjectStorage(t *testing.T) {
 			message: "OBJECT_STORAGE_BUCKET",
 		},
 		{
+			name: "r2 public base url uses s3 endpoint",
+			mutate: func(cfg *Config) {
+				cfg.Storage = ObjectStorageConfig{
+					Provider:        "r2",
+					Endpoint:        "https://example.r2.cloudflarestorage.com",
+					Region:          "auto",
+					Bucket:          "cumt-nexus-media",
+					AccessKeyID:     "access-key",
+					SecretAccessKey: "secret-key",
+					PublicBaseURL:   "https://example.r2.cloudflarestorage.com/cumt-nexus-media",
+					ForcePathStyle:  true,
+				}
+			},
+			message: "OBJECT_STORAGE_PUBLIC_BASE_URL",
+		},
+		{
 			name: "empty local root",
 			mutate: func(cfg *Config) {
 				cfg.Storage.LocalRoot = ""

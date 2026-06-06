@@ -12,12 +12,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 - `/healthz` 不需要认证，只表示进程存活。
 - `/api/v1/auth/register` 和 `/api/v1/auth/login` 不需要认证。
-- 除 auth 入口外，当前 `/api/v1` 业务接口都需要 Bearer access token。
+- `GET /api/v1/posts`、`GET /api/v1/posts/:id` 和 `GET /api/v1/communities/:slug/posts` 支持匿名读取公开 visible 内容，也支持可选 Bearer 读取当前用户 `my_vote`。
+- 除 auth 入口和公开帖子读取入口外，当前 `/api/v1` 业务接口都需要 Bearer access token。
 - `GET /uploads/*filepath` 只在 `OBJECT_STORAGE_PROVIDER=local` 时注册，用于本地 local storage fallback 文件访问；生产/主方案使用 Cloudflare R2 public base URL。
 - 错误响应统一为 `{"error":{"code":"...","message":"..."}}`。
 - 认证失败统一返回 `unauthenticated`。
+- 可选 Bearer 的公开读取接口：无 `Authorization` 时按匿名读取且 `my_vote=0`；有合法 Bearer 时返回当前用户 `my_vote`；有格式错误、过期或签名错误的 Bearer 时仍返回 `unauthenticated`。
 
-该脚本校验 method/path 清单，也校验 Auth 列是否与源码中的 public route、local-only static route 和 `authhttp.RequireAuth` 保护分组一致；同时扫描 handler 中的 `c.Query(...)` 和 `parseOptionalIntQuery(c, "...")` 等 query key 读取，校验“查询参数约定”表没有缺失、过期或参数集合漂移。它不定义 request/response JSON schema，不校验每个业务权限场景的 staff/作者/资源可见性判断，也不校验查询参数枚举值或数值范围。
+该脚本校验 method/path 清单，也校验 Auth 列是否与源码中的 public route、local-only static route、`authhttp.OptionalAuth` 可选认证分组和 `authhttp.RequireAuth` 保护分组一致；同时扫描 handler 中的 `c.Query(...)` 和 `parseOptionalIntQuery(c, "...")` 等 query key 读取，校验“查询参数约定”表没有缺失、过期或参数集合漂移。它不定义 request/response JSON schema，不校验每个业务权限场景的 staff/作者/资源可见性判断，也不校验查询参数枚举值或数值范围。
 
 ## 路由清单
 
@@ -35,10 +37,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/community-applications/:id | Bearer | 平台 staff 查看社区申请详情 |
 | POST | /api/v1/community-applications/:id/approve | Bearer | 平台 staff 审批通过社区申请 |
 | POST | /api/v1/community-applications/:id/reject | Bearer | 平台 staff 拒绝社区申请 |
+| GET | /api/v1/communities/:slug/posts | optional Bearer | 社区帖子列表 |
+| GET | /api/v1/posts | optional Bearer | 全站帖子流 |
+| GET | /api/v1/posts/:id | optional Bearer | 帖子详情 |
 | POST | /api/v1/communities/:slug/posts | Bearer | 发帖 |
-| GET | /api/v1/communities/:slug/posts | Bearer | 社区帖子列表 |
-| GET | /api/v1/posts | Bearer | 全站帖子流 |
-| GET | /api/v1/posts/:id | Bearer | 帖子详情 |
 | PATCH | /api/v1/posts/:id | Bearer | 作者编辑帖子 |
 | DELETE | /api/v1/posts/:id | Bearer | 作者软删除帖子 |
 | POST | /api/v1/posts/:id/comments | Bearer | 发布评论 |
@@ -78,7 +80,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 常见边界：
 
-- 缺失、格式错误、过期或签名错误的 Bearer token：`unauthenticated`。
+- 需要认证的接口缺失 Bearer token：`unauthenticated`。
+- 所有携带格式错误、过期或签名错误 Bearer token 的请求：`unauthenticated`。
 - 无效 UUID、非法分页参数、非法枚举值或请求体格式错误：`invalid_argument`。
 - 非作者编辑/删除内容、非平台 staff 审核操作：`forbidden`。
 - 不存在或不可见的资源：`not_found`。

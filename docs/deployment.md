@@ -292,9 +292,10 @@ Cloudflare R2 使用 S3-compatible 配置，endpoint 使用账号级地址，buc
 ```env
 OBJECT_STORAGE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 OBJECT_STORAGE_BUCKET=<bucket-name>
+OBJECT_STORAGE_PUBLIC_BASE_URL=<public-media-base-url>
 ```
 
-不要把 bucket 名拼进 endpoint，不要提交真实 access key 或 secret key。
+不要把 bucket 名拼进 endpoint，不要提交真实 access key 或 secret key。`OBJECT_STORAGE_PUBLIC_BASE_URL` 必须填写浏览器可公开读取的图片 base URL，例如 R2 public development URL 或自定义域名；不要填写 `https://<account-id>.r2.cloudflarestorage.com` 这个 S3 API endpoint。
 
 ## 当前阶段建议
 

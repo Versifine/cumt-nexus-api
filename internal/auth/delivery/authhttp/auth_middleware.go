@@ -32,6 +32,32 @@ func RequireAuth(parser AccessTokenParser) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+func OptionalAuth(parser AccessTokenParser) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("Authorization")) == "" {
+			c.Next()
+			return
+		}
+
+		rawToken, err := extractBearerToken(c)
+		if err != nil {
+			c.Error(err)
+			c.Abort()
+			return
+		}
+		claims, err := parser.ParseAccessToken(rawToken)
+		if err != nil || claims == nil || claims.UserID == "" {
+			_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "invalid token"))
+			c.Abort()
+			return
+		}
+		ctx := authcontext.WithCurrentUserID(c.Request.Context(), claims.UserID)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
+
 func extractBearerToken(c *gin.Context) (string, error) {
 	authHeader := c.GetHeader("Authorization")
 	if strings.TrimSpace(authHeader) == "" {

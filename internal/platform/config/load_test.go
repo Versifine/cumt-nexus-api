@@ -190,6 +190,27 @@ func TestLoadRejectsMissingR2Credentials(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsR2PublicBaseURLUsingS3Endpoint(t *testing.T) {
+	clearConfigEnv(t)
+	t.Chdir(t.TempDir())
+	setRequiredEnv(t)
+	t.Setenv("OBJECT_STORAGE_PROVIDER", "r2")
+	t.Setenv("OBJECT_STORAGE_ENDPOINT", "https://example.r2.cloudflarestorage.com")
+	t.Setenv("OBJECT_STORAGE_REGION", "auto")
+	t.Setenv("OBJECT_STORAGE_BUCKET", "cumt-nexus-media")
+	t.Setenv("OBJECT_STORAGE_ACCESS_KEY_ID", "access-key")
+	t.Setenv("OBJECT_STORAGE_SECRET_ACCESS_KEY", "secret-key")
+	t.Setenv("OBJECT_STORAGE_PUBLIC_BASE_URL", "https://example.r2.cloudflarestorage.com/cumt-nexus-media")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected Load error")
+	}
+	if !strings.Contains(err.Error(), "OBJECT_STORAGE_PUBLIC_BASE_URL") {
+		t.Fatalf("expected error containing OBJECT_STORAGE_PUBLIC_BASE_URL, got %v", err)
+	}
+}
+
 func TestLoadRejectsInvalidPrimitiveValues(t *testing.T) {
 	clearConfigEnv(t)
 	t.Chdir(t.TempDir())

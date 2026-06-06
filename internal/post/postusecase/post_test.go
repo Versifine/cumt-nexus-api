@@ -305,6 +305,46 @@ func TestListLatestPostsReturnsVoteView(t *testing.T) {
 	}
 }
 
+func TestListLatestPostsAnonymousViewerSkipsMyVoteLookup(t *testing.T) {
+	communityID := communitydomain.NewGeneratedCommunityID()
+	post := mustPost(t, communityID, userdomain.NewGeneratedUserID(), "Latest", time.Now().UTC())
+	posts := &fakePostRepository{
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+			return []postdomain.Post{*post}, nil
+		},
+	}
+	votes := &fakeVoteRepository{
+		summaries: map[postdomain.PostID]votedomain.PostVoteSummary{
+			post.ID(): {
+				PostID:        post.ID(),
+				UpvoteCount:   5,
+				DownvoteCount: 2,
+			},
+		},
+		myVotes: map[postdomain.PostID]votedomain.VoteValue{
+			post.ID(): votedomain.VoteValueUp,
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now, votes)
+
+	result, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{})
+	if err != nil {
+		t.Fatalf("ListLatestPosts returned error: %v", err)
+	}
+	if len(result.Posts) != 1 {
+		t.Fatalf("expected one post, got %d", len(result.Posts))
+	}
+	if result.Posts[0].UpvoteCount != 5 || result.Posts[0].DownvoteCount != 2 || result.Posts[0].Score != 3 || result.Posts[0].MyVote != 0 {
+		t.Fatalf("unexpected anonymous vote view: %#v", result.Posts[0])
+	}
+	if !votes.summarizeCalled {
+		t.Fatal("expected vote summary lookup")
+	}
+	if votes.findByUserCalled {
+		t.Fatal("expected no viewer vote lookup for anonymous viewer")
+	}
+}
+
 func TestListLatestPostsPassesHotSort(t *testing.T) {
 	var gotSort PostListSort
 	posts := &fakePostRepository{

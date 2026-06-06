@@ -43,7 +43,8 @@ function Add-RoutesFromFile {
         [System.Collections.Generic.Dictionary[string, object]]$Routes,
         [string]$Path,
         [string]$Prefix,
-        [string]$Auth
+        [string]$Auth,
+        [string[]]$IncludeHandlers = @()
     )
 
     $content = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $repo $Path)
@@ -52,6 +53,9 @@ function Add-RoutesFromFile {
         $method = $match.Groups[1].Value
         $routePath = $Prefix + $match.Groups[2].Value
         $handler = $match.Groups[3].Value
+        if ($IncludeHandlers.Count -gt 0 -and $IncludeHandlers -notcontains $handler) {
+            continue
+        }
         Add-Route -Routes $Routes -Method $method -Path $routePath -Auth $Auth -Handler $handler -Source $Path
     }
 }
@@ -141,7 +145,6 @@ Add-RoutesFromFile -Routes $actualRoutes -Path 'internal/auth/delivery/authhttp/
 $protectedRouteFiles = @(
     'internal/user/delivery/userhttp/handler.go',
     'internal/community/delivery/communityhttp/handler.go',
-    'internal/post/delivery/posthttp/handler.go',
     'internal/comment/delivery/commenthttp/handler.go',
     'internal/vote/delivery/votehttp/handler.go',
     'internal/moderation/delivery/moderationhttp/handler.go',
@@ -153,6 +156,20 @@ $protectedRouteFiles = @(
 foreach ($file in $protectedRouteFiles) {
     Add-RoutesFromFile -Routes $actualRoutes -Path $file -Prefix '/api/v1' -Auth 'Bearer'
 }
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/post/delivery/posthttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'optional Bearer' `
+    -IncludeHandlers @('ListCommunityPosts', 'ListLatestPosts', 'GetPost')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/post/delivery/posthttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'Bearer' `
+    -IncludeHandlers @('PublishPost', 'UpdatePost', 'DeletePost')
 
 if (-not (Test-Path -LiteralPath $docFullPath)) {
     throw "contract doc not found: $DocPath"

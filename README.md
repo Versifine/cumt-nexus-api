@@ -113,15 +113,17 @@ OBJECT_STORAGE_PUBLIC_BASE_URL=<public-media-base-url>
 OBJECT_STORAGE_FORCE_PATH_STYLE=true
 ```
 
-不要把 bucket 名拼进 `OBJECT_STORAGE_ENDPOINT`，也不要提交真实 access key 或 secret key。
+不要把 bucket 名拼进 `OBJECT_STORAGE_ENDPOINT`，也不要提交真实 access key 或 secret key。`OBJECT_STORAGE_PUBLIC_BASE_URL` 必须是浏览器可公开读取图片的 base URL，例如 R2 public development URL 或自定义域名；不要填写 `https://<account-id>.r2.cloudflarestorage.com` 这个 S3 API endpoint。
 
 ## API 概览
 
-所有 `/api/v1` 业务接口除注册、登录外都需要：
+写操作、权限操作和用户态读取需要：
 
 ```http
 Authorization: Bearer <access_token>
 ```
+
+公开帖子流和帖子详情支持匿名读取；如果请求携带 Bearer token，后端会返回当前用户视角的 `my_vote`，无 token 时 `my_vote=0`。格式错误、过期或签名错误的 token 仍返回 `unauthenticated`，不会静默降级为匿名。
 
 ### Auth
 
@@ -146,10 +148,10 @@ POST /api/v1/community-applications/:id/reject
 ### Posts
 
 ```text
+GET    /api/v1/communities/:slug/posts  # public, optional Bearer
+GET    /api/v1/posts                    # public, optional Bearer
+GET    /api/v1/posts/:id                # public, optional Bearer
 POST   /api/v1/communities/:slug/posts
-GET    /api/v1/communities/:slug/posts
-GET    /api/v1/posts
-GET    /api/v1/posts/:id
 PATCH  /api/v1/posts/:id
 DELETE /api/v1/posts/:id
 PUT    /api/v1/posts/:id/vote

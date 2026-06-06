@@ -118,6 +118,131 @@ func TestRequireAuthStoresCurrentUserID(t *testing.T) {
 	}
 }
 
+func TestOptionalAuthAllowsMissingAuthorization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	parser := &fakeAccessTokenParser{}
+	var nextCalled bool
+	router := newOptionalAuthTestRouter(parser, func(c *gin.Context) {
+		nextCalled = true
+
+		if _, ok := authcontext.CurrentUserID(c.Request.Context()); ok {
+			t.Fatal("expected no current user id for anonymous request")
+		}
+
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/public", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, recorder.Code, recorder.Body.String())
+	}
+	if !nextCalled {
+		t.Fatal("expected next handler to be called")
+	}
+	if parser.called {
+		t.Fatal("expected parser not to be called for missing authorization")
+	}
+}
+
+func TestOptionalAuthStoresCurrentUserID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	parser := &fakeAccessTokenParser{
+		claims: &authtoken.AccessTokenClaims{
+			UserID: userID,
+		},
+	}
+	var nextCalled bool
+	router := newOptionalAuthTestRouter(parser, func(c *gin.Context) {
+		nextCalled = true
+
+		gotUserID, ok := authcontext.CurrentUserID(c.Request.Context())
+		if !ok {
+			t.Fatal("expected current user id in context")
+		}
+		if gotUserID != userID {
+			t.Fatalf("expected current user id %q, got %q", userID.String(), gotUserID.String())
+		}
+
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/public", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, recorder.Code, recorder.Body.String())
+	}
+	if !nextCalled {
+		t.Fatal("expected next handler to be called")
+	}
+	if !parser.called {
+		t.Fatal("expected parser to be called")
+	}
+}
+
+func TestOptionalAuthRejectsInvalidAuthorization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name          string
+		authorization string
+		parserErr     error
+		wantCalled    bool
+	}{
+		{
+			name:          "non bearer authorization header",
+			authorization: "Basic abc",
+			wantCalled:    false,
+		},
+		{
+			name:          "empty bearer token",
+			authorization: "Bearer ",
+			wantCalled:    false,
+		},
+		{
+			name:          "parser error",
+			authorization: "Bearer invalid-token",
+			parserErr:     errors.New("parse failed"),
+			wantCalled:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &fakeAccessTokenParser{
+				err: tt.parserErr,
+			}
+			router := newOptionalAuthTestRouter(parser, func(c *gin.Context) {
+				t.Fatal("next handler should not be called")
+			})
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/public", nil)
+			request.Header.Set("Authorization", tt.authorization)
+
+			router.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+			}
+			assertErrorCode(t, recorder, apperr.CodeUnauthenticated)
+			if parser.called != tt.wantCalled {
+				t.Fatalf("expected parser called %v, got %v", tt.wantCalled, parser.called)
+			}
+		})
+	}
+}
+
 type fakeAccessTokenParser struct {
 	called   bool
 	rawToken string
@@ -135,6 +260,13 @@ func newRequireAuthTestRouter(parser AccessTokenParser, handler gin.HandlerFunc)
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
 	router.GET("/protected", RequireAuth(parser), handler)
+	return router
+}
+
+func newOptionalAuthTestRouter(parser AccessTokenParser, handler gin.HandlerFunc) *gin.Engine {
+	router := gin.New()
+	router.Use(httpserver.ErrorMiddleware())
+	router.GET("/public", OptionalAuth(parser), handler)
 	return router
 }
 

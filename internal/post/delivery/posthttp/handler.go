@@ -88,10 +88,18 @@ func NewHandler(posts PostUseCase) *Handler {
 }
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
-	group.POST("/communities/:slug/posts", handler.PublishPost)
+	RegisterReadRoutes(group, handler)
+	RegisterWriteRoutes(group, handler)
+}
+
+func RegisterReadRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities/:slug/posts", handler.ListCommunityPosts)
 	group.GET("/posts", handler.ListLatestPosts)
 	group.GET("/posts/:id", handler.GetPost)
+}
+
+func RegisterWriteRoutes(group *gin.RouterGroup, handler *Handler) {
+	group.POST("/communities/:slug/posts", handler.PublishPost)
 	group.PATCH("/posts/:id", handler.UpdatePost)
 	group.DELETE("/posts/:id", handler.DeletePost)
 }
@@ -130,12 +138,7 @@ func (h *Handler) PublishPost(c *gin.Context) {
 }
 
 func (h *Handler) ListCommunityPosts(c *gin.Context) {
-	userID, ok := authcontext.CurrentUserID(c.Request.Context())
-	if !ok {
-		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
-		c.Abort()
-		return
-	}
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
 
 	limit, err := parseOptionalIntQuery(c, "limit")
 	if err != nil {
@@ -176,12 +179,7 @@ func (h *Handler) ListCommunityPosts(c *gin.Context) {
 }
 
 func (h *Handler) ListLatestPosts(c *gin.Context) {
-	userID, ok := authcontext.CurrentUserID(c.Request.Context())
-	if !ok {
-		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
-		c.Abort()
-		return
-	}
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
 
 	limit, err := parseOptionalIntQuery(c, "limit")
 	if err != nil {
@@ -221,12 +219,7 @@ func (h *Handler) ListLatestPosts(c *gin.Context) {
 }
 
 func (h *Handler) GetPost(c *gin.Context) {
-	userID, ok := authcontext.CurrentUserID(c.Request.Context())
-	if !ok {
-		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
-		c.Abort()
-		return
-	}
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
 
 	result, err := h.posts.GetPost(c.Request.Context(), postusecase.GetPostInput{
 		PostID:   c.Param("id"),

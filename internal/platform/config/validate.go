@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -94,6 +95,8 @@ func validate(cfg *Config) error {
 		}
 		if strings.TrimSpace(cfg.Storage.PublicBaseURL) == "" {
 			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_PUBLIC_BASE_URL is required for r2 storage"))
+		} else if usesR2S3EndpointAsPublicBaseURL(cfg.Storage.PublicBaseURL) {
+			errs = append(errs, fmt.Errorf("OBJECT_STORAGE_PUBLIC_BASE_URL must be an R2 public development URL or custom media domain, not the R2 S3 API endpoint"))
 		}
 	default:
 		errs = append(errs, fmt.Errorf("OBJECT_STORAGE_PROVIDER must be one of local/r2"))
@@ -112,4 +115,14 @@ func validate(cfg *Config) error {
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+func usesR2S3EndpointAsPublicBaseURL(rawURL string) bool {
+	parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+
+	host := strings.ToLower(parsedURL.Hostname())
+	return host == "r2.cloudflarestorage.com" || strings.HasSuffix(host, ".r2.cloudflarestorage.com")
 }

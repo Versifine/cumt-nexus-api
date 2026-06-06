@@ -89,7 +89,7 @@ go test ./internal/platform/config -run TestLoad -v
 | `OBJECT_STORAGE_BUCKET` | `r2` 必需 | 无 | R2 bucket |
 | `OBJECT_STORAGE_ACCESS_KEY_ID` | `r2` 必需 | 无 | R2 access key id |
 | `OBJECT_STORAGE_SECRET_ACCESS_KEY` | `r2` 必需 | 无 | R2 secret access key |
-| `OBJECT_STORAGE_PUBLIC_BASE_URL` | `r2` 必需 | local 空值时补 `http://localhost:8080/uploads` | 图片访问 base URL |
+| `OBJECT_STORAGE_PUBLIC_BASE_URL` | `r2` 必需 | local 空值时补 `http://localhost:8080/uploads` | 浏览器公开读取图片的 base URL；R2 不能使用 S3 API endpoint |
 | `OBJECT_STORAGE_FORCE_PATH_STYLE` | 否 | `true` | R2 S3-compatible client 使用 path-style |
 | `OBJECT_STORAGE_LOCAL_ROOT` | 否 | `var/uploads` | local fallback 文件根目录；最终配置不能为空 |
 

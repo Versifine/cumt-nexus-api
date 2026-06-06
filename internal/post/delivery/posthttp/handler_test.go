@@ -123,6 +123,34 @@ func TestListCommunityPostsReturnsPosts(t *testing.T) {
 	}
 }
 
+func TestListCommunityPostsAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)
+	posts := &fakePostUseCase{
+		listResult: postusecase.ListCommunityPostsResult{
+			Posts: []postusecase.Post{newPostResult("Anonymous", now)},
+			Limit: 20,
+		},
+	}
+	router := newPostTestRouter(posts, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/posts?limit=20", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !posts.listCalled {
+		t.Fatal("expected ListCommunityPosts to be called")
+	}
+	if posts.listInput.ViewerID.String() != "" {
+		t.Fatalf("expected empty anonymous viewer, got %q", posts.listInput.ViewerID.String())
+	}
+}
+
 func TestGetPostReturnsPost(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -152,6 +180,33 @@ func TestGetPostReturnsPost(t *testing.T) {
 	}
 	if posts.getInput.ViewerID != userID {
 		t.Fatalf("expected viewer %q, got %q", userID.String(), posts.getInput.ViewerID.String())
+	}
+}
+
+func TestGetPostAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 1, 13, 0, 0, 0, time.UTC)
+	posts := &fakePostUseCase{
+		getResult: postusecase.GetPostResult{
+			Post: newPostResult("Anonymous", now),
+		},
+	}
+	router := newPostTestRouter(posts, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !posts.getCalled {
+		t.Fatal("expected GetPost to be called")
+	}
+	if posts.getInput.ViewerID.String() != "" {
+		t.Fatalf("expected empty anonymous viewer, got %q", posts.getInput.ViewerID.String())
 	}
 }
 
@@ -274,6 +329,34 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	}
 }
 
+func TestListLatestPostsAllowsAnonymousViewer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 1, 13, 30, 0, 0, time.UTC)
+	posts := &fakePostUseCase{
+		listLatestResult: postusecase.ListLatestPostsResult{
+			Posts: []postusecase.Post{newPostResult("Latest anonymous", now)},
+			Limit: 20,
+		},
+	}
+	router := newPostTestRouter(posts, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts?sort=new&limit=20", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !posts.listLatestCalled {
+		t.Fatal("expected ListLatestPosts to be called")
+	}
+	if posts.listLatestInput.ViewerID.String() != "" {
+		t.Fatalf("expected empty anonymous viewer, got %q", posts.listLatestInput.ViewerID.String())
+	}
+}
+
 func TestListLatestPostsMapsInvalidSortError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -297,7 +380,7 @@ func TestListLatestPostsMapsInvalidSortError(t *testing.T) {
 	assertPostErrorCode(t, recorder, apperr.CodeInvalidArgument)
 }
 
-func TestPostRoutesRejectInvalidAuth(t *testing.T) {
+func TestPostReadRoutesRejectInvalidAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	posts := &fakePostUseCase{}
@@ -305,6 +388,7 @@ func TestPostRoutesRejectInvalidAuth(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/posts", nil)
+	request.Header.Set("Authorization", "Bearer invalid-token")
 
 	router.ServeHTTP(recorder, request)
 
@@ -314,6 +398,30 @@ func TestPostRoutesRejectInvalidAuth(t *testing.T) {
 	assertPostErrorCode(t, recorder, apperr.CodeUnauthenticated)
 	if posts.publishCalled || posts.listCalled || posts.listLatestCalled || posts.getCalled || posts.updateCalled || posts.deleteCalled {
 		t.Fatal("post usecase should not be called for invalid auth")
+	}
+}
+
+func TestPostWriteRoutesRequireAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	posts := &fakePostUseCase{}
+	router := newPostTestRouter(posts, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/posts", bytes.NewBufferString(`{
+		"title": "Hello",
+		"body": "Post body"
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	}
+	assertPostErrorCode(t, recorder, apperr.CodeUnauthenticated)
+	if posts.publishCalled || posts.listCalled || posts.listLatestCalled || posts.getCalled || posts.updateCalled || posts.deleteCalled {
+		t.Fatal("post usecase should not be called without auth on write route")
 	}
 }
 
@@ -438,9 +546,14 @@ func newPostTestRouter(posts PostUseCase, parser authhttp.AccessTokenParser) *gi
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
 
+	handler := NewHandler(posts)
+	publicRead := router.Group("/api/v1")
+	publicRead.Use(authhttp.OptionalAuth(parser))
+	RegisterReadRoutes(publicRead, handler)
+
 	protected := router.Group("/api/v1")
 	protected.Use(authhttp.RequireAuth(parser))
-	RegisterRoutes(protected, NewHandler(posts))
+	RegisterWriteRoutes(protected, handler)
 
 	return router
 }

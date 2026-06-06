@@ -62,6 +62,37 @@ function Assert-True {
     }
 }
 
+function Assert-PublicImageReadable {
+    param([string]$URL)
+
+    $method = 'HEAD'
+    try {
+        $response = Invoke-WebRequest -Uri $URL -Method Head -MaximumRedirection 3 -TimeoutSec 15 -UseBasicParsing
+    } catch {
+        $method = 'GET'
+        try {
+            $response = Invoke-WebRequest -Uri $URL -Method Get -MaximumRedirection 3 -TimeoutSec 15 -UseBasicParsing
+        } catch {
+            throw "attachment public url is not readable: $URL error=$($_.Exception.Message)"
+        }
+    }
+
+    Assert-True ($response.StatusCode -eq 200) "attachment public url returned HTTP $($response.StatusCode): $URL"
+    $contentType = $response.Headers['Content-Type']
+    if ($contentType -is [array]) {
+        $contentType = $contentType[0]
+    }
+    $contentType = [string]$contentType
+    Assert-True (-not [string]::IsNullOrWhiteSpace($contentType)) "attachment public url did not return Content-Type: $URL"
+    Assert-True ($contentType.StartsWith('image/')) "attachment public url returned non-image Content-Type $contentType`: $URL"
+
+    [pscustomobject]@{
+        method = $method
+        status_code = $response.StatusCode
+        content_type = $contentType
+    }
+}
+
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $dotEnv = Read-DotEnv -Path (Join-Path $repo '.env')
 
@@ -191,6 +222,7 @@ try {
 
     $publicBase = $r2.PublicBaseURL.TrimEnd('/')
     Assert-True ($upload.attachment.url.StartsWith($publicBase + '/')) "attachment url does not use configured public base url"
+    $publicURLCheck = Assert-PublicImageReadable -URL $upload.attachment.url
 
     $postBody = @{
         title = 'Stage 15 R2 smoke post'
@@ -210,6 +242,7 @@ try {
         post_id = $postID
         attachment_id = $attachmentID
         attachment_url = $upload.attachment.url
+        public_url_check = $publicURLCheck
         storage_provider = 'r2'
         base_url = $baseURL
     } | ConvertTo-Json -Compress
