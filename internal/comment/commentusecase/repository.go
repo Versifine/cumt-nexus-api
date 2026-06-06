@@ -9,6 +9,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
 
 type CommentRepository interface {
@@ -31,6 +32,13 @@ type PublicUserFinder interface {
 
 type CommentMetadataRepository interface {
 	LoadMetadataByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]CommentMetadata, error)
+}
+
+type CommentVoteRepository interface {
+	UpsertCommentVote(ctx context.Context, vote votedomain.CommentVote) error
+	DeleteCommentVote(ctx context.Context, commentID commentdomain.CommentID, userID userdomain.UserID) error
+	FindCommentVotesByIDsAndUser(ctx context.Context, commentIDs []commentdomain.CommentID, userID userdomain.UserID) (map[commentdomain.CommentID]votedomain.VoteValue, error)
+	SummarizeCommentVotesByIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]votedomain.CommentVoteSummary, error)
 }
 
 type CommentMetadata struct {

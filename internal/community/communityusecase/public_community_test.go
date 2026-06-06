@@ -126,7 +126,7 @@ func TestListCommunitiesMapsActivePublicCommunities(t *testing.T) {
 	}
 	uc := NewCommunityReadUseCase(repo)
 
-	result, err := uc.ListCommunities(context.Background())
+	result, err := uc.ListCommunities(context.Background(), ListCommunitiesInput{})
 	if err != nil {
 		t.Fatalf("ListCommunities returned error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestListCommunitiesWrapsRepositoryError(t *testing.T) {
 	}
 	uc := NewCommunityReadUseCase(repo)
 
-	_, err := uc.ListCommunities(context.Background())
+	_, err := uc.ListCommunities(context.Background(), ListCommunitiesInput{})
 	if !errors.Is(err, repoErr) {
 		t.Fatalf("expected repository error to be wrapped, got %v", err)
 	}
@@ -179,6 +179,35 @@ func TestGetCommunityBySlugReturnsCommunity(t *testing.T) {
 	}
 	if result.Community.Slug != "campus" {
 		t.Fatalf("expected response slug campus, got %q", result.Community.Slug)
+	}
+}
+
+func TestGetCommunityBySlugReturnsViewerFollowState(t *testing.T) {
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	expected := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return expected, nil
+		},
+		followedCommunityIDs: map[communitydomain.CommunityID]bool{
+			expected.ID(): true,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+
+	result, err := uc.GetCommunityBySlug(context.Background(), GetCommunityInput{Slug: "campus", ViewerID: viewerID})
+	if err != nil {
+		t.Fatalf("GetCommunityBySlug returned error: %v", err)
+	}
+	if !result.Community.ViewerIsFollowing {
+		t.Fatal("expected viewer_is_following=true")
+	}
+	if !result.Community.ViewerPermissions.CanPost {
+		t.Fatal("expected logged-in viewer can_post=true for active public community")
+	}
+	if !repo.findFollowedCalled {
+		t.Fatal("expected followed community lookup")
 	}
 }
 
@@ -250,11 +279,45 @@ func TestCanPostInCommunityRejectsNonPostableCommunity(t *testing.T) {
 	}
 }
 
+func TestFollowCommunityPersistsReadableCommunityFollow(t *testing.T) {
+	now := time.Date(2026, 6, 6, 10, 30, 0, 0, time.UTC)
+	userID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		followCommunityFunc: func(ctx context.Context, communityID communitydomain.CommunityID, gotUserID userdomain.UserID, followedAt time.Time) error {
+			if communityID != community.ID() || gotUserID != userID || !followedAt.Equal(now) {
+				t.Fatalf("unexpected follow args: community=%q user=%q at=%s", communityID.String(), gotUserID.String(), followedAt)
+			}
+			return nil
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.now = func() time.Time { return now }
+
+	if _, err := uc.FollowCommunity(context.Background(), FollowCommunityInput{Slug: "campus", UserID: userID}); err != nil {
+		t.Fatalf("FollowCommunity returned error: %v", err)
+	}
+	if !repo.followCommunityCalled {
+		t.Fatal("expected follow repository call")
+	}
+}
+
 type fakeCommunityRepository struct {
-	createFunc           func(ctx context.Context, community communitydomain.Community) error
-	findByIDFunc         func(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error)
-	findBySlugFunc       func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error)
-	listActivePublicFunc func(ctx context.Context) ([]communitydomain.Community, error)
+	createFunc                     func(ctx context.Context, community communitydomain.Community) error
+	findByIDFunc                   func(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error)
+	findBySlugFunc                 func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error)
+	listActivePublicFunc           func(ctx context.Context) ([]communitydomain.Community, error)
+	followCommunityFunc            func(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, now time.Time) error
+	deleteCommunityFollowFunc      func(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID) error
+	listFollowedActivePublicFunc   func(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]communitydomain.Community, error)
+	followCommunityCalled          bool
+	deleteCommunityFollowCalled    bool
+	listFollowedActivePublicCalled bool
+	findFollowedCalled             bool
+	followedCommunityIDs           map[communitydomain.CommunityID]bool
 }
 
 func (f *fakeCommunityRepository) Create(ctx context.Context, community communitydomain.Community) error {
@@ -283,6 +346,38 @@ func (f *fakeCommunityRepository) ListActivePublic(ctx context.Context) ([]commu
 		return f.listActivePublicFunc(ctx)
 	}
 	return nil, nil
+}
+
+func (f *fakeCommunityRepository) FollowCommunity(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, now time.Time) error {
+	f.followCommunityCalled = true
+	if f.followCommunityFunc != nil {
+		return f.followCommunityFunc(ctx, communityID, userID, now)
+	}
+	return nil
+}
+
+func (f *fakeCommunityRepository) DeleteCommunityFollow(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID) error {
+	f.deleteCommunityFollowCalled = true
+	if f.deleteCommunityFollowFunc != nil {
+		return f.deleteCommunityFollowFunc(ctx, communityID, userID)
+	}
+	return nil
+}
+
+func (f *fakeCommunityRepository) ListFollowedActivePublic(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]communitydomain.Community, error) {
+	f.listFollowedActivePublicCalled = true
+	if f.listFollowedActivePublicFunc != nil {
+		return f.listFollowedActivePublicFunc(ctx, userID, limit, offset)
+	}
+	return nil, nil
+}
+
+func (f *fakeCommunityRepository) FindFollowedCommunityIDsByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]bool, error) {
+	f.findFollowedCalled = true
+	if f.followedCommunityIDs == nil {
+		return map[communitydomain.CommunityID]bool{}, nil
+	}
+	return f.followedCommunityIDs, nil
 }
 
 func mustSystemCommunity(t *testing.T, rawSlug string, now time.Time) *communitydomain.Community {

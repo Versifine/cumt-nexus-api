@@ -281,6 +281,68 @@ func TestDeletePostReturnsNoContent(t *testing.T) {
 	}
 }
 
+func TestSavePostReturnsNoContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	posts := &fakePostUseCase{}
+	router := newPostTestRouter(posts, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c/save", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, recorder.Code, recorder.Body.String())
+	}
+	if !posts.saveCalled {
+		t.Fatal("expected SavePost to be called")
+	}
+	if posts.saveInput.PostID != "8f92e975-5323-4a58-bac1-1336b668183c" || posts.saveInput.UserID != userID {
+		t.Fatalf("unexpected save input: %#v", posts.saveInput)
+	}
+}
+
+func TestListSavedPostsReturnsPosts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC)
+	posts := &fakePostUseCase{
+		listSavedResult: postusecase.ListSavedPostsResult{
+			Posts:  []postusecase.Post{newPostResult("Saved", now)},
+			Limit:  20,
+			Offset: 5,
+		},
+	}
+	router := newPostTestRouter(posts, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/saved-posts?limit=20&offset=5", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !posts.listSavedCalled {
+		t.Fatal("expected ListSavedPosts to be called")
+	}
+	if posts.listSavedInput.UserID != userID || posts.listSavedInput.Limit != 20 || posts.listSavedInput.Offset != 5 {
+		t.Fatalf("unexpected list saved input: %#v", posts.listSavedInput)
+	}
+	var response listCommunityPostsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Posts) != 1 || response.Posts[0].Title != "Saved" {
+		t.Fatalf("unexpected saved posts response: %#v", response.Posts)
+	}
+}
+
 func TestListLatestPostsReturnsPosts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -506,28 +568,40 @@ type fakePostUseCase struct {
 	listCalled       bool
 	listLatestCalled bool
 	listUserCalled   bool
+	listSavedCalled  bool
 	getCalled        bool
+	saveCalled       bool
+	deleteSaveCalled bool
 	updateCalled     bool
 	deleteCalled     bool
 	publishInput     postusecase.PublishPostInput
 	listInput        postusecase.ListCommunityPostsInput
 	listLatestInput  postusecase.ListLatestPostsInput
 	listUserInput    postusecase.ListUserPostsInput
+	listSavedInput   postusecase.ListSavedPostsInput
 	getInput         postusecase.GetPostInput
+	saveInput        postusecase.SavePostInput
+	deleteSaveInput  postusecase.DeletePostSaveInput
 	updateInput      postusecase.UpdatePostInput
 	deleteInput      postusecase.DeletePostInput
 	publishResult    postusecase.PublishPostResult
 	listResult       postusecase.ListCommunityPostsResult
 	listLatestResult postusecase.ListLatestPostsResult
 	listUserResult   postusecase.ListUserPostsResult
+	listSavedResult  postusecase.ListSavedPostsResult
 	getResult        postusecase.GetPostResult
+	saveResult       postusecase.SavePostResult
+	deleteSaveResult postusecase.DeletePostSaveResult
 	updateResult     postusecase.UpdatePostResult
 	deleteResult     postusecase.DeletePostResult
 	publishErr       error
 	listErr          error
 	listLatestErr    error
 	listUserErr      error
+	listSavedErr     error
 	getErr           error
+	saveErr          error
+	deleteSaveErr    error
 	updateErr        error
 	deleteErr        error
 }
@@ -556,10 +630,28 @@ func (f *fakePostUseCase) ListUserPosts(ctx context.Context, input postusecase.L
 	return f.listUserResult, f.listUserErr
 }
 
+func (f *fakePostUseCase) ListSavedPosts(ctx context.Context, input postusecase.ListSavedPostsInput) (postusecase.ListSavedPostsResult, error) {
+	f.listSavedCalled = true
+	f.listSavedInput = input
+	return f.listSavedResult, f.listSavedErr
+}
+
 func (f *fakePostUseCase) GetPost(ctx context.Context, input postusecase.GetPostInput) (postusecase.GetPostResult, error) {
 	f.getCalled = true
 	f.getInput = input
 	return f.getResult, f.getErr
+}
+
+func (f *fakePostUseCase) SavePost(ctx context.Context, input postusecase.SavePostInput) (postusecase.SavePostResult, error) {
+	f.saveCalled = true
+	f.saveInput = input
+	return f.saveResult, f.saveErr
+}
+
+func (f *fakePostUseCase) DeletePostSave(ctx context.Context, input postusecase.DeletePostSaveInput) (postusecase.DeletePostSaveResult, error) {
+	f.deleteSaveCalled = true
+	f.deleteSaveInput = input
+	return f.deleteSaveResult, f.deleteSaveErr
 }
 
 func (f *fakePostUseCase) UpdatePost(ctx context.Context, input postusecase.UpdatePostInput) (postusecase.UpdatePostResult, error) {

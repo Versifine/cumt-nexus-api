@@ -18,6 +18,7 @@ import (
 
 var _ postusecase.PostRepository = (*PostgresPostRepository)(nil)
 var _ postusecase.PostMetadataRepository = (*PostgresPostRepository)(nil)
+var _ postusecase.PostSaveRepository = (*PostgresPostRepository)(nil)
 
 type PostgresPostRepository struct {
 	pool *pgxpool.Pool
@@ -505,6 +506,157 @@ func postIDStrings(postIDs []postdomain.PostID) []string {
 		rawIDs = append(rawIDs, postID.String())
 	}
 	return rawIDs
+}
+
+func (repo *PostgresPostRepository) SavePost(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID, now time.Time) error {
+	const query = `
+		INSERT INTO post_saves (
+			post_id,
+			user_id,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3)
+		ON CONFLICT (post_id, user_id) DO NOTHING
+	`
+
+	if _, err := repo.pool.Exec(ctx, query, postID.String(), userID.String(), now); err != nil {
+		return mapPostgresWriteError("save post", err)
+	}
+	return nil
+}
+
+func (repo *PostgresPostRepository) DeletePostSave(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) error {
+	const query = `
+		DELETE FROM post_saves
+		WHERE post_id = $1::uuid
+			AND user_id = $2::uuid
+	`
+
+	if _, err := repo.pool.Exec(ctx, query, postID.String(), userID.String()); err != nil {
+		return mapPostgresWriteError("delete post save", err)
+	}
+	return nil
+}
+
+func (repo *PostgresPostRepository) ListSavedVisiblePosts(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error) {
+	const query = `
+		SELECT
+			posts.id::text,
+			posts.community_id::text,
+			posts.author_id::text,
+			posts.title,
+			posts.body,
+			posts.status,
+			posts.created_at,
+			posts.updated_at
+		FROM post_saves
+		INNER JOIN posts ON posts.id = post_saves.post_id
+		INNER JOIN communities ON communities.id = posts.community_id
+		WHERE post_saves.user_id = $1::uuid
+			AND posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+		ORDER BY post_saves.created_at DESC, posts.id DESC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, userID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list saved visible posts: %w", err)
+	}
+	defer rows.Close()
+
+	var posts []postdomain.Post
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, *post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate saved visible posts: %w", err)
+	}
+
+	return posts, nil
+}
+
+func (repo *PostgresPostRepository) FindSavedPostIDsByUser(ctx context.Context, postIDs []postdomain.PostID, userID userdomain.UserID) (map[postdomain.PostID]bool, error) {
+	result := make(map[postdomain.PostID]bool, len(postIDs))
+	if len(postIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT post_id::text
+		FROM post_saves
+		WHERE post_id = ANY($1::uuid[])
+			AND user_id = $2::uuid
+	`
+
+	rows, err := repo.pool.Query(ctx, query, postIDStrings(postIDs), userID.String())
+	if err != nil {
+		return nil, fmt.Errorf("find saved post ids by user: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawPostID string
+		if err := rows.Scan(&rawPostID); err != nil {
+			return nil, err
+		}
+		postID, err := postdomain.NewPostID(rawPostID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate saved post id: %v", err)
+		}
+		result[postID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate saved post ids: %w", err)
+	}
+
+	return result, nil
+}
+
+func (repo *PostgresPostRepository) SummarizeSavesByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]int, error) {
+	result := make(map[postdomain.PostID]int, len(postIDs))
+	if len(postIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			post_id::text,
+			COUNT(*)::int
+		FROM post_saves
+		WHERE post_id = ANY($1::uuid[])
+		GROUP BY post_id
+	`
+
+	rows, err := repo.pool.Query(ctx, query, postIDStrings(postIDs))
+	if err != nil {
+		return nil, fmt.Errorf("summarize post saves: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawPostID string
+		var saveCount int
+		if err := rows.Scan(&rawPostID, &saveCount); err != nil {
+			return nil, err
+		}
+		postID, err := postdomain.NewPostID(rawPostID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate post save summary id: %v", err)
+		}
+		result[postID] = saveCount
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate post save summaries: %w", err)
+	}
+
+	return result, nil
 }
 
 func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesHot(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {

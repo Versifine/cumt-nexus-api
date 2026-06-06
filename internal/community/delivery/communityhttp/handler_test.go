@@ -119,6 +119,68 @@ func TestGetCommunityReturnsCommunity(t *testing.T) {
 	}
 }
 
+func TestFollowCommunityReturnsNoContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	communities := &fakeCommunityReadUseCase{}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/follow", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, recorder.Code, recorder.Body.String())
+	}
+	if !communities.followCalled {
+		t.Fatal("expected FollowCommunity to be called")
+	}
+	if communities.followInput.Slug != "campus" || communities.followInput.UserID != userID {
+		t.Fatalf("unexpected follow input: %#v", communities.followInput)
+	}
+}
+
+func TestListFollowedCommunitiesReturnsCommunities(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		listFollowedResult: communityusecase.ListFollowedCommunitiesResult{
+			Communities: []communityusecase.Community{newCommunityResult("campus", now)},
+			Limit:       20,
+			Offset:      5,
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/followed-communities?limit=20&offset=5", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.listFollowedCalled {
+		t.Fatal("expected ListFollowedCommunities to be called")
+	}
+	if communities.listFollowedInput.UserID != userID || communities.listFollowedInput.Limit != 20 || communities.listFollowedInput.Offset != 5 {
+		t.Fatalf("unexpected list followed input: %#v", communities.listFollowedInput)
+	}
+	var response listFollowedCommunitiesResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Communities) != 1 || response.Communities[0].Slug != "campus" {
+		t.Fatalf("unexpected followed communities response: %#v", response.Communities)
+	}
+}
+
 func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -454,17 +516,31 @@ func TestRejectCommunityApplicationReturnsRejectedApplication(t *testing.T) {
 }
 
 type fakeCommunityReadUseCase struct {
-	listCalled bool
-	getCalled  bool
-	getInput   communityusecase.GetCommunityInput
-	listResult communityusecase.ListCommunitiesResult
-	getResult  communityusecase.GetCommunityResult
-	listErr    error
-	getErr     error
+	listCalled         bool
+	getCalled          bool
+	followCalled       bool
+	deleteFollowCalled bool
+	listFollowedCalled bool
+	listInput          communityusecase.ListCommunitiesInput
+	getInput           communityusecase.GetCommunityInput
+	followInput        communityusecase.FollowCommunityInput
+	deleteFollowInput  communityusecase.DeleteCommunityFollowInput
+	listFollowedInput  communityusecase.ListFollowedCommunitiesInput
+	listResult         communityusecase.ListCommunitiesResult
+	getResult          communityusecase.GetCommunityResult
+	followResult       communityusecase.FollowCommunityResult
+	deleteFollowResult communityusecase.DeleteCommunityFollowResult
+	listFollowedResult communityusecase.ListFollowedCommunitiesResult
+	listErr            error
+	getErr             error
+	followErr          error
+	deleteFollowErr    error
+	listFollowedErr    error
 }
 
-func (f *fakeCommunityReadUseCase) ListCommunities(ctx context.Context) (communityusecase.ListCommunitiesResult, error) {
+func (f *fakeCommunityReadUseCase) ListCommunities(ctx context.Context, input communityusecase.ListCommunitiesInput) (communityusecase.ListCommunitiesResult, error) {
 	f.listCalled = true
+	f.listInput = input
 	return f.listResult, f.listErr
 }
 
@@ -472,6 +548,24 @@ func (f *fakeCommunityReadUseCase) GetCommunityBySlug(ctx context.Context, input
 	f.getCalled = true
 	f.getInput = input
 	return f.getResult, f.getErr
+}
+
+func (f *fakeCommunityReadUseCase) FollowCommunity(ctx context.Context, input communityusecase.FollowCommunityInput) (communityusecase.FollowCommunityResult, error) {
+	f.followCalled = true
+	f.followInput = input
+	return f.followResult, f.followErr
+}
+
+func (f *fakeCommunityReadUseCase) DeleteCommunityFollow(ctx context.Context, input communityusecase.DeleteCommunityFollowInput) (communityusecase.DeleteCommunityFollowResult, error) {
+	f.deleteFollowCalled = true
+	f.deleteFollowInput = input
+	return f.deleteFollowResult, f.deleteFollowErr
+}
+
+func (f *fakeCommunityReadUseCase) ListFollowedCommunities(ctx context.Context, input communityusecase.ListFollowedCommunitiesInput) (communityusecase.ListFollowedCommunitiesResult, error) {
+	f.listFollowedCalled = true
+	f.listFollowedInput = input
+	return f.listFollowedResult, f.listFollowedErr
 }
 
 type fakeCommunityApplicationUseCase struct {
@@ -547,6 +641,7 @@ func newCommunityTestRouter(communities CommunityReadUseCase, applications Commu
 	protected := router.Group("/api/v1")
 	protected.Use(authhttp.RequireAuth(parser))
 	RegisterApplicationRoutes(protected, NewHandler(communities, applications))
+	RegisterFollowRoutes(protected, NewHandler(communities, applications))
 
 	return router
 }

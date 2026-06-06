@@ -22,7 +22,10 @@ type PostUseCase interface {
 	ListCommunityPosts(ctx context.Context, input postusecase.ListCommunityPostsInput) (postusecase.ListCommunityPostsResult, error)
 	ListLatestPosts(ctx context.Context, input postusecase.ListLatestPostsInput) (postusecase.ListLatestPostsResult, error)
 	ListUserPosts(ctx context.Context, input postusecase.ListUserPostsInput) (postusecase.ListUserPostsResult, error)
+	ListSavedPosts(ctx context.Context, input postusecase.ListSavedPostsInput) (postusecase.ListSavedPostsResult, error)
 	GetPost(ctx context.Context, input postusecase.GetPostInput) (postusecase.GetPostResult, error)
+	SavePost(ctx context.Context, input postusecase.SavePostInput) (postusecase.SavePostResult, error)
+	DeletePostSave(ctx context.Context, input postusecase.DeletePostSaveInput) (postusecase.DeletePostSaveResult, error)
 	UpdatePost(ctx context.Context, input postusecase.UpdatePostInput) (postusecase.UpdatePostResult, error)
 	DeletePost(ctx context.Context, input postusecase.DeletePostInput) (postusecase.DeletePostResult, error)
 }
@@ -162,6 +165,9 @@ func RegisterReadRoutes(group *gin.RouterGroup, handler *Handler) {
 
 func RegisterWriteRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/communities/:slug/posts", handler.PublishPost)
+	group.GET("/me/saved-posts", handler.ListSavedPosts)
+	group.POST("/posts/:id/save", handler.SavePost)
+	group.DELETE("/posts/:id/save", handler.DeletePostSave)
 	group.PATCH("/posts/:id", handler.UpdatePost)
 	group.DELETE("/posts/:id", handler.DeletePost)
 }
@@ -337,6 +343,90 @@ func (h *Handler) GetPost(c *gin.Context) {
 	c.JSON(http.StatusOK, getPostResponse{
 		Post: toPostResponse(result.Post),
 	})
+}
+
+func (h *Handler) SavePost(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	if _, err := h.posts.SavePost(c.Request.Context(), postusecase.SavePostInput{
+		PostID: c.Param("id"),
+		UserID: userID,
+	}); err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) DeletePostSave(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	if _, err := h.posts.DeletePostSave(c.Request.Context(), postusecase.DeletePostSaveInput{
+		PostID: c.Param("id"),
+		UserID: userID,
+	}); err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ListSavedPosts(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.posts.ListSavedPosts(c.Request.Context(), postusecase.ListSavedPostsInput{
+		UserID: userID,
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityPostsResponse{
+		Posts:  make([]postResponse, 0, len(result.Posts)),
+		Limit:  result.Limit,
+		Offset: result.Offset,
+	}
+	for _, post := range result.Posts {
+		response.Posts = append(response.Posts, toPostResponse(post))
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) UpdatePost(c *gin.Context) {

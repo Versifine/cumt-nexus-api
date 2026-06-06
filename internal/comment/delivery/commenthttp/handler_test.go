@@ -260,6 +260,49 @@ func TestDeleteCommentReturnsNoContent(t *testing.T) {
 	}
 }
 
+func TestSetCommentVoteReturnsVote(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 6, 11, 0, 0, 0, time.UTC)
+	comments := &fakeCommentUseCase{
+		setVoteResult: commentusecase.SetCommentVoteResult{
+			Vote: commentusecase.CommentVote{
+				CommentID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
+				UserID:    userID.String(),
+				Value:     1,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	router := newCommentTestRouter(comments, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/comments/98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a/vote", bytes.NewBufferString(`{"value":1}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !comments.setVoteCalled {
+		t.Fatal("expected SetCommentVote to be called")
+	}
+	if comments.setVoteInput.CommentID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" || comments.setVoteInput.UserID != userID || comments.setVoteInput.Value != 1 {
+		t.Fatalf("unexpected vote input: %#v", comments.setVoteInput)
+	}
+	var response setCommentVoteResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Vote.CommentID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" || response.Vote.Value != 1 {
+		t.Fatalf("unexpected vote response: %#v", response.Vote)
+	}
+}
+
 func TestCommentRoutesRejectInvalidAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -326,26 +369,33 @@ func TestCommentUseCaseErrorMapsToHTTPError(t *testing.T) {
 }
 
 type fakeCommentUseCase struct {
-	publishCalled  bool
-	listCalled     bool
-	listUserCalled bool
-	updateCalled   bool
-	deleteCalled   bool
-	publishInput   commentusecase.PublishCommentInput
-	listInput      commentusecase.ListPostCommentsInput
-	listUserInput  commentusecase.ListUserCommentsInput
-	updateInput    commentusecase.UpdateCommentInput
-	deleteInput    commentusecase.DeleteCommentInput
-	publishResult  commentusecase.PublishCommentResult
-	listResult     commentusecase.ListPostCommentsResult
-	listUserResult commentusecase.ListUserCommentsResult
-	updateResult   commentusecase.UpdateCommentResult
-	deleteResult   commentusecase.DeleteCommentResult
-	publishErr     error
-	listErr        error
-	listUserErr    error
-	updateErr      error
-	deleteErr      error
+	publishCalled    bool
+	listCalled       bool
+	listUserCalled   bool
+	updateCalled     bool
+	deleteCalled     bool
+	setVoteCalled    bool
+	deleteVoteCalled bool
+	publishInput     commentusecase.PublishCommentInput
+	listInput        commentusecase.ListPostCommentsInput
+	listUserInput    commentusecase.ListUserCommentsInput
+	updateInput      commentusecase.UpdateCommentInput
+	deleteInput      commentusecase.DeleteCommentInput
+	setVoteInput     commentusecase.SetCommentVoteInput
+	deleteVoteInput  commentusecase.DeleteCommentVoteInput
+	publishResult    commentusecase.PublishCommentResult
+	listResult       commentusecase.ListPostCommentsResult
+	listUserResult   commentusecase.ListUserCommentsResult
+	updateResult     commentusecase.UpdateCommentResult
+	deleteResult     commentusecase.DeleteCommentResult
+	setVoteResult    commentusecase.SetCommentVoteResult
+	publishErr       error
+	listErr          error
+	listUserErr      error
+	updateErr        error
+	deleteErr        error
+	setVoteErr       error
+	deleteVoteErr    error
 }
 
 func (f *fakeCommentUseCase) PublishComment(ctx context.Context, input commentusecase.PublishCommentInput) (commentusecase.PublishCommentResult, error) {
@@ -376,6 +426,18 @@ func (f *fakeCommentUseCase) DeleteComment(ctx context.Context, input commentuse
 	f.deleteCalled = true
 	f.deleteInput = input
 	return f.deleteResult, f.deleteErr
+}
+
+func (f *fakeCommentUseCase) SetCommentVote(ctx context.Context, input commentusecase.SetCommentVoteInput) (commentusecase.SetCommentVoteResult, error) {
+	f.setVoteCalled = true
+	f.setVoteInput = input
+	return f.setVoteResult, f.setVoteErr
+}
+
+func (f *fakeCommentUseCase) DeleteCommentVote(ctx context.Context, input commentusecase.DeleteCommentVoteInput) error {
+	f.deleteVoteCalled = true
+	f.deleteVoteInput = input
+	return f.deleteVoteErr
 }
 
 type fakeAccessTokenParser struct {

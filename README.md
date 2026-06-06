@@ -8,7 +8,7 @@
 - 社区列表、社区详情、社区创建申请、申请审核读取和平台 staff 审批
 - 帖子发布、列表、详情、编辑、软删除
 - 评论发布、列表、树状读取、编辑、软删除
-- 帖子 upvote/downvote/cancel 和 `new` / `hot` 排序
+- 帖子 upvote/downvote/cancel、保存、评论投票、社区关注和 `new` / `hot` 排序
 - 图片上传、帖子/评论图片附件绑定，支持本地存储和 Cloudflare R2
 - 内容举报、平台 staff 移除内容、举报列表和举报处理
 - PostgreSQL 基础搜索
@@ -123,7 +123,7 @@ OBJECT_STORAGE_FORCE_PATH_STYLE=true
 Authorization: Bearer <access_token>
 ```
 
-公开帖子流、公开帖子详情、公开评论、公开社区和公开用户主页支持匿名读取；如果请求携带 Bearer token，后端会返回当前用户视角的 `my_vote` 和 `viewer_permissions`，无 token 时 `my_vote=0` 且权限对象为匿名态。格式错误、过期或签名错误的 token 仍返回 `unauthenticated`，不会静默降级为匿名。
+公开帖子流、公开帖子详情、公开评论、公开社区和公开用户主页支持匿名读取；如果请求携带 Bearer token，后端会返回当前用户视角的 `my_vote`、`is_saved`、`viewer_is_following` 和 `viewer_permissions`，无 token 时这些 viewer 字段为匿名态。格式错误、过期或签名错误的 token 仍返回 `unauthenticated`，不会静默降级为匿名。
 
 ### Auth
 
@@ -131,6 +131,8 @@ Authorization: Bearer <access_token>
 POST /api/v1/auth/register
 POST /api/v1/auth/login
 GET  /api/v1/me
+GET  /api/v1/me/saved-posts
+GET  /api/v1/me/followed-communities
 GET  /api/v1/users/:username            # public, optional Bearer
 GET  /api/v1/users/:username/posts      # public, optional Bearer
 GET  /api/v1/users/:username/comments   # public, optional Bearer
@@ -141,6 +143,8 @@ GET  /api/v1/users/:username/comments   # public, optional Bearer
 ```text
 GET  /api/v1/communities                # public, optional Bearer
 GET  /api/v1/communities/:slug          # public, optional Bearer
+POST /api/v1/communities/:slug/follow
+DELETE /api/v1/communities/:slug/follow
 POST /api/v1/community-applications
 GET  /api/v1/community-applications
 GET  /api/v1/community-applications/:id
@@ -158,6 +162,8 @@ GET    /api/v1/users/:username/posts    # public, optional Bearer
 POST   /api/v1/communities/:slug/posts
 PATCH  /api/v1/posts/:id
 DELETE /api/v1/posts/:id
+POST   /api/v1/posts/:id/save
+DELETE /api/v1/posts/:id/save
 PUT    /api/v1/posts/:id/vote
 DELETE /api/v1/posts/:id/vote
 ```
@@ -170,6 +176,8 @@ GET    /api/v1/posts/:id/comments       # public, optional Bearer
 GET    /api/v1/users/:username/comments # public, optional Bearer
 PATCH  /api/v1/comments/:id
 DELETE /api/v1/comments/:id
+PUT    /api/v1/comments/:id/vote
+DELETE /api/v1/comments/:id/vote
 ```
 
 评论树读取通过查询参数启用：

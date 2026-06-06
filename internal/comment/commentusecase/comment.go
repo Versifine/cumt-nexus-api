@@ -13,6 +13,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
 
 const (
@@ -42,6 +43,7 @@ type CommentUseCase struct {
 	attachments          AttachmentRepository
 	users                PublicUserFinder
 	metadata             CommentMetadataRepository
+	votes                CommentVoteRepository
 	commentImageMaxCount int
 	now                  func() time.Time
 }
@@ -82,6 +84,17 @@ type DeleteCommentInput struct {
 	ActorID   userdomain.UserID
 }
 
+type SetCommentVoteInput struct {
+	CommentID string
+	UserID    userdomain.UserID
+	Value     int
+}
+
+type DeleteCommentVoteInput struct {
+	CommentID string
+	UserID    userdomain.UserID
+}
+
 type PublishCommentResult struct {
 	Comment Comment
 }
@@ -106,6 +119,18 @@ type UpdateCommentResult struct {
 }
 
 type DeleteCommentResult struct{}
+
+type SetCommentVoteResult struct {
+	Vote CommentVote
+}
+
+type CommentVote struct {
+	CommentID string
+	UserID    string
+	Value     int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
 
 type Comment struct {
 	ID                string
@@ -157,6 +182,9 @@ func NewCommentUseCase(comments CommentRepository, posts PostReader, now func() 
 	}
 	if repo, ok := comments.(CommentMetadataRepository); ok {
 		uc.metadata = repo
+	}
+	if repo, ok := comments.(CommentVoteRepository); ok {
+		uc.votes = repo
 	}
 	return uc
 }
@@ -286,6 +314,10 @@ func (uc *CommentUseCase) ListPostComments(ctx context.Context, input ListPostCo
 	if err != nil {
 		return ListPostCommentsResult{}, err
 	}
+	result.Comments, err = uc.attachCommentVotes(ctx, result.Comments, input.ViewerID)
+	if err != nil {
+		return ListPostCommentsResult{}, err
+	}
 
 	return result, nil
 }
@@ -309,6 +341,10 @@ func (uc *CommentUseCase) listPostCommentsTree(ctx context.Context, postID postd
 		return ListPostCommentsResult{}, err
 	}
 	result.Comments, err = uc.attachCommentMetadata(ctx, result.Comments, viewerID)
+	if err != nil {
+		return ListPostCommentsResult{}, err
+	}
+	result.Comments, err = uc.attachCommentVotes(ctx, result.Comments, viewerID)
 	if err != nil {
 		return ListPostCommentsResult{}, err
 	}
@@ -343,6 +379,10 @@ func (uc *CommentUseCase) ListUserComments(ctx context.Context, input ListUserCo
 		return ListUserCommentsResult{}, err
 	}
 	result.Comments, err = uc.attachCommentMetadata(ctx, result.Comments, input.ViewerID)
+	if err != nil {
+		return ListUserCommentsResult{}, err
+	}
+	result.Comments, err = uc.attachCommentVotes(ctx, result.Comments, input.ViewerID)
 	if err != nil {
 		return ListUserCommentsResult{}, err
 	}
@@ -423,6 +463,69 @@ func (uc *CommentUseCase) DeleteComment(ctx context.Context, input DeleteComment
 	}
 
 	return DeleteCommentResult{}, nil
+}
+
+func (uc *CommentUseCase) SetCommentVote(ctx context.Context, input SetCommentVoteInput) (SetCommentVoteResult, error) {
+	if strings.TrimSpace(input.UserID.String()) == "" {
+		return SetCommentVoteResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.votes == nil {
+		return SetCommentVoteResult{}, apperr.New(apperr.CodeInternal, "comment votes are not configured")
+	}
+
+	commentID, err := commentdomain.NewCommentID(input.CommentID)
+	if err != nil {
+		return SetCommentVoteResult{}, err
+	}
+	value, err := votedomain.NewVoteValue(input.Value)
+	if err != nil {
+		return SetCommentVoteResult{}, err
+	}
+	comment, err := uc.comments.FindVisibleByID(ctx, commentID)
+	if err != nil {
+		return SetCommentVoteResult{}, fmt.Errorf("find comment for vote: %w", err)
+	}
+	if _, err := uc.posts.FindVisibleByID(ctx, comment.PostID()); err != nil {
+		return SetCommentVoteResult{}, fmt.Errorf("find post for comment vote: %w", err)
+	}
+
+	vote, err := votedomain.NewCommentVote(comment.ID(), input.UserID, value, uc.now().UTC())
+	if err != nil {
+		return SetCommentVoteResult{}, err
+	}
+	if err := uc.votes.UpsertCommentVote(ctx, *vote); err != nil {
+		return SetCommentVoteResult{}, fmt.Errorf("upsert comment vote: %w", err)
+	}
+
+	return SetCommentVoteResult{
+		Vote: toCommentVoteDTO(*vote),
+	}, nil
+}
+
+func (uc *CommentUseCase) DeleteCommentVote(ctx context.Context, input DeleteCommentVoteInput) error {
+	if strings.TrimSpace(input.UserID.String()) == "" {
+		return apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.votes == nil {
+		return apperr.New(apperr.CodeInternal, "comment votes are not configured")
+	}
+
+	commentID, err := commentdomain.NewCommentID(input.CommentID)
+	if err != nil {
+		return err
+	}
+	comment, err := uc.comments.FindVisibleByID(ctx, commentID)
+	if err != nil {
+		return fmt.Errorf("find comment for vote delete: %w", err)
+	}
+	if _, err := uc.posts.FindVisibleByID(ctx, comment.PostID()); err != nil {
+		return fmt.Errorf("find post for comment vote delete: %w", err)
+	}
+	if err := uc.votes.DeleteCommentVote(ctx, comment.ID(), input.UserID); err != nil {
+		return fmt.Errorf("delete comment vote: %w", err)
+	}
+
+	return nil
 }
 
 func (uc *CommentUseCase) resolveParentComment(ctx context.Context, postID postdomain.PostID, rawParentID string) (*commentdomain.CommentID, error) {
@@ -601,6 +704,32 @@ func (uc *CommentUseCase) attachCommentMetadata(ctx context.Context, comments []
 	return comments, nil
 }
 
+func (uc *CommentUseCase) attachCommentVotes(ctx context.Context, comments []Comment, viewerID userdomain.UserID) ([]Comment, error) {
+	if len(comments) == 0 || uc.votes == nil {
+		return comments, nil
+	}
+
+	commentIDs, err := collectCommentIDs(comments)
+	if err != nil {
+		return nil, err
+	}
+	summaries, err := uc.votes.SummarizeCommentVotesByIDs(ctx, commentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("summarize comment votes: %w", err)
+	}
+
+	myVotes := map[commentdomain.CommentID]votedomain.VoteValue{}
+	if strings.TrimSpace(viewerID.String()) != "" {
+		myVotes, err = uc.votes.FindCommentVotesByIDsAndUser(ctx, commentIDs, viewerID)
+		if err != nil {
+			return nil, fmt.Errorf("find comment votes by viewer: %w", err)
+		}
+	}
+
+	applyCommentVoteViews(comments, summaries, myVotes)
+	return comments, nil
+}
+
 func (uc *CommentUseCase) loadCommentMetadataViews(ctx context.Context, comments []commentdomain.Comment) (map[commentdomain.CommentID]CommentMetadata, error) {
 	views := make(map[commentdomain.CommentID]CommentMetadata, len(comments))
 	if len(comments) == 0 {
@@ -642,6 +771,42 @@ func (uc *CommentUseCase) loadCommentMetadataByIDs(ctx context.Context, commentI
 		views[commentID] = normalizeCommentMetadata(metadata)
 	}
 	return views, nil
+}
+
+func collectCommentIDs(comments []Comment) ([]commentdomain.CommentID, error) {
+	commentIDs := make([]commentdomain.CommentID, 0, len(comments))
+	for _, comment := range comments {
+		commentID, err := commentdomain.NewCommentID(comment.ID)
+		if err != nil {
+			return nil, err
+		}
+		commentIDs = append(commentIDs, commentID)
+		childIDs, err := collectCommentIDs(comment.Children)
+		if err != nil {
+			return nil, err
+		}
+		commentIDs = append(commentIDs, childIDs...)
+	}
+	return commentIDs, nil
+}
+
+func applyCommentVoteViews(comments []Comment, summaries map[commentdomain.CommentID]votedomain.CommentVoteSummary, myVotes map[commentdomain.CommentID]votedomain.VoteValue) {
+	for index := range comments {
+		commentID, err := commentdomain.NewCommentID(comments[index].ID)
+		if err != nil {
+			continue
+		}
+		summary := summaries[commentID]
+		comments[index].UpvoteCount = summary.UpvoteCount
+		comments[index].DownvoteCount = summary.DownvoteCount
+		comments[index].Score = summary.Score()
+		if value, ok := myVotes[commentID]; ok {
+			comments[index].MyVote = value.Int()
+		} else {
+			comments[index].MyVote = 0
+		}
+		applyCommentVoteViews(comments[index].Children, summaries, myVotes)
+	}
 }
 
 func (uc *CommentUseCase) findActivePublicUser(ctx context.Context, rawUsername string) (*userdomain.User, error) {
@@ -726,9 +891,20 @@ func commentViewerPermissions(authorID string, viewerID userdomain.UserID) postu
 	isAuthor := authorID == viewerID.String()
 	return postusecase.ViewerPermissions{
 		CanComment: true,
+		CanVote:    true,
 		CanReport:  true,
 		CanEdit:    isAuthor,
 		CanDelete:  isAuthor,
+	}
+}
+
+func toCommentVoteDTO(vote votedomain.CommentVote) CommentVote {
+	return CommentVote{
+		CommentID: vote.CommentID().String(),
+		UserID:    vote.UserID().String(),
+		Value:     vote.Value().Int(),
+		CreatedAt: vote.CreatedAt(),
+		UpdatedAt: vote.UpdatedAt(),
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,6 +21,7 @@ import (
 
 var _ commentusecase.CommentRepository = (*PostgresCommentRepository)(nil)
 var _ commentusecase.CommentMetadataRepository = (*PostgresCommentRepository)(nil)
+var _ commentusecase.CommentVoteRepository = (*PostgresCommentRepository)(nil)
 
 type PostgresCommentRepository struct {
 	pool *pgxpool.Pool
@@ -322,6 +324,142 @@ func commentIDStrings(commentIDs []commentdomain.CommentID) []string {
 	return rawIDs
 }
 
+func (repo *PostgresCommentRepository) UpsertCommentVote(ctx context.Context, vote votedomain.CommentVote) error {
+	const query = `
+		INSERT INTO comment_votes (
+			comment_id,
+			user_id,
+			value,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5)
+		ON CONFLICT (comment_id, user_id)
+		DO UPDATE SET
+			value = EXCLUDED.value,
+			updated_at = EXCLUDED.updated_at
+	`
+
+	_, err := repo.pool.Exec(
+		ctx,
+		query,
+		vote.CommentID().String(),
+		vote.UserID().String(),
+		vote.Value().Int(),
+		vote.CreatedAt(),
+		vote.UpdatedAt(),
+	)
+	if err != nil {
+		return mapPostgresWriteError("upsert comment vote", err)
+	}
+
+	return nil
+}
+
+func (repo *PostgresCommentRepository) DeleteCommentVote(ctx context.Context, commentID commentdomain.CommentID, userID userdomain.UserID) error {
+	const query = `
+		DELETE FROM comment_votes
+		WHERE comment_id = $1::uuid
+			AND user_id = $2::uuid
+	`
+
+	if _, err := repo.pool.Exec(ctx, query, commentID.String(), userID.String()); err != nil {
+		return mapPostgresWriteError("delete comment vote", err)
+	}
+
+	return nil
+}
+
+func (repo *PostgresCommentRepository) FindCommentVotesByIDsAndUser(ctx context.Context, commentIDs []commentdomain.CommentID, userID userdomain.UserID) (map[commentdomain.CommentID]votedomain.VoteValue, error) {
+	result := make(map[commentdomain.CommentID]votedomain.VoteValue, len(commentIDs))
+	if len(commentIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			comment_id::text,
+			value
+		FROM comment_votes
+		WHERE comment_id = ANY($1::uuid[])
+			AND user_id = $2::uuid
+	`
+
+	rows, err := repo.pool.Query(ctx, query, commentIDStrings(commentIDs), userID.String())
+	if err != nil {
+		return nil, fmt.Errorf("find comment votes by user: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommentID string
+		var rawValue int
+		if err := rows.Scan(&rawCommentID, &rawValue); err != nil {
+			return nil, err
+		}
+		commentID, err := commentdomain.NewCommentID(rawCommentID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate comment vote id: %v", err)
+		}
+		value, err := votedomain.NewVoteValue(rawValue)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate comment vote value: %v", err)
+		}
+		result[commentID] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate comment votes by user: %w", err)
+	}
+
+	return result, nil
+}
+
+func (repo *PostgresCommentRepository) SummarizeCommentVotesByIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]votedomain.CommentVoteSummary, error) {
+	result := make(map[commentdomain.CommentID]votedomain.CommentVoteSummary, len(commentIDs))
+	if len(commentIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			comment_id::text,
+			COUNT(*) FILTER (WHERE value = 1)::int,
+			COUNT(*) FILTER (WHERE value = -1)::int
+		FROM comment_votes
+		WHERE comment_id = ANY($1::uuid[])
+		GROUP BY comment_id
+	`
+
+	rows, err := repo.pool.Query(ctx, query, commentIDStrings(commentIDs))
+	if err != nil {
+		return nil, fmt.Errorf("summarize comment votes: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommentID string
+		var upvoteCount int
+		var downvoteCount int
+		if err := rows.Scan(&rawCommentID, &upvoteCount, &downvoteCount); err != nil {
+			return nil, err
+		}
+		commentID, err := commentdomain.NewCommentID(rawCommentID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate comment vote summary id: %v", err)
+		}
+		result[commentID] = votedomain.CommentVoteSummary{
+			CommentID:     commentID,
+			UpvoteCount:   upvoteCount,
+			DownvoteCount: downvoteCount,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate comment vote summaries: %w", err)
+	}
+
+	return result, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -401,6 +539,12 @@ func mapPostgresWriteError(operation string, err error) error {
 		}
 		if pgErr.Code == "23503" {
 			return apperr.New(apperr.CodeNotFound, "related record not found")
+		}
+		if pgErr.Code == "23514" {
+			if pgErr.ConstraintName == "comment_votes_value_check" || pgErr.ConstraintName == "comment_votes_updated_at_check" {
+				return apperr.New(apperr.CodeInvalidArgument, "comment vote is invalid")
+			}
+			return apperr.New(apperr.CodeInvalidArgument, "comment is invalid")
 		}
 	}
 

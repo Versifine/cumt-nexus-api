@@ -38,6 +38,7 @@ type PostUseCase struct {
 	posts             PostRepository
 	communities       CommunityPolicy
 	votes             VoteRepository
+	saves             PostSaveRepository
 	attachments       AttachmentRepository
 	users             PublicUserFinder
 	metadata          PostMetadataRepository
@@ -76,9 +77,25 @@ type ListUserPostsInput struct {
 	Offset   int
 }
 
+type ListSavedPostsInput struct {
+	UserID userdomain.UserID
+	Limit  int
+	Offset int
+}
+
 type GetPostInput struct {
 	PostID   string
 	ViewerID userdomain.UserID
+}
+
+type SavePostInput struct {
+	PostID string
+	UserID userdomain.UserID
+}
+
+type DeletePostSaveInput struct {
+	PostID string
+	UserID userdomain.UserID
 }
 
 type UpdatePostInput struct {
@@ -115,9 +132,19 @@ type ListUserPostsResult struct {
 	Offset int
 }
 
+type ListSavedPostsResult struct {
+	Posts  []Post
+	Limit  int
+	Offset int
+}
+
 type GetPostResult struct {
 	Post Post
 }
+
+type SavePostResult struct{}
+
+type DeletePostSaveResult struct{}
 
 type UpdatePostResult struct {
 	Post Post
@@ -231,11 +258,16 @@ func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func(
 	if repo, ok := posts.(PostMetadataRepository); ok {
 		metadataRepo = repo
 	}
+	var saveRepo PostSaveRepository
+	if repo, ok := posts.(PostSaveRepository); ok {
+		saveRepo = repo
+	}
 
 	return &PostUseCase{
 		posts:             posts,
 		communities:       communities,
 		votes:             voteRepo,
+		saves:             saveRepo,
 		metadata:          metadataRepo,
 		postImageMaxCount: 9,
 		now:               now,
@@ -311,7 +343,7 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	}
 
 	return PublishPostResult{
-		Post: toPostDTO(*post, postVoteView{}, attachments, metadataViews[post.ID()], input.AuthorID),
+		Post: toPostDTO(*post, postVoteView{}, postSaveView{}, attachments, metadataViews[post.ID()], input.AuthorID),
 	}, nil
 }
 
@@ -350,6 +382,10 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
+	saveViews, err := uc.loadSaveViews(ctx, posts, input.ViewerID)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
 	attachmentViews, err := uc.loadAttachmentViews(ctx, posts)
 	if err != nil {
 		return ListCommunityPostsResult{}, err
@@ -359,7 +395,7 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 		return ListCommunityPostsResult{}, err
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -384,6 +420,10 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
+	saveViews, err := uc.loadSaveViews(ctx, posts, input.ViewerID)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
 	attachmentViews, err := uc.loadAttachmentViews(ctx, posts)
 	if err != nil {
 		return ListLatestPostsResult{}, err
@@ -399,7 +439,7 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 		return ListLatestPostsResult{}, err
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -428,6 +468,10 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 	if err != nil {
 		return ListUserPostsResult{}, err
 	}
+	saveViews, err := uc.loadSaveViews(ctx, posts, input.ViewerID)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
 	attachmentViews, err := uc.loadAttachmentViews(ctx, posts)
 	if err != nil {
 		return ListUserPostsResult{}, err
@@ -443,7 +487,7 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 		Offset: offset,
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 	return result, nil
 }
@@ -463,6 +507,10 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 	if err != nil {
 		return GetPostResult{}, err
 	}
+	saveViews, err := uc.loadSaveViews(ctx, []postdomain.Post{*post}, input.ViewerID)
+	if err != nil {
+		return GetPostResult{}, err
+	}
 	attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
 	if err != nil {
 		return GetPostResult{}, err
@@ -473,8 +521,98 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 	}
 
 	return GetPostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID),
+		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID),
 	}, nil
+}
+
+func (uc *PostUseCase) SavePost(ctx context.Context, input SavePostInput) (SavePostResult, error) {
+	if strings.TrimSpace(input.UserID.String()) == "" {
+		return SavePostResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.saves == nil {
+		return SavePostResult{}, apperr.New(apperr.CodeInternal, "post saves are not configured")
+	}
+
+	postID, err := postdomain.NewPostID(input.PostID)
+	if err != nil {
+		return SavePostResult{}, err
+	}
+	if _, err := uc.posts.FindVisibleByID(ctx, postID); err != nil {
+		return SavePostResult{}, fmt.Errorf("find post for save: %w", err)
+	}
+	if err := uc.saves.SavePost(ctx, postID, input.UserID, uc.now().UTC()); err != nil {
+		return SavePostResult{}, fmt.Errorf("save post: %w", err)
+	}
+
+	return SavePostResult{}, nil
+}
+
+func (uc *PostUseCase) DeletePostSave(ctx context.Context, input DeletePostSaveInput) (DeletePostSaveResult, error) {
+	if strings.TrimSpace(input.UserID.String()) == "" {
+		return DeletePostSaveResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.saves == nil {
+		return DeletePostSaveResult{}, apperr.New(apperr.CodeInternal, "post saves are not configured")
+	}
+
+	postID, err := postdomain.NewPostID(input.PostID)
+	if err != nil {
+		return DeletePostSaveResult{}, err
+	}
+	if _, err := uc.posts.FindVisibleByID(ctx, postID); err != nil {
+		return DeletePostSaveResult{}, fmt.Errorf("find post for unsave: %w", err)
+	}
+	if err := uc.saves.DeletePostSave(ctx, postID, input.UserID); err != nil {
+		return DeletePostSaveResult{}, fmt.Errorf("delete post save: %w", err)
+	}
+
+	return DeletePostSaveResult{}, nil
+}
+
+func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsInput) (ListSavedPostsResult, error) {
+	if strings.TrimSpace(input.UserID.String()) == "" {
+		return ListSavedPostsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.saves == nil {
+		return ListSavedPostsResult{}, apperr.New(apperr.CodeInternal, "post saves are not configured")
+	}
+	limit, offset, err := normalizePagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListSavedPostsResult{}, err
+	}
+
+	posts, err := uc.saves.ListSavedVisiblePosts(ctx, input.UserID, limit, offset)
+	if err != nil {
+		return ListSavedPostsResult{}, fmt.Errorf("list saved posts: %w", err)
+	}
+
+	voteViews, err := uc.loadVoteViews(ctx, posts, input.UserID)
+	if err != nil {
+		return ListSavedPostsResult{}, err
+	}
+	saveViews, err := uc.loadSaveViews(ctx, posts, input.UserID)
+	if err != nil {
+		return ListSavedPostsResult{}, err
+	}
+	attachmentViews, err := uc.loadAttachmentViews(ctx, posts)
+	if err != nil {
+		return ListSavedPostsResult{}, err
+	}
+	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	if err != nil {
+		return ListSavedPostsResult{}, err
+	}
+
+	result := ListSavedPostsResult{
+		Posts:  make([]Post, 0, len(posts)),
+		Limit:  limit,
+		Offset: offset,
+	}
+	for _, post := range posts {
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.UserID))
+	}
+
+	return result, nil
 }
 
 func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (UpdatePostResult, error) {
@@ -514,6 +652,10 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
+	saveViews, err := uc.loadSaveViews(ctx, []postdomain.Post{*post}, input.ActorID)
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
 	attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
 	if err != nil {
 		return UpdatePostResult{}, err
@@ -524,7 +666,7 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	}
 
 	return UpdatePostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ActorID),
+		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ActorID),
 	}, nil
 }
 
@@ -613,6 +755,11 @@ type postVoteView struct {
 	myVote        int
 }
 
+type postSaveView struct {
+	saveCount int
+	isSaved   bool
+}
+
 func (uc *PostUseCase) loadVoteViews(ctx context.Context, posts []postdomain.Post, viewerID userdomain.UserID) (map[postdomain.PostID]postVoteView, error) {
 	views := make(map[postdomain.PostID]postVoteView, len(posts))
 	if len(posts) == 0 || uc.votes == nil {
@@ -647,6 +794,40 @@ func (uc *PostUseCase) loadVoteViews(ctx context.Context, posts []postdomain.Pos
 			upvoteCount:   summary.UpvoteCount,
 			downvoteCount: summary.DownvoteCount,
 			myVote:        myVote,
+		}
+	}
+
+	return views, nil
+}
+
+func (uc *PostUseCase) loadSaveViews(ctx context.Context, posts []postdomain.Post, viewerID userdomain.UserID) (map[postdomain.PostID]postSaveView, error) {
+	views := make(map[postdomain.PostID]postSaveView, len(posts))
+	if len(posts) == 0 || uc.saves == nil {
+		return views, nil
+	}
+
+	postIDs := make([]postdomain.PostID, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID())
+	}
+
+	saveCounts, err := uc.saves.SummarizeSavesByPostIDs(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("summarize post saves: %w", err)
+	}
+
+	savedByViewer := map[postdomain.PostID]bool{}
+	if strings.TrimSpace(viewerID.String()) != "" {
+		savedByViewer, err = uc.saves.FindSavedPostIDsByUser(ctx, postIDs, viewerID)
+		if err != nil {
+			return nil, fmt.Errorf("find saved posts by viewer: %w", err)
+		}
+	}
+
+	for _, postID := range postIDs {
+		views[postID] = postSaveView{
+			saveCount: saveCounts[postID],
+			isSaved:   savedByViewer[postID],
 		}
 	}
 
@@ -727,7 +908,7 @@ func (uc *PostUseCase) findActivePublicUser(ctx context.Context, rawUsername str
 	return user, nil
 }
 
-func toPostDTO(post postdomain.Post, voteView postVoteView, attachments []mediadomain.Attachment, metadata PostMetadata, viewerID userdomain.UserID) Post {
+func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveView, attachments []mediadomain.Attachment, metadata PostMetadata, viewerID userdomain.UserID) Post {
 	score := voteView.upvoteCount - voteView.downvoteCount
 	metadata = normalizePostMetadata(metadata)
 	attachmentDTOs := toAttachmentDTOs(attachments)
@@ -746,10 +927,10 @@ func toPostDTO(post postdomain.Post, voteView postVoteView, attachments []mediad
 		UpvoteCount:       voteView.upvoteCount,
 		DownvoteCount:     voteView.downvoteCount,
 		CommentCount:      metadata.CommentCount,
-		SaveCount:         0,
+		SaveCount:         saveView.saveCount,
 		Score:             score,
 		MyVote:            voteView.myVote,
-		IsSaved:           false,
+		IsSaved:           saveView.isSaved,
 		Preview:           buildPostPreview(attachmentDTOs),
 		ViewerPermissions: postViewerPermissions(post, viewerID),
 		CreatedAt:         post.CreatedAt(),

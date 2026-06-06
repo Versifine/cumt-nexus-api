@@ -27,9 +27,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/auth/register | `authhttp.registerRequest` | `authhttp.registerResponse` | 201 |
 | POST | /api/v1/auth/login | `authhttp.loginRequest` | `authhttp.loginResponse` | 200 |
 | GET | /api/v1/me | none | `userhttp.currentUserResponse` | 200 |
+| GET | /api/v1/me/saved-posts | query | `posthttp.listCommunityPostsResponse` | 200 |
+| GET | /api/v1/me/followed-communities | query | `communityhttp.listFollowedCommunitiesResponse` | 200 |
 | GET | /api/v1/users/:username | none | `userhttp.getPublicUserResponse` | 200 |
 | GET | /api/v1/communities | none | `communityhttp.listCommunitiesResponse` | 200 |
 | GET | /api/v1/communities/:slug | none | `communityhttp.getCommunityResponse` | 200 |
+| POST | /api/v1/communities/:slug/follow | none | none | 204 |
+| DELETE | /api/v1/communities/:slug/follow | none | none | 204 |
 | POST | /api/v1/community-applications | `communityhttp.submitCommunityApplicationRequest` | `communityhttp.submitCommunityApplicationResponse` | 201 |
 | GET | /api/v1/community-applications | query | `communityhttp.listCommunityApplicationsResponse` | 200 |
 | GET | /api/v1/community-applications/:id | none | `communityhttp.getCommunityApplicationResponse` | 200 |
@@ -42,11 +46,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/users/:username/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | PATCH | /api/v1/posts/:id | `posthttp.updatePostRequest` | `posthttp.getPostResponse` | 200 |
 | DELETE | /api/v1/posts/:id | none | none | 204 |
+| POST | /api/v1/posts/:id/save | none | none | 204 |
+| DELETE | /api/v1/posts/:id/save | none | none | 204 |
 | POST | /api/v1/posts/:id/comments | `commenthttp.publishCommentRequest` | `commenthttp.publishCommentResponse` | 201 |
 | GET | /api/v1/posts/:id/comments | query | `commenthttp.listPostCommentsResponse` | 200 |
 | GET | /api/v1/users/:username/comments | query | `commenthttp.listUserCommentsResponse` | 200 |
 | PATCH | /api/v1/comments/:id | `commenthttp.updateCommentRequest` | `commenthttp.publishCommentResponse` | 200 |
 | DELETE | /api/v1/comments/:id | none | none | 204 |
+| PUT | /api/v1/comments/:id/vote | `commenthttp.setCommentVoteRequest` | `commenthttp.setCommentVoteResponse` | 200 |
+| DELETE | /api/v1/comments/:id/vote | none | none | 204 |
 | PUT | /api/v1/posts/:id/vote | `votehttp.setPostVoteRequest` | `votehttp.setPostVoteResponse` | 200 |
 | DELETE | /api/v1/posts/:id/vote | none | none | 204 |
 | POST | /api/v1/posts/:id/reports | `moderationhttp.reportContentRequest` | `moderationhttp.reportContentResponse` | 201 |
@@ -71,6 +79,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `authhttp.loginRequest` | `username`, `password` |
 | `authhttp.registerRequest` | `username`, `password` |
 | `commenthttp.publishCommentRequest` | `body` |
+| `commenthttp.setCommentVoteRequest` | `value` |
 | `commenthttp.updateCommentRequest` | `body` |
 | `communityhttp.rejectCommunityApplicationRequest` | `reject_reason` |
 | `communityhttp.submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
@@ -94,6 +103,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `userhttp` | `getPublicUserResponse` | `user` |
 | `communityhttp` | `listCommunitiesResponse` | `communities` |
 | `communityhttp` | `getCommunityResponse` | `community` |
+| `communityhttp` | `listFollowedCommunitiesResponse` | `communities`, `limit`, `offset` |
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `communityhttp` | `rejectCommunityApplicationRequest` | `reject_reason` |
 | `communityhttp` | `communityApplicationResponse` | `id`, `applicant_id`, `requested_slug`, `requested_name`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `reject_reason`, `created_at`, `updated_at` |
@@ -119,12 +129,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `posthttp` | `getPostResponse` | `post` |
 | `commenthttp` | `publishCommentRequest` | `body`, `parent_id`, `attachment_ids` |
 | `commenthttp` | `updateCommentRequest` | `body` |
+| `commenthttp` | `setCommentVoteRequest` | `value` |
 | `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `format`, `content_refs`, `author`, `status`, `depth`, `reply_count`, `has_more_replies`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `viewer_permissions`, `children`, `created_at`, `updated_at`, `attachments` |
 | `commenthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `commenthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
 | `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `commenthttp` | `publishCommentResponse` | `comment` |
+| `commenthttp` | `commentVoteResponse` | `comment_id`, `user_id`, `value`, `created_at`, `updated_at` |
+| `commenthttp` | `setCommentVoteResponse` | `vote` |
 | `commenthttp` | `listPostCommentsResponse` | `comments`, `view`, `sort`, `limit`, `offset`, `max_depth` |
 | `commenthttp` | `listUserCommentsResponse` | `comments`, `limit`, `offset` |
 | `votehttp` | `setPostVoteRequest` | `value` |

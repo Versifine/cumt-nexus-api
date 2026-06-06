@@ -21,6 +21,14 @@ type PostRepository interface {
 	ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 }
 
+type PostSaveRepository interface {
+	SavePost(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID, now time.Time) error
+	DeletePostSave(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) error
+	ListSavedVisiblePosts(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error)
+	FindSavedPostIDsByUser(ctx context.Context, postIDs []postdomain.PostID, userID userdomain.UserID) (map[postdomain.PostID]bool, error)
+	SummarizeSavesByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]int, error)
+}
+
 type PublicUserFinder interface {
 	FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error)
 }

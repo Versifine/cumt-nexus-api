@@ -413,6 +413,34 @@ func TestGetPostReturnsVisiblePost(t *testing.T) {
 	}
 }
 
+func TestGetPostReturnsSaveView(t *testing.T) {
+	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), userdomain.NewGeneratedUserID(), "Saved", time.Now().UTC())
+	viewerID := userdomain.NewGeneratedUserID()
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+		saveCounts: map[postdomain.PostID]int{
+			post.ID(): 3,
+		},
+		savedPostIDs: map[postdomain.PostID]bool{
+			post.ID(): true,
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now)
+
+	result, err := uc.GetPost(context.Background(), GetPostInput{PostID: post.ID().String(), ViewerID: viewerID})
+	if err != nil {
+		t.Fatalf("GetPost returned error: %v", err)
+	}
+	if result.Post.SaveCount != 3 || !result.Post.IsSaved {
+		t.Fatalf("unexpected save view: save_count=%d is_saved=%t", result.Post.SaveCount, result.Post.IsSaved)
+	}
+	if !posts.summarizeSavesCalled || !posts.findSavedCalled {
+		t.Fatal("expected save count and viewer save lookups")
+	}
+}
+
 func TestGetPostDefaultsEmptyVoteView(t *testing.T) {
 	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), userdomain.NewGeneratedUserID(), "Hello", time.Now().UTC())
 	posts := &fakePostRepository{
@@ -432,6 +460,34 @@ func TestGetPostDefaultsEmptyVoteView(t *testing.T) {
 	}
 	if result.Post.UpvoteCount != 0 || result.Post.DownvoteCount != 0 || result.Post.Score != 0 || result.Post.MyVote != 0 {
 		t.Fatalf("expected zero vote view, got %#v", result.Post)
+	}
+}
+
+func TestSavePostChecksVisiblePostAndPersistsSave(t *testing.T) {
+	now := time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC)
+	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), userdomain.NewGeneratedUserID(), "Save me", now)
+	userID := userdomain.NewGeneratedUserID()
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			if id != post.ID() {
+				t.Fatalf("expected post %q, got %q", post.ID().String(), id.String())
+			}
+			return post, nil
+		},
+		savePostFunc: func(ctx context.Context, postID postdomain.PostID, gotUserID userdomain.UserID, savedAt time.Time) error {
+			if postID != post.ID() || gotUserID != userID || !savedAt.Equal(now) {
+				t.Fatalf("unexpected save args: post=%q user=%q at=%s", postID.String(), gotUserID.String(), savedAt)
+			}
+			return nil
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, func() time.Time { return now })
+
+	if _, err := uc.SavePost(context.Background(), SavePostInput{PostID: post.ID().String(), UserID: userID}); err != nil {
+		t.Fatalf("SavePost returned error: %v", err)
+	}
+	if !posts.savePostCalled {
+		t.Fatal("expected SavePost repository call")
 	}
 }
 
@@ -557,6 +613,16 @@ type fakePostRepository struct {
 	listVisibleByCommunityFunc         func(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 	listVisibleInPublicCommunitiesFunc func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
 	listVisibleByAuthorFunc            func(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+	savePostFunc                       func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID, now time.Time) error
+	deletePostSaveFunc                 func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) error
+	listSavedVisiblePostsFunc          func(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error)
+	savePostCalled                     bool
+	deletePostSaveCalled               bool
+	listSavedVisiblePostsCalled        bool
+	summarizeSavesCalled               bool
+	findSavedCalled                    bool
+	saveCounts                         map[postdomain.PostID]int
+	savedPostIDs                       map[postdomain.PostID]bool
 }
 
 func (f *fakePostRepository) Create(ctx context.Context, post postdomain.Post) error {
@@ -606,6 +672,46 @@ func (f *fakePostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.
 		return f.listVisibleByAuthorFunc(ctx, authorID, sort, limit, offset)
 	}
 	return nil, nil
+}
+
+func (f *fakePostRepository) SavePost(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID, now time.Time) error {
+	f.savePostCalled = true
+	if f.savePostFunc != nil {
+		return f.savePostFunc(ctx, postID, userID, now)
+	}
+	return nil
+}
+
+func (f *fakePostRepository) DeletePostSave(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) error {
+	f.deletePostSaveCalled = true
+	if f.deletePostSaveFunc != nil {
+		return f.deletePostSaveFunc(ctx, postID, userID)
+	}
+	return nil
+}
+
+func (f *fakePostRepository) ListSavedVisiblePosts(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error) {
+	f.listSavedVisiblePostsCalled = true
+	if f.listSavedVisiblePostsFunc != nil {
+		return f.listSavedVisiblePostsFunc(ctx, userID, limit, offset)
+	}
+	return nil, nil
+}
+
+func (f *fakePostRepository) FindSavedPostIDsByUser(ctx context.Context, postIDs []postdomain.PostID, userID userdomain.UserID) (map[postdomain.PostID]bool, error) {
+	f.findSavedCalled = true
+	if f.savedPostIDs == nil {
+		return map[postdomain.PostID]bool{}, nil
+	}
+	return f.savedPostIDs, nil
+}
+
+func (f *fakePostRepository) SummarizeSavesByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]int, error) {
+	f.summarizeSavesCalled = true
+	if f.saveCounts == nil {
+		return map[postdomain.PostID]int{}, nil
+	}
+	return f.saveCounts, nil
 }
 
 type fakeVoteRepository struct {

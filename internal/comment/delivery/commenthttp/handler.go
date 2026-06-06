@@ -24,6 +24,8 @@ type CommentUseCase interface {
 	ListUserComments(ctx context.Context, input commentusecase.ListUserCommentsInput) (commentusecase.ListUserCommentsResult, error)
 	UpdateComment(ctx context.Context, input commentusecase.UpdateCommentInput) (commentusecase.UpdateCommentResult, error)
 	DeleteComment(ctx context.Context, input commentusecase.DeleteCommentInput) (commentusecase.DeleteCommentResult, error)
+	SetCommentVote(ctx context.Context, input commentusecase.SetCommentVoteInput) (commentusecase.SetCommentVoteResult, error)
+	DeleteCommentVote(ctx context.Context, input commentusecase.DeleteCommentVoteInput) error
 }
 
 type publishCommentRequest struct {
@@ -34,6 +36,10 @@ type publishCommentRequest struct {
 
 type updateCommentRequest struct {
 	Body string `json:"body" binding:"required"`
+}
+
+type setCommentVoteRequest struct {
+	Value int `json:"value" binding:"required"`
 }
 
 type commentResponse struct {
@@ -100,6 +106,18 @@ type publishCommentResponse struct {
 	Comment commentResponse `json:"comment"`
 }
 
+type commentVoteResponse struct {
+	CommentID string    `json:"comment_id"`
+	UserID    string    `json:"user_id"`
+	Value     int       `json:"value"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type setCommentVoteResponse struct {
+	Vote commentVoteResponse `json:"vote"`
+}
+
 type listPostCommentsResponse struct {
 	Comments []commentResponse `json:"comments"`
 	View     string            `json:"view"`
@@ -133,6 +151,8 @@ func RegisterReadRoutes(group *gin.RouterGroup, handler *Handler) {
 
 func RegisterWriteRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/posts/:id/comments", handler.PublishComment)
+	group.PUT("/comments/:id/vote", handler.SetCommentVote)
+	group.DELETE("/comments/:id/vote", handler.DeleteCommentVote)
 	group.PATCH("/comments/:id", handler.UpdateComment)
 	group.DELETE("/comments/:id", handler.DeleteComment)
 }
@@ -313,6 +333,57 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handler) SetCommentVote(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req setCommentVoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid comment vote request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.comments.SetCommentVote(c.Request.Context(), commentusecase.SetCommentVoteInput{
+		CommentID: c.Param("id"),
+		UserID:    userID,
+		Value:     req.Value,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, setCommentVoteResponse{
+		Vote: toCommentVoteResponse(result.Vote),
+	})
+}
+
+func (h *Handler) DeleteCommentVote(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	if err := h.comments.DeleteCommentVote(c.Request.Context(), commentusecase.DeleteCommentVoteInput{
+		CommentID: c.Param("id"),
+		UserID:    userID,
+	}); err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
 func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
 	raw := strings.TrimSpace(c.Query(key))
 	if raw == "" {
@@ -361,6 +432,16 @@ func toCommentResponses(comments []commentusecase.Comment) []commentResponse {
 		response = append(response, toCommentResponse(comment))
 	}
 	return response
+}
+
+func toCommentVoteResponse(vote commentusecase.CommentVote) commentVoteResponse {
+	return commentVoteResponse{
+		CommentID: vote.CommentID,
+		UserID:    vote.UserID,
+		Value:     vote.Value,
+		CreatedAt: vote.CreatedAt,
+		UpdatedAt: vote.UpdatedAt,
+	}
 }
 
 func toContentRefResponses(refs []postusecase.ContentRef) []contentRefResponse {

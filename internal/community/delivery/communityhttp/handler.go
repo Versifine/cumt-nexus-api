@@ -19,8 +19,11 @@ type Handler struct {
 }
 
 type CommunityReadUseCase interface {
-	ListCommunities(ctx context.Context) (communityusecase.ListCommunitiesResult, error)
+	ListCommunities(ctx context.Context, input communityusecase.ListCommunitiesInput) (communityusecase.ListCommunitiesResult, error)
 	GetCommunityBySlug(ctx context.Context, input communityusecase.GetCommunityInput) (communityusecase.GetCommunityResult, error)
+	FollowCommunity(ctx context.Context, input communityusecase.FollowCommunityInput) (communityusecase.FollowCommunityResult, error)
+	DeleteCommunityFollow(ctx context.Context, input communityusecase.DeleteCommunityFollowInput) (communityusecase.DeleteCommunityFollowResult, error)
+	ListFollowedCommunities(ctx context.Context, input communityusecase.ListFollowedCommunitiesInput) (communityusecase.ListFollowedCommunitiesResult, error)
 }
 
 type CommunityApplicationUseCase interface {
@@ -37,6 +40,12 @@ type listCommunitiesResponse struct {
 
 type getCommunityResponse struct {
 	Community communityResponse `json:"community"`
+}
+
+type listFollowedCommunitiesResponse struct {
+	Communities []communityResponse `json:"communities"`
+	Limit       int                 `json:"limit"`
+	Offset      int                 `json:"offset"`
 }
 
 type submitCommunityApplicationRequest struct {
@@ -121,6 +130,7 @@ func NewHandler(communities CommunityReadUseCase, applications CommunityApplicat
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	RegisterReadRoutes(group, handler)
 	RegisterApplicationRoutes(group, handler)
+	RegisterFollowRoutes(group, handler)
 }
 
 func RegisterReadRoutes(group *gin.RouterGroup, handler *Handler) {
@@ -136,8 +146,18 @@ func RegisterApplicationRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/community-applications/:id/reject", handler.RejectCommunityApplication)
 }
 
+func RegisterFollowRoutes(group *gin.RouterGroup, handler *Handler) {
+	group.GET("/me/followed-communities", handler.ListFollowedCommunities)
+	group.POST("/communities/:slug/follow", handler.FollowCommunity)
+	group.DELETE("/communities/:slug/follow", handler.DeleteCommunityFollow)
+}
+
 func (h *Handler) ListCommunities(c *gin.Context) {
-	result, err := h.communities.ListCommunities(c.Request.Context())
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
+
+	result, err := h.communities.ListCommunities(c.Request.Context(), communityusecase.ListCommunitiesInput{
+		ViewerID: userID,
+	})
 	if err != nil {
 		_ = c.Error(err)
 		c.Abort()
@@ -155,8 +175,11 @@ func (h *Handler) ListCommunities(c *gin.Context) {
 }
 
 func (h *Handler) GetCommunity(c *gin.Context) {
+	userID, _ := authcontext.CurrentUserID(c.Request.Context())
+
 	result, err := h.communities.GetCommunityBySlug(c.Request.Context(), communityusecase.GetCommunityInput{
-		Slug: c.Param("slug"),
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
 	})
 	if err != nil {
 		_ = c.Error(err)
@@ -167,6 +190,90 @@ func (h *Handler) GetCommunity(c *gin.Context) {
 	c.JSON(http.StatusOK, getCommunityResponse{
 		Community: toCommunityResponse(result.Community),
 	})
+}
+
+func (h *Handler) FollowCommunity(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	if _, err := h.communities.FollowCommunity(c.Request.Context(), communityusecase.FollowCommunityInput{
+		Slug:   c.Param("slug"),
+		UserID: userID,
+	}); err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) DeleteCommunityFollow(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	if _, err := h.communities.DeleteCommunityFollow(c.Request.Context(), communityusecase.DeleteCommunityFollowInput{
+		Slug:   c.Param("slug"),
+		UserID: userID,
+	}); err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ListFollowedCommunities(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.ListFollowedCommunities(c.Request.Context(), communityusecase.ListFollowedCommunitiesInput{
+		UserID: userID,
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listFollowedCommunitiesResponse{
+		Communities: make([]communityResponse, 0, len(result.Communities)),
+		Limit:       result.Limit,
+		Offset:      result.Offset,
+	}
+	for _, community := range result.Communities {
+		response.Communities = append(response.Communities, toCommunityResponse(community))
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) SubmitCommunityApplication(c *gin.Context) {

@@ -18,6 +18,7 @@ import (
 
 var _ communityusecase.CommunityRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityStatsRepository = (*PostgresCommunityRepository)(nil)
+var _ communityusecase.CommunityFollowRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityMembershipRepository = (*PostgresMembershipRepository)(nil)
 var _ communityusecase.CommunityApplicationRepository = (*PostgresApplicationRepository)(nil)
 var _ communityusecase.PlatformStaffRepository = (*PostgresPlatformStaffRepository)(nil)
@@ -238,6 +239,117 @@ func communityIDStrings(communityIDs []communitydomain.CommunityID) []string {
 		rawIDs = append(rawIDs, communityID.String())
 	}
 	return rawIDs
+}
+
+func (repo *PostgresCommunityRepository) FollowCommunity(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, now time.Time) error {
+	const query = `
+		INSERT INTO community_follows (
+			community_id,
+			user_id,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3)
+		ON CONFLICT (community_id, user_id) DO NOTHING
+	`
+
+	if _, err := repo.db.Exec(ctx, query, communityID.String(), userID.String(), now); err != nil {
+		return mapPostgresWriteError("follow community", err)
+	}
+	return nil
+}
+
+func (repo *PostgresCommunityRepository) DeleteCommunityFollow(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID) error {
+	const query = `
+		DELETE FROM community_follows
+		WHERE community_id = $1::uuid
+			AND user_id = $2::uuid
+	`
+
+	if _, err := repo.db.Exec(ctx, query, communityID.String(), userID.String()); err != nil {
+		return mapPostgresWriteError("delete community follow", err)
+	}
+	return nil
+}
+
+func (repo *PostgresCommunityRepository) ListFollowedActivePublic(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]communitydomain.Community, error) {
+	const query = `
+		SELECT
+			communities.id::text,
+			communities.slug,
+			communities.name,
+			communities.description,
+			communities.kind,
+			communities.status,
+			communities.visibility,
+			communities.created_by::text,
+			communities.created_at,
+			communities.updated_at
+		FROM community_follows
+		INNER JOIN communities ON communities.id = community_follows.community_id
+		WHERE community_follows.user_id = $1::uuid
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+		ORDER BY community_follows.created_at DESC, communities.slug ASC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.db.Query(ctx, query, userID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list followed active public communities: %w", err)
+	}
+	defer rows.Close()
+
+	var communities []communitydomain.Community
+	for rows.Next() {
+		community, err := scanCommunity(rows)
+		if err != nil {
+			return nil, err
+		}
+		communities = append(communities, *community)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate followed active public communities: %w", err)
+	}
+
+	return communities, nil
+}
+
+func (repo *PostgresCommunityRepository) FindFollowedCommunityIDsByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]bool, error) {
+	result := make(map[communitydomain.CommunityID]bool, len(communityIDs))
+	if len(communityIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT community_id::text
+		FROM community_follows
+		WHERE community_id = ANY($1::uuid[])
+			AND user_id = $2::uuid
+	`
+
+	rows, err := repo.db.Query(ctx, query, communityIDStrings(communityIDs), userID.String())
+	if err != nil {
+		return nil, fmt.Errorf("find followed community ids by user: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommunityID string
+		if err := rows.Scan(&rawCommunityID); err != nil {
+			return nil, err
+		}
+		communityID, err := communitydomain.NewCommunityID(rawCommunityID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate followed community id: %v", err)
+		}
+		result[communityID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate followed community ids: %w", err)
+	}
+
+	return result, nil
 }
 
 type PostgresMembershipRepository struct {

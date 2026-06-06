@@ -2,6 +2,7 @@ package communityusecase
 
 import (
 	"context"
+	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
@@ -16,6 +17,13 @@ type CommunityRepository interface {
 
 type CommunityStatsRepository interface {
 	LoadPublicStatsByCommunityIDs(ctx context.Context, communityIDs []communitydomain.CommunityID) (map[communitydomain.CommunityID]CommunityStats, error)
+}
+
+type CommunityFollowRepository interface {
+	FollowCommunity(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, now time.Time) error
+	DeleteCommunityFollow(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID) error
+	ListFollowedActivePublic(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]communitydomain.Community, error)
+	FindFollowedCommunityIDsByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]bool, error)
 }
 
 type CommunityMembershipRepository interface {

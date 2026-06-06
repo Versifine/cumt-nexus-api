@@ -13,6 +13,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
 
 func TestPublishCommentCreatesVisibleComment(t *testing.T) {
@@ -210,6 +211,51 @@ func TestListPostCommentsNormalizesPagination(t *testing.T) {
 	}
 	if len(result.Comments) != 1 {
 		t.Fatalf("expected one comment, got %d", len(result.Comments))
+	}
+}
+
+func TestListPostCommentsReturnsVoteView(t *testing.T) {
+	post := mustPost(t, time.Now().UTC())
+	viewerID := userdomain.NewGeneratedUserID()
+	comment := mustComment(t, post.ID(), userdomain.NewGeneratedUserID(), nil, "Body", time.Now().UTC())
+	comments := &fakeCommentRepository{
+		listVisibleByPostFunc: func(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error) {
+			return []commentdomain.Comment{*comment}, nil
+		},
+		voteSummaries: map[commentdomain.CommentID]votedomain.CommentVoteSummary{
+			comment.ID(): {
+				CommentID:     comment.ID(),
+				UpvoteCount:   4,
+				DownvoteCount: 1,
+			},
+		},
+		myVotes: map[commentdomain.CommentID]votedomain.VoteValue{
+			comment.ID(): votedomain.VoteValueUp,
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, time.Now)
+
+	result, err := uc.ListPostComments(context.Background(), ListPostCommentsInput{
+		PostID:   post.ID().String(),
+		ViewerID: viewerID,
+	})
+	if err != nil {
+		t.Fatalf("ListPostComments returned error: %v", err)
+	}
+	if len(result.Comments) != 1 {
+		t.Fatalf("expected one comment, got %d", len(result.Comments))
+	}
+	got := result.Comments[0]
+	if got.UpvoteCount != 4 || got.DownvoteCount != 1 || got.Score != 3 || got.MyVote != 1 {
+		t.Fatalf("unexpected vote view: %#v", got)
+	}
+	if !comments.summarizeVotesCalled || !comments.findVotesCalled {
+		t.Fatal("expected comment vote summary and viewer lookups")
 	}
 }
 
@@ -457,6 +503,54 @@ func TestDeleteCommentRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestSetCommentVoteChecksVisibleCommentAndPost(t *testing.T) {
+	now := time.Date(2026, 6, 6, 11, 0, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	comment := mustComment(t, post.ID(), userdomain.NewGeneratedUserID(), nil, "Body", now)
+	userID := userdomain.NewGeneratedUserID()
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			if id != comment.ID() {
+				t.Fatalf("expected comment %q, got %q", comment.ID().String(), id.String())
+			}
+			return comment, nil
+		},
+		upsertVoteFunc: func(ctx context.Context, vote votedomain.CommentVote) error {
+			if vote.CommentID() != comment.ID() || vote.UserID() != userID || vote.Value() != votedomain.VoteValueUp {
+				t.Fatalf("unexpected vote: %#v", vote)
+			}
+			if !vote.CreatedAt().Equal(now) || !vote.UpdatedAt().Equal(now) {
+				t.Fatalf("unexpected vote timestamps: created=%s updated=%s", vote.CreatedAt(), vote.UpdatedAt())
+			}
+			return nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			if id != post.ID() {
+				t.Fatalf("expected post %q, got %q", post.ID().String(), id.String())
+			}
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+
+	result, err := uc.SetCommentVote(context.Background(), SetCommentVoteInput{
+		CommentID: comment.ID().String(),
+		UserID:    userID,
+		Value:     1,
+	})
+	if err != nil {
+		t.Fatalf("SetCommentVote returned error: %v", err)
+	}
+	if result.Vote.CommentID != comment.ID().String() || result.Vote.Value != 1 {
+		t.Fatalf("unexpected vote result: %#v", result.Vote)
+	}
+	if !comments.upsertVoteCalled {
+		t.Fatal("expected upsert vote repository call")
+	}
+}
+
 type fakeCommentRepository struct {
 	createFunc                func(ctx context.Context, comment commentdomain.Comment) error
 	findVisibleByIDFunc       func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error)
@@ -465,6 +559,14 @@ type fakeCommentRepository struct {
 	listVisibleByPostFunc     func(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error)
 	listVisibleTreeByPostFunc func(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error)
 	listVisibleByAuthorFunc   func(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]commentdomain.Comment, error)
+	upsertVoteFunc            func(ctx context.Context, vote votedomain.CommentVote) error
+	deleteVoteFunc            func(ctx context.Context, commentID commentdomain.CommentID, userID userdomain.UserID) error
+	upsertVoteCalled          bool
+	deleteVoteCalled          bool
+	summarizeVotesCalled      bool
+	findVotesCalled           bool
+	voteSummaries             map[commentdomain.CommentID]votedomain.CommentVoteSummary
+	myVotes                   map[commentdomain.CommentID]votedomain.VoteValue
 }
 
 type fakeAttachmentRepository struct {
@@ -533,6 +635,38 @@ func (f *fakeCommentRepository) ListVisibleByAuthorInPublicCommunities(ctx conte
 		return f.listVisibleByAuthorFunc(ctx, authorID, limit, offset)
 	}
 	return nil, nil
+}
+
+func (f *fakeCommentRepository) UpsertCommentVote(ctx context.Context, vote votedomain.CommentVote) error {
+	f.upsertVoteCalled = true
+	if f.upsertVoteFunc != nil {
+		return f.upsertVoteFunc(ctx, vote)
+	}
+	return nil
+}
+
+func (f *fakeCommentRepository) DeleteCommentVote(ctx context.Context, commentID commentdomain.CommentID, userID userdomain.UserID) error {
+	f.deleteVoteCalled = true
+	if f.deleteVoteFunc != nil {
+		return f.deleteVoteFunc(ctx, commentID, userID)
+	}
+	return nil
+}
+
+func (f *fakeCommentRepository) FindCommentVotesByIDsAndUser(ctx context.Context, commentIDs []commentdomain.CommentID, userID userdomain.UserID) (map[commentdomain.CommentID]votedomain.VoteValue, error) {
+	f.findVotesCalled = true
+	if f.myVotes == nil {
+		return map[commentdomain.CommentID]votedomain.VoteValue{}, nil
+	}
+	return f.myVotes, nil
+}
+
+func (f *fakeCommentRepository) SummarizeCommentVotesByIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]votedomain.CommentVoteSummary, error) {
+	f.summarizeVotesCalled = true
+	if f.voteSummaries == nil {
+		return map[commentdomain.CommentID]votedomain.CommentVoteSummary{}, nil
+	}
+	return f.voteSummaries, nil
 }
 
 type fakePostRepository struct {

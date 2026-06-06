@@ -180,7 +180,7 @@ Add-RoutesFromFile `
     -Path 'internal/community/delivery/communityhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication')
+    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
@@ -194,7 +194,7 @@ Add-RoutesFromFile `
     -Path 'internal/post/delivery/posthttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('PublishPost', 'UpdatePost', 'DeletePost')
+    -IncludeHandlers @('PublishPost', 'ListSavedPosts', 'SavePost', 'DeletePostSave', 'UpdatePost', 'DeletePost')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
@@ -208,7 +208,7 @@ Add-RoutesFromFile `
     -Path 'internal/comment/delivery/commenthttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('PublishComment', 'UpdateComment', 'DeleteComment')
+    -IncludeHandlers @('PublishComment', 'SetCommentVote', 'DeleteCommentVote', 'UpdateComment', 'DeleteComment')
 
 if (-not (Test-Path -LiteralPath $docFullPath)) {
     throw "contract doc not found: $DocPath"
