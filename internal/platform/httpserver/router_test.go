@@ -198,8 +198,11 @@ func TestCORSMiddlewareHandlesPreflight(t *testing.T) {
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Fatalf("expected wildcard origin header, got %q", got)
 	}
-	if got := recorder.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodPut) {
-		t.Fatalf("expected PUT in allow methods, got %q", got)
+	allowedMethods := recorder.Header().Get("Access-Control-Allow-Methods")
+	for _, method := range []string{http.MethodPut, http.MethodPatch} {
+		if !strings.Contains(allowedMethods, method) {
+			t.Fatalf("expected %s in allow methods, got %q", method, allowedMethods)
+		}
 	}
 }
 
