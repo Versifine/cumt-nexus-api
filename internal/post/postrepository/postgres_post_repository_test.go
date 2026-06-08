@@ -200,6 +200,62 @@ func TestPostgresPostRepositoryListVisibleByCommunityHotSort(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryListVisibleByCommunityRankingSorts(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "ranking-community-"+randomSuffix())
+
+	lowConfidencePost := mustPost(t, communityID, authorID, "Low confidence", now.Add(2*time.Minute))
+	bestPost := mustPost(t, communityID, authorID, "Best confidence", now.Add(time.Minute))
+	topPost := mustPost(t, communityID, authorID, "Top score", now)
+
+	for _, post := range []*postdomain.Post{lowConfidencePost, bestPost, topPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+
+	insertTestPostVote(ctx, t, pool, lowConfidencePost.ID(), insertTestUser(ctx, t, pool), 1)
+	for i := 0; i < 5; i++ {
+		insertTestPostVote(ctx, t, pool, bestPost.ID(), insertTestUser(ctx, t, pool), 1)
+	}
+	insertTestPostVote(ctx, t, pool, bestPost.ID(), insertTestUser(ctx, t, pool), -1)
+	for i := 0; i < 8; i++ {
+		insertTestPostVote(ctx, t, pool, topPost.ID(), insertTestUser(ctx, t, pool), 1)
+	}
+	for i := 0; i < 3; i++ {
+		insertTestPostVote(ctx, t, pool, topPost.ID(), insertTestUser(ctx, t, pool), -1)
+	}
+
+	topPosts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortTop, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByCommunity top returned error: %v", err)
+	}
+	if len(topPosts) != 3 || topPosts[0].ID() != topPost.ID() {
+		t.Fatalf("expected top score post first, got %#v", postIDs(topPosts))
+	}
+
+	bestPosts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortBest, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByCommunity best returned error: %v", err)
+	}
+	if len(bestPosts) != 3 || bestPosts[0].ID() != bestPost.ID() {
+		t.Fatalf("expected best confidence post first, got %#v", postIDs(bestPosts))
+	}
+
+	risingPosts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortRising, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByCommunity rising returned error: %v", err)
+	}
+	if len(risingPosts) != 3 || risingPosts[0].ID() != topPost.ID() {
+		t.Fatalf("expected highest recent interaction post first, got %#v", postIDs(risingPosts))
+	}
+}
+
 func TestPostgresPostRepositoryListVisibleInPublicCommunitiesHotSort(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)
@@ -444,6 +500,14 @@ func cleanupPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id postd
 			t.Fatalf("cleanup post %q: %v", id.String(), err)
 		}
 	})
+}
+
+func postIDs(posts []postdomain.Post) []postdomain.PostID {
+	ids := make([]postdomain.PostID, 0, len(posts))
+	for _, post := range posts {
+		ids = append(ids, post.ID())
+	}
+	return ids
 }
 
 func mustPost(t *testing.T, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, now time.Time) *postdomain.Post {

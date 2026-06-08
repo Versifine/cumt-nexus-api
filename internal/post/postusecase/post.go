@@ -25,8 +25,11 @@ const (
 type PostListSort string
 
 const (
-	PostListSortNew PostListSort = "new"
-	PostListSortHot PostListSort = "hot"
+	PostListSortBest   PostListSort = "best"
+	PostListSortHot    PostListSort = "hot"
+	PostListSortNew    PostListSort = "new"
+	PostListSortTop    PostListSort = "top"
+	PostListSortRising PostListSort = "rising"
 )
 
 type CommunityPolicy interface {
@@ -736,7 +739,7 @@ func normalizePostListSort(raw string) (PostListSort, error) {
 		return PostListSortNew, nil
 	}
 	switch sort {
-	case PostListSortNew, PostListSortHot:
+	case PostListSortBest, PostListSortHot, PostListSortNew, PostListSortTop, PostListSortRising:
 		return sort, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "post list sort is invalid")

@@ -143,122 +143,48 @@ func (repo *PostgresPostRepository) MarkDeleted(ctx context.Context, post postdo
 }
 
 func (repo *PostgresPostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
-	if sort == postusecase.PostListSortHot {
-		return repo.listVisibleByCommunityHot(ctx, communityID, limit, offset)
-	}
-	return repo.listVisibleByCommunityNew(ctx, communityID, limit, offset)
-}
-
-func (repo *PostgresPostRepository) listVisibleByCommunityNew(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error) {
-	const query = `
-		SELECT
-			id::text,
-			community_id::text,
-			author_id::text,
-			title,
-			body,
-			status,
-			created_at,
-			updated_at
-		FROM posts
-		WHERE community_id = $1::uuid
-			AND status = 'visible'
-		ORDER BY created_at DESC, id DESC
-		LIMIT $2
-		OFFSET $3
-	`
-
-	rows, err := repo.pool.Query(ctx, query, communityID.String(), limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list visible posts by community: %w", err)
-	}
-	defer rows.Close()
-
-	var posts []postdomain.Post
-	for rows.Next() {
-		post, err := scanPost(rows)
-		if err != nil {
-			return nil, err
-		}
-		posts = append(posts, *post)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible posts by community: %w", err)
-	}
-
-	return posts, nil
-}
-
-func (repo *PostgresPostRepository) listVisibleByCommunityHot(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]postdomain.Post, error) {
-	const query = `
-		SELECT
-			posts.id::text,
-			posts.community_id::text,
-			posts.author_id::text,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		FROM posts
-		LEFT JOIN post_votes ON post_votes.post_id = posts.id
-		WHERE posts.community_id = $1::uuid
-			AND posts.status = 'visible'
-		GROUP BY
-			posts.id,
-			posts.community_id,
-			posts.author_id,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		ORDER BY
-			COALESCE(SUM(post_votes.value), 0) DESC,
-			COUNT(post_votes.value) FILTER (WHERE post_votes.value = 1) DESC,
-			posts.created_at DESC,
-			posts.id DESC
-		LIMIT $2
-		OFFSET $3
-	`
-
-	rows, err := repo.pool.Query(ctx, query, communityID.String(), limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list visible hot posts by community: %w", err)
-	}
-	defer rows.Close()
-
-	var posts []postdomain.Post
-	for rows.Next() {
-		post, err := scanPost(rows)
-		if err != nil {
-			return nil, err
-		}
-		posts = append(posts, *post)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible hot posts by community: %w", err)
-	}
-
-	return posts, nil
+	return repo.listVisiblePosts(
+		ctx,
+		"list visible posts by community",
+		"",
+		"posts.community_id = $1::uuid AND posts.status = 'visible'",
+		[]any{communityID.String()},
+		sort,
+		limit,
+		offset,
+	)
 }
 
 func (repo *PostgresPostRepository) ListVisibleInPublicCommunities(ctx context.Context, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
-	if sort == postusecase.PostListSortHot {
-		return repo.listVisibleInPublicCommunitiesHot(ctx, limit, offset)
-	}
-	return repo.listVisibleInPublicCommunitiesNew(ctx, limit, offset)
+	return repo.listVisiblePosts(
+		ctx,
+		"list visible posts in public communities",
+		"INNER JOIN communities ON communities.id = posts.community_id",
+		"posts.status = 'visible' AND communities.status = 'active' AND communities.visibility = 'public'",
+		nil,
+		sort,
+		limit,
+		offset,
+	)
 }
 
 func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
-	if sort == postusecase.PostListSortHot {
-		return repo.listVisibleByAuthorInPublicCommunitiesHot(ctx, authorID, limit, offset)
-	}
-	return repo.listVisibleByAuthorInPublicCommunitiesNew(ctx, authorID, limit, offset)
+	return repo.listVisiblePosts(
+		ctx,
+		"list visible posts by author in public communities",
+		"INNER JOIN communities ON communities.id = posts.community_id",
+		"posts.author_id = $1::uuid AND posts.status = 'visible' AND communities.status = 'active' AND communities.visibility = 'public'",
+		[]any{authorID.String()},
+		sort,
+		limit,
+		offset,
+	)
 }
 
-func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesNew(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
-	const query = `
+func (repo *PostgresPostRepository) listVisiblePosts(ctx context.Context, operation string, scopeJoin string, whereClause string, args []any, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+	limitPlaceholder := len(args) + 1
+	offsetPlaceholder := len(args) + 2
+	query := fmt.Sprintf(`
 		SELECT
 			posts.id::text,
 			posts.community_id::text,
@@ -269,18 +195,18 @@ func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesNew(ctx contex
 			posts.created_at,
 			posts.updated_at
 		FROM posts
-		INNER JOIN communities ON communities.id = posts.community_id
-		WHERE posts.status = 'visible'
-			AND communities.status = 'active'
-			AND communities.visibility = 'public'
-		ORDER BY posts.created_at DESC, posts.id DESC
-		LIMIT $1
-		OFFSET $2
-	`
+		%s
+		%s
+		WHERE %s
+		ORDER BY %s
+		LIMIT $%d
+		OFFSET $%d
+	`, scopeJoin, postListStatsJoin(sort), whereClause, postListOrderBy(sort), limitPlaceholder, offsetPlaceholder)
 
-	rows, err := repo.pool.Query(ctx, query, limit, offset)
+	queryArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := repo.pool.Query(ctx, query, queryArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("list visible posts in public communities: %w", err)
+		return nil, fmt.Errorf("%s: %w", operation, err)
 	}
 	defer rows.Close()
 
@@ -293,110 +219,107 @@ func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesNew(ctx contex
 		posts = append(posts, *post)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible posts in public communities: %w", err)
+		return nil, fmt.Errorf("iterate %s: %w", operation, err)
 	}
 
 	return posts, nil
 }
 
-func (repo *PostgresPostRepository) listVisibleByAuthorInPublicCommunitiesNew(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error) {
-	const query = `
-		SELECT
-			posts.id::text,
-			posts.community_id::text,
-			posts.author_id::text,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		FROM posts
-		INNER JOIN communities ON communities.id = posts.community_id
-		WHERE posts.author_id = $1::uuid
-			AND posts.status = 'visible'
-			AND communities.status = 'active'
-			AND communities.visibility = 'public'
-		ORDER BY posts.created_at DESC, posts.id DESC
-		LIMIT $2
-		OFFSET $3
+func postListStatsJoin(sort postusecase.PostListSort) string {
+	if sort == postusecase.PostListSortNew {
+		return ""
+	}
+	return `
+		LEFT JOIN (
+			SELECT
+				post_id,
+				COUNT(*)::int AS vote_count,
+				COUNT(*) FILTER (WHERE value = 1)::int AS upvote_count,
+				COUNT(*) FILTER (WHERE value = -1)::int AS downvote_count,
+				COALESCE(SUM(value), 0)::int AS net_score,
+				COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '6 hours')::int AS recent_vote_count
+			FROM post_votes
+			GROUP BY post_id
+		) AS post_vote_stats ON post_vote_stats.post_id = posts.id
+		LEFT JOIN (
+			SELECT
+				post_id,
+				COUNT(*)::int AS comment_count,
+				COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '6 hours')::int AS recent_comment_count
+			FROM comments
+			WHERE status = 'visible'
+			GROUP BY post_id
+		) AS post_comment_stats ON post_comment_stats.post_id = posts.id
+		LEFT JOIN (
+			SELECT
+				post_id,
+				COUNT(*)::int AS save_count,
+				COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '6 hours')::int AS recent_save_count
+			FROM post_saves
+			GROUP BY post_id
+		) AS post_save_stats ON post_save_stats.post_id = posts.id
 	`
-
-	rows, err := repo.pool.Query(ctx, query, authorID.String(), limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list visible posts by author in public communities: %w", err)
-	}
-	defer rows.Close()
-
-	var posts []postdomain.Post
-	for rows.Next() {
-		post, err := scanPost(rows)
-		if err != nil {
-			return nil, err
-		}
-		posts = append(posts, *post)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible posts by author in public communities: %w", err)
-	}
-
-	return posts, nil
 }
 
-func (repo *PostgresPostRepository) listVisibleByAuthorInPublicCommunitiesHot(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error) {
-	const query = `
-		SELECT
-			posts.id::text,
-			posts.community_id::text,
-			posts.author_id::text,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		FROM posts
-		INNER JOIN communities ON communities.id = posts.community_id
-		LEFT JOIN post_votes ON post_votes.post_id = posts.id
-		WHERE posts.author_id = $1::uuid
-			AND posts.status = 'visible'
-			AND communities.status = 'active'
-			AND communities.visibility = 'public'
-		GROUP BY
-			posts.id,
-			posts.community_id,
-			posts.author_id,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		ORDER BY
-			COALESCE(SUM(post_votes.value), 0) DESC,
-			COUNT(post_votes.value) FILTER (WHERE post_votes.value = 1) DESC,
+func postListOrderBy(sort postusecase.PostListSort) string {
+	switch sort {
+	case postusecase.PostListSortBest:
+		return `
+			CASE
+				WHEN COALESCE(post_vote_stats.vote_count, 0) = 0 THEN 0
+				ELSE (
+					(
+						(COALESCE(post_vote_stats.upvote_count, 0)::double precision / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+						+ (1.9208 / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+						- (
+							1.96 * sqrt(
+								(
+									(
+										(COALESCE(post_vote_stats.upvote_count, 0)::double precision / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+										* (1 - (COALESCE(post_vote_stats.upvote_count, 0)::double precision / COALESCE(post_vote_stats.vote_count, 0)::double precision))
+									)
+									+ (0.9604 / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+								) / COALESCE(post_vote_stats.vote_count, 0)::double precision
+							)
+						)
+					) / (1 + (3.8416 / COALESCE(post_vote_stats.vote_count, 0)::double precision))
+				)
+			END DESC,
+			COALESCE(post_vote_stats.net_score, 0) DESC,
 			posts.created_at DESC,
 			posts.id DESC
-		LIMIT $2
-		OFFSET $3
-	`
-
-	rows, err := repo.pool.Query(ctx, query, authorID.String(), limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list visible hot posts by author in public communities: %w", err)
+		`
+	case postusecase.PostListSortHot:
+		return `
+			(
+				COALESCE(post_vote_stats.net_score, 0) * 3
+				+ COALESCE(post_comment_stats.comment_count, 0) * 2
+				+ COALESCE(post_save_stats.save_count, 0) * 4
+			) / POWER(GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)) / 3600.0, 0) + 2, 1.3) DESC,
+			COALESCE(post_vote_stats.upvote_count, 0) DESC,
+			posts.created_at DESC,
+			posts.id DESC
+		`
+	case postusecase.PostListSortTop:
+		return `
+			COALESCE(post_vote_stats.net_score, 0) DESC,
+			COALESCE(post_vote_stats.upvote_count, 0) DESC,
+			posts.created_at DESC,
+			posts.id DESC
+		`
+	case postusecase.PostListSortRising:
+		return `
+			(
+				COALESCE(post_vote_stats.recent_vote_count, 0) * 3
+				+ COALESCE(post_comment_stats.recent_comment_count, 0) * 2
+				+ COALESCE(post_save_stats.recent_save_count, 0) * 4
+			) / POWER(GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)) / 3600.0, 0) + 0.5, 1.2) DESC,
+			posts.created_at DESC,
+			posts.id DESC
+		`
+	default:
+		return "posts.created_at DESC, posts.id DESC"
 	}
-	defer rows.Close()
-
-	var posts []postdomain.Post
-	for rows.Next() {
-		post, err := scanPost(rows)
-		if err != nil {
-			return nil, err
-		}
-		posts = append(posts, *post)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible hot posts by author in public communities: %w", err)
-	}
-
-	return posts, nil
 }
 
 func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]postusecase.PostMetadata, error) {
@@ -657,62 +580,6 @@ func (repo *PostgresPostRepository) SummarizeSavesByPostIDs(ctx context.Context,
 	}
 
 	return result, nil
-}
-
-func (repo *PostgresPostRepository) listVisibleInPublicCommunitiesHot(ctx context.Context, limit int, offset int) ([]postdomain.Post, error) {
-	const query = `
-		SELECT
-			posts.id::text,
-			posts.community_id::text,
-			posts.author_id::text,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		FROM posts
-		INNER JOIN communities ON communities.id = posts.community_id
-		LEFT JOIN post_votes ON post_votes.post_id = posts.id
-		WHERE posts.status = 'visible'
-			AND communities.status = 'active'
-			AND communities.visibility = 'public'
-		GROUP BY
-			posts.id,
-			posts.community_id,
-			posts.author_id,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		ORDER BY
-			COALESCE(SUM(post_votes.value), 0) DESC,
-			COUNT(post_votes.value) FILTER (WHERE post_votes.value = 1) DESC,
-			posts.created_at DESC,
-			posts.id DESC
-		LIMIT $1
-		OFFSET $2
-	`
-
-	rows, err := repo.pool.Query(ctx, query, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list visible hot posts in public communities: %w", err)
-	}
-	defer rows.Close()
-
-	var posts []postdomain.Post
-	for rows.Next() {
-		post, err := scanPost(rows)
-		if err != nil {
-			return nil, err
-		}
-		posts = append(posts, *post)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible hot posts in public communities: %w", err)
-	}
-
-	return posts, nil
 }
 
 type rowScanner interface {

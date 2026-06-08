@@ -17,7 +17,7 @@ type CommentRepository interface {
 	FindVisibleByID(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error)
 	UpdateContent(ctx context.Context, comment commentdomain.Comment) error
 	MarkDeleted(ctx context.Context, comment commentdomain.Comment) error
-	ListVisibleByPost(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error)
+	ListVisibleByPost(ctx context.Context, postID postdomain.PostID, sort CommentListSort, limit int, offset int) ([]commentdomain.Comment, error)
 	ListVisibleTreeByPost(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error)
 	ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]commentdomain.Comment, error)
 }

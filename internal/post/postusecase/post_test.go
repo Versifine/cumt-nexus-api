@@ -345,22 +345,36 @@ func TestListLatestPostsAnonymousViewerSkipsMyVoteLookup(t *testing.T) {
 	}
 }
 
-func TestListLatestPostsPassesHotSort(t *testing.T) {
-	var gotSort PostListSort
-	posts := &fakePostRepository{
-		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
-			gotSort = sort
-			return nil, nil
-		},
+func TestListLatestPostsPassesSupportedSort(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want PostListSort
+	}{
+		{raw: "best", want: PostListSortBest},
+		{raw: "hot", want: PostListSortHot},
+		{raw: "top", want: PostListSortTop},
+		{raw: "rising", want: PostListSortRising},
 	}
-	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now)
 
-	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{Sort: "hot"})
-	if err != nil {
-		t.Fatalf("ListLatestPosts returned error: %v", err)
-	}
-	if gotSort != PostListSortHot {
-		t.Fatalf("expected hot sort, got %q", gotSort)
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			var gotSort PostListSort
+			posts := &fakePostRepository{
+				listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+					gotSort = sort
+					return nil, nil
+				},
+			}
+			uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now)
+
+			_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{Sort: tt.raw})
+			if err != nil {
+				t.Fatalf("ListLatestPosts returned error: %v", err)
+			}
+			if gotSort != tt.want {
+				t.Fatalf("expected %q sort, got %q", tt.want, gotSort)
+			}
+		})
 	}
 }
 

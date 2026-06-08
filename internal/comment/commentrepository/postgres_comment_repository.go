@@ -144,24 +144,25 @@ func (repo *PostgresCommentRepository) MarkDeleted(ctx context.Context, comment 
 	return nil
 }
 
-func (repo *PostgresCommentRepository) ListVisibleByPost(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error) {
-	const query = `
+func (repo *PostgresCommentRepository) ListVisibleByPost(ctx context.Context, postID postdomain.PostID, sort commentusecase.CommentListSort, limit int, offset int) ([]commentdomain.Comment, error) {
+	query := fmt.Sprintf(`
 		SELECT
-			id::text,
-			post_id::text,
-			author_id::text,
-			parent_id::text,
-			body,
-			status,
-			created_at,
-			updated_at
+			comments.id::text,
+			comments.post_id::text,
+			comments.author_id::text,
+			comments.parent_id::text,
+			comments.body,
+			comments.status,
+			comments.created_at,
+			comments.updated_at
 		FROM comments
-		WHERE post_id = $1::uuid
-			AND status = 'visible'
-		ORDER BY created_at DESC, id DESC
+		%s
+		WHERE comments.post_id = $1::uuid
+			AND comments.status = 'visible'
+		ORDER BY %s
 		LIMIT $2
 		OFFSET $3
-	`
+	`, commentListStatsJoin(sort), commentListOrderBy(sort))
 
 	rows, err := repo.pool.Query(ctx, query, postID.String(), limit, offset)
 	if err != nil {
@@ -182,6 +183,83 @@ func (repo *PostgresCommentRepository) ListVisibleByPost(ctx context.Context, po
 	}
 
 	return comments, nil
+}
+
+func commentListStatsJoin(sort commentusecase.CommentListSort) string {
+	switch sort {
+	case commentusecase.CommentListSortBest, commentusecase.CommentListSortTop, commentusecase.CommentListSortControversial:
+		return `
+		LEFT JOIN (
+			SELECT
+				comment_id,
+				COUNT(*)::int AS vote_count,
+				COUNT(*) FILTER (WHERE value = 1)::int AS upvote_count,
+				COUNT(*) FILTER (WHERE value = -1)::int AS downvote_count,
+				COALESCE(SUM(value), 0)::int AS net_score
+			FROM comment_votes
+			GROUP BY comment_id
+		) AS comment_vote_stats ON comment_vote_stats.comment_id = comments.id
+	`
+	default:
+		return ""
+	}
+}
+
+func commentListOrderBy(sort commentusecase.CommentListSort) string {
+	switch sort {
+	case commentusecase.CommentListSortOld:
+		return "comments.created_at ASC, comments.id ASC"
+	case commentusecase.CommentListSortTop:
+		return `
+			COALESCE(comment_vote_stats.net_score, 0) DESC,
+			COALESCE(comment_vote_stats.upvote_count, 0) DESC,
+			comments.created_at DESC,
+			comments.id DESC
+		`
+	case commentusecase.CommentListSortBest:
+		return `
+			CASE
+				WHEN COALESCE(comment_vote_stats.vote_count, 0) = 0 THEN 0
+				ELSE (
+					(
+						(COALESCE(comment_vote_stats.upvote_count, 0)::double precision / COALESCE(comment_vote_stats.vote_count, 0)::double precision)
+						+ (1.9208 / COALESCE(comment_vote_stats.vote_count, 0)::double precision)
+						- (
+							1.96 * sqrt(
+								(
+									(
+										(COALESCE(comment_vote_stats.upvote_count, 0)::double precision / COALESCE(comment_vote_stats.vote_count, 0)::double precision)
+										* (1 - (COALESCE(comment_vote_stats.upvote_count, 0)::double precision / COALESCE(comment_vote_stats.vote_count, 0)::double precision))
+									)
+									+ (0.9604 / COALESCE(comment_vote_stats.vote_count, 0)::double precision)
+								) / COALESCE(comment_vote_stats.vote_count, 0)::double precision
+							)
+						)
+					) / (1 + (3.8416 / COALESCE(comment_vote_stats.vote_count, 0)::double precision))
+				)
+			END DESC,
+			COALESCE(comment_vote_stats.net_score, 0) DESC,
+			comments.created_at DESC,
+			comments.id DESC
+		`
+	case commentusecase.CommentListSortControversial:
+		return `
+			(
+				COALESCE(comment_vote_stats.vote_count, 0)
+				* (
+					1 - (
+						ABS(COALESCE(comment_vote_stats.upvote_count, 0) - COALESCE(comment_vote_stats.downvote_count, 0))::double precision
+						/ GREATEST(COALESCE(comment_vote_stats.vote_count, 0), 1)::double precision
+					)
+				)
+			) DESC,
+			COALESCE(comment_vote_stats.vote_count, 0) DESC,
+			comments.created_at DESC,
+			comments.id DESC
+		`
+	default:
+		return "comments.created_at DESC, comments.id DESC"
+	}
 }
 
 func (repo *PostgresCommentRepository) ListVisibleTreeByPost(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error) {

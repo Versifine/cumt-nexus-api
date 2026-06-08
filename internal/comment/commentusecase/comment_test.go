@@ -214,6 +214,33 @@ func TestListPostCommentsNormalizesPagination(t *testing.T) {
 	}
 }
 
+func TestListPostCommentsPassesFlatSort(t *testing.T) {
+	post := mustPost(t, time.Now().UTC())
+	comment := mustComment(t, post.ID(), userdomain.NewGeneratedUserID(), nil, "Body", time.Now().UTC())
+	comments := &fakeCommentRepository{
+		listVisibleByPostFunc: func(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error) {
+			return []commentdomain.Comment{*comment}, nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, time.Now)
+
+	result, err := uc.ListPostComments(context.Background(), ListPostCommentsInput{
+		PostID: post.ID().String(),
+		Sort:   "top",
+	})
+	if err != nil {
+		t.Fatalf("ListPostComments returned error: %v", err)
+	}
+	if comments.listVisibleSort != CommentListSortTop || result.Sort != CommentListSortTop.String() {
+		t.Fatalf("expected top sort, got repo=%q result=%q", comments.listVisibleSort, result.Sort)
+	}
+}
+
 func TestListPostCommentsReturnsVoteView(t *testing.T) {
 	post := mustPost(t, time.Now().UTC())
 	viewerID := userdomain.NewGeneratedUserID()
@@ -354,6 +381,53 @@ func TestListPostCommentsBuildsTreePreorder(t *testing.T) {
 	}
 }
 
+func TestListPostCommentsSortsTreeByTopVotes(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	lowScoreRoot := mustComment(t, post.ID(), authorID, nil, "Low score", now.Add(time.Minute))
+	highScoreRoot := mustComment(t, post.ID(), authorID, nil, "High score", now)
+
+	comments := &fakeCommentRepository{
+		listVisibleTreeByPostFunc: func(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error) {
+			return []commentdomain.Comment{*lowScoreRoot, *highScoreRoot}, nil
+		},
+		voteSummaries: map[commentdomain.CommentID]votedomain.CommentVoteSummary{
+			lowScoreRoot.ID(): {
+				CommentID:     lowScoreRoot.ID(),
+				UpvoteCount:   1,
+				DownvoteCount: 0,
+			},
+			highScoreRoot.ID(): {
+				CommentID:     highScoreRoot.ID(),
+				UpvoteCount:   5,
+				DownvoteCount: 1,
+			},
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, time.Now)
+
+	result, err := uc.ListPostComments(context.Background(), ListPostCommentsInput{
+		PostID: post.ID().String(),
+		View:   "tree",
+		Sort:   "top",
+	})
+	if err != nil {
+		t.Fatalf("ListPostComments returned error: %v", err)
+	}
+	if len(result.Comments) != 2 {
+		t.Fatalf("expected two comments, got %d", len(result.Comments))
+	}
+	if result.Comments[0].ID != highScoreRoot.ID().String() || result.Comments[1].ID != lowScoreRoot.ID().String() {
+		t.Fatalf("expected top-vote tree order [%s %s], got %#v", highScoreRoot.ID().String(), lowScoreRoot.ID().String(), result.Comments)
+	}
+}
+
 func TestListPostCommentsRejectsInvalidTreeInput(t *testing.T) {
 	uc := NewCommentUseCase(&fakeCommentRepository{}, &fakePostRepository{}, time.Now)
 
@@ -362,7 +436,7 @@ func TestListPostCommentsRejectsInvalidTreeInput(t *testing.T) {
 		input ListPostCommentsInput
 	}{
 		{name: "invalid view", input: ListPostCommentsInput{PostID: postdomain.NewGeneratedPostID().String(), View: "nested"}},
-		{name: "invalid sort", input: ListPostCommentsInput{PostID: postdomain.NewGeneratedPostID().String(), Sort: "old"}},
+		{name: "invalid sort", input: ListPostCommentsInput{PostID: postdomain.NewGeneratedPostID().String(), Sort: "popular"}},
 		{name: "invalid max depth", input: ListPostCommentsInput{PostID: postdomain.NewGeneratedPostID().String(), MaxDepth: -1}},
 	}
 	for _, tt := range tests {
@@ -613,6 +687,7 @@ type fakeCommentRepository struct {
 	listVisibleByPostFunc     func(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error)
 	listVisibleTreeByPostFunc func(ctx context.Context, postID postdomain.PostID) ([]commentdomain.Comment, error)
 	listVisibleByAuthorFunc   func(ctx context.Context, authorID userdomain.UserID, limit int, offset int) ([]commentdomain.Comment, error)
+	listVisibleSort           CommentListSort
 	upsertVoteFunc            func(ctx context.Context, vote votedomain.CommentVote) error
 	deleteVoteFunc            func(ctx context.Context, commentID commentdomain.CommentID, userID userdomain.UserID) error
 	upsertVoteCalled          bool
@@ -680,7 +755,8 @@ func (f *fakeCommentRepository) MarkDeleted(ctx context.Context, comment comment
 	return nil
 }
 
-func (f *fakeCommentRepository) ListVisibleByPost(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error) {
+func (f *fakeCommentRepository) ListVisibleByPost(ctx context.Context, postID postdomain.PostID, sort CommentListSort, limit int, offset int) ([]commentdomain.Comment, error) {
+	f.listVisibleSort = sort
 	if f.listVisibleByPostFunc != nil {
 		return f.listVisibleByPostFunc(ctx, postID, limit, offset)
 	}

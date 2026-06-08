@@ -11,6 +11,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/comment/commentusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
@@ -59,7 +60,7 @@ func TestPostgresCommentRepositoryCreateFindListAndNotFound(t *testing.T) {
 		t.Fatalf("expected parent %q, got %q present=%t", parentID.String(), gotParentID.String(), ok)
 	}
 
-	comments, err := repo.ListVisibleByPost(ctx, postID, 20, 0)
+	comments, err := repo.ListVisibleByPost(ctx, postID, commentusecase.CommentListSortNew, 20, 0)
 	if err != nil {
 		t.Fatalf("ListVisibleByPost returned error: %v", err)
 	}
@@ -146,6 +147,60 @@ func TestPostgresCommentRepositoryUpdateContentAndMarkDeleted(t *testing.T) {
 	}
 }
 
+func TestPostgresCommentRepositoryListVisibleByPostSortsByVotes(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommentRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "comment-sort-"+randomSuffix())
+	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Comment Sort Post")
+
+	lowScore := mustComment(t, postID, authorID, nil, "Low score", now.Add(2*time.Minute))
+	topScore := mustComment(t, postID, authorID, nil, "Top score", now.Add(time.Minute))
+	controversial := mustComment(t, postID, authorID, nil, "Controversial", now)
+	for _, comment := range []*commentdomain.Comment{lowScore, topScore, controversial} {
+		if err := repo.Create(ctx, *comment); err != nil {
+			t.Fatalf("Create comment returned error: %v", err)
+		}
+		cleanupComment(ctx, t, pool, comment.ID())
+	}
+
+	insertTestCommentVote(ctx, t, pool, lowScore.ID(), insertTestUser(ctx, t, pool), 1)
+	for i := 0; i < 5; i++ {
+		insertTestCommentVote(ctx, t, pool, topScore.ID(), insertTestUser(ctx, t, pool), 1)
+	}
+	insertTestCommentVote(ctx, t, pool, topScore.ID(), insertTestUser(ctx, t, pool), -1)
+	for i := 0; i < 3; i++ {
+		insertTestCommentVote(ctx, t, pool, controversial.ID(), insertTestUser(ctx, t, pool), 1)
+		insertTestCommentVote(ctx, t, pool, controversial.ID(), insertTestUser(ctx, t, pool), -1)
+	}
+
+	topComments, err := repo.ListVisibleByPost(ctx, postID, commentusecase.CommentListSortTop, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByPost top returned error: %v", err)
+	}
+	if len(topComments) != 3 || topComments[0].ID() != topScore.ID() {
+		t.Fatalf("expected top score comment first, got %#v", commentIDs(topComments))
+	}
+
+	controversialComments, err := repo.ListVisibleByPost(ctx, postID, commentusecase.CommentListSortControversial, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByPost controversial returned error: %v", err)
+	}
+	if len(controversialComments) != 3 || controversialComments[0].ID() != controversial.ID() {
+		t.Fatalf("expected controversial comment first, got %#v", commentIDs(controversialComments))
+	}
+
+	oldComments, err := repo.ListVisibleByPost(ctx, postID, commentusecase.CommentListSortOld, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByPost old returned error: %v", err)
+	}
+	if len(oldComments) != 3 || oldComments[0].ID() != controversial.ID() || oldComments[2].ID() != lowScore.ID() {
+		t.Fatalf("expected old comment order, got %#v", commentIDs(oldComments))
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -170,7 +225,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireCommentSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "comment_votes"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -314,6 +369,34 @@ func insertTestPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, commu
 	return id
 }
 
+func insertTestCommentVote(ctx context.Context, t *testing.T, pool *pgxpool.Pool, commentID commentdomain.CommentID, userID userdomain.UserID, value int) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO comment_votes (
+			comment_id,
+			user_id,
+			value,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $4)
+	`, commentID.String(), userID.String(), value, testNow())
+	if err != nil {
+		t.Fatalf("insert test comment vote: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `
+			DELETE FROM comment_votes
+			WHERE comment_id = $1::uuid
+				AND user_id = $2::uuid
+		`, commentID.String(), userID.String()); err != nil {
+			t.Fatalf("cleanup test comment vote comment=%q user=%q: %v", commentID.String(), userID.String(), err)
+		}
+	})
+}
+
 func cleanupComment(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id commentdomain.CommentID) {
 	t.Helper()
 
@@ -336,6 +419,14 @@ func mustComment(t *testing.T, postID postdomain.PostID, authorID userdomain.Use
 		t.Fatalf("NewComment returned error: %v", err)
 	}
 	return comment
+}
+
+func commentIDs(comments []commentdomain.Comment) []commentdomain.CommentID {
+	ids := make([]commentdomain.CommentID, 0, len(comments))
+	for _, comment := range comments {
+		ids = append(ids, comment.ID())
+	}
+	return ids
 }
 
 func mustCommentBody(t *testing.T, raw string) commentdomain.CommentBody {

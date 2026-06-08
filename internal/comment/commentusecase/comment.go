@@ -3,6 +3,7 @@ package commentusecase
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -34,7 +35,11 @@ const (
 type CommentListSort string
 
 const (
-	CommentListSortNew CommentListSort = "new"
+	CommentListSortBest          CommentListSort = "best"
+	CommentListSortTop           CommentListSort = "top"
+	CommentListSortNew           CommentListSort = "new"
+	CommentListSortOld           CommentListSort = "old"
+	CommentListSortControversial CommentListSort = "controversial"
 )
 
 type CommentUseCase struct {
@@ -291,7 +296,7 @@ func (uc *CommentUseCase) ListPostComments(ctx context.Context, input ListPostCo
 		return uc.listPostCommentsTree(ctx, post.ID(), input.ViewerID, listSort, limit, offset, maxDepth)
 	}
 
-	comments, err := uc.comments.ListVisibleByPost(ctx, post.ID(), limit, offset)
+	comments, err := uc.comments.ListVisibleByPost(ctx, post.ID(), listSort, limit, offset)
 	if err != nil {
 		return ListPostCommentsResult{}, fmt.Errorf("list post comments: %w", err)
 	}
@@ -328,9 +333,13 @@ func (uc *CommentUseCase) listPostCommentsTree(ctx context.Context, postID postd
 	if err != nil {
 		return ListPostCommentsResult{}, fmt.Errorf("list post comment tree: %w", err)
 	}
+	voteSummaries, err := uc.loadTreeSortVoteSummaries(ctx, comments, listSort)
+	if err != nil {
+		return ListPostCommentsResult{}, err
+	}
 
 	result := ListPostCommentsResult{
-		Comments: buildCommentTree(comments, viewerID, listSort, limit, offset, maxDepth),
+		Comments: buildCommentTree(comments, viewerID, listSort, voteSummaries, limit, offset, maxDepth),
 		View:     CommentListViewTree.String(),
 		Sort:     listSort.String(),
 		Limit:    limit,
@@ -605,7 +614,7 @@ func normalizeCommentListSort(raw string) (CommentListSort, error) {
 		return CommentListSortNew, nil
 	}
 	switch listSort {
-	case CommentListSortNew:
+	case CommentListSortBest, CommentListSortTop, CommentListSortNew, CommentListSortOld, CommentListSortControversial:
 		return listSort, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "comment list sort is invalid")
@@ -766,6 +775,32 @@ func (uc *CommentUseCase) attachCommentVotes(ctx context.Context, comments []Com
 
 	applyCommentVoteViews(comments, summaries, myVotes)
 	return comments, nil
+}
+
+func (uc *CommentUseCase) loadTreeSortVoteSummaries(ctx context.Context, comments []commentdomain.Comment, listSort CommentListSort) (map[commentdomain.CommentID]votedomain.CommentVoteSummary, error) {
+	summaries := make(map[commentdomain.CommentID]votedomain.CommentVoteSummary, len(comments))
+	if len(comments) == 0 || uc.votes == nil || !commentListSortUsesVotes(listSort) {
+		return summaries, nil
+	}
+
+	commentIDs := make([]commentdomain.CommentID, 0, len(comments))
+	for _, comment := range comments {
+		commentIDs = append(commentIDs, comment.ID())
+	}
+	loaded, err := uc.votes.SummarizeCommentVotesByIDs(ctx, commentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("summarize comment votes for tree sort: %w", err)
+	}
+	return loaded, nil
+}
+
+func commentListSortUsesVotes(listSort CommentListSort) bool {
+	switch listSort {
+	case CommentListSortBest, CommentListSortTop, CommentListSortControversial:
+		return true
+	default:
+		return false
+	}
 }
 
 func (uc *CommentUseCase) loadCommentMetadataViews(ctx context.Context, comments []commentdomain.Comment) (map[commentdomain.CommentID]CommentMetadata, error) {
@@ -965,7 +1000,7 @@ func toAttachmentDTOs(attachments []mediadomain.Attachment) []Attachment {
 	return result
 }
 
-func buildCommentTree(comments []commentdomain.Comment, viewerID userdomain.UserID, listSort CommentListSort, limit int, offset int, maxDepth int) []Comment {
+func buildCommentTree(comments []commentdomain.Comment, viewerID userdomain.UserID, listSort CommentListSort, voteSummaries map[commentdomain.CommentID]votedomain.CommentVoteSummary, limit int, offset int, maxDepth int) []Comment {
 	childrenByParent := make(map[commentdomain.CommentID][]commentdomain.Comment)
 	byID := make(map[commentdomain.CommentID]commentdomain.Comment, len(comments))
 	for _, comment := range comments {
@@ -986,9 +1021,9 @@ func buildCommentTree(comments []commentdomain.Comment, viewerID userdomain.User
 		childrenByParent[parentID] = append(childrenByParent[parentID], comment)
 	}
 
-	sortComments(roots, listSort)
+	sortComments(roots, listSort, voteSummaries)
 	for parentID, children := range childrenByParent {
-		sortComments(children, listSort)
+		sortComments(children, listSort, voteSummaries)
 		childrenByParent[parentID] = children
 	}
 
@@ -1026,14 +1061,84 @@ func appendCommentPreorder(result *[]Comment, comment commentdomain.Comment, dep
 	}
 }
 
-func sortComments(comments []commentdomain.Comment, listSort CommentListSort) {
+func sortComments(comments []commentdomain.Comment, listSort CommentListSort, voteSummaries map[commentdomain.CommentID]votedomain.CommentVoteSummary) {
 	sort.SliceStable(comments, func(left int, right int) bool {
-		if listSort == CommentListSortNew {
+		switch listSort {
+		case CommentListSortOld:
+			if comments[left].CreatedAt().Equal(comments[right].CreatedAt()) {
+				return comments[left].ID().String() < comments[right].ID().String()
+			}
+			return comments[left].CreatedAt().Before(comments[right].CreatedAt())
+		case CommentListSortTop:
+			leftSummary := voteSummaries[comments[left].ID()]
+			rightSummary := voteSummaries[comments[right].ID()]
+			if leftSummary.Score() != rightSummary.Score() {
+				return leftSummary.Score() > rightSummary.Score()
+			}
+			if leftSummary.UpvoteCount != rightSummary.UpvoteCount {
+				return leftSummary.UpvoteCount > rightSummary.UpvoteCount
+			}
+			return newerCommentFirst(comments[left], comments[right])
+		case CommentListSortBest:
+			leftSummary := voteSummaries[comments[left].ID()]
+			rightSummary := voteSummaries[comments[right].ID()]
+			leftScore := wilsonLowerBound(leftSummary.UpvoteCount, leftSummary.DownvoteCount)
+			rightScore := wilsonLowerBound(rightSummary.UpvoteCount, rightSummary.DownvoteCount)
+			if leftScore != rightScore {
+				return leftScore > rightScore
+			}
+			if leftSummary.Score() != rightSummary.Score() {
+				return leftSummary.Score() > rightSummary.Score()
+			}
+			return newerCommentFirst(comments[left], comments[right])
+		case CommentListSortControversial:
+			leftSummary := voteSummaries[comments[left].ID()]
+			rightSummary := voteSummaries[comments[right].ID()]
+			leftScore := controversyScore(leftSummary.UpvoteCount, leftSummary.DownvoteCount)
+			rightScore := controversyScore(rightSummary.UpvoteCount, rightSummary.DownvoteCount)
+			if leftScore != rightScore {
+				return leftScore > rightScore
+			}
+			leftTotal := leftSummary.UpvoteCount + leftSummary.DownvoteCount
+			rightTotal := rightSummary.UpvoteCount + rightSummary.DownvoteCount
+			if leftTotal != rightTotal {
+				return leftTotal > rightTotal
+			}
+			return newerCommentFirst(comments[left], comments[right])
+		default:
 			if comments[left].CreatedAt().Equal(comments[right].CreatedAt()) {
 				return comments[left].ID().String() > comments[right].ID().String()
 			}
 			return comments[left].CreatedAt().After(comments[right].CreatedAt())
 		}
-		return false
 	})
+}
+
+func newerCommentFirst(left commentdomain.Comment, right commentdomain.Comment) bool {
+	if left.CreatedAt().Equal(right.CreatedAt()) {
+		return left.ID().String() > right.ID().String()
+	}
+	return left.CreatedAt().After(right.CreatedAt())
+}
+
+func wilsonLowerBound(upvotes int, downvotes int) float64 {
+	total := upvotes + downvotes
+	if total <= 0 {
+		return 0
+	}
+
+	z := 1.96
+	positiveRatio := float64(upvotes) / float64(total)
+	totalFloat := float64(total)
+	numerator := positiveRatio + (z*z)/(2*totalFloat) - z*math.Sqrt((positiveRatio*(1-positiveRatio)+(z*z)/(4*totalFloat))/totalFloat)
+	denominator := 1 + (z*z)/totalFloat
+	return numerator / denominator
+}
+
+func controversyScore(upvotes int, downvotes int) float64 {
+	total := upvotes + downvotes
+	if total <= 0 {
+		return 0
+	}
+	return float64(total) * (1 - (math.Abs(float64(upvotes-downvotes)) / float64(total)))
 }
