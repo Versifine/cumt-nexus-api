@@ -35,7 +35,8 @@ type publishCommentRequest struct {
 }
 
 type updateCommentRequest struct {
-	Body string `json:"body" binding:"required"`
+	Body          string    `json:"body" binding:"required"`
+	AttachmentIDs *[]string `json:"attachment_ids"`
 }
 
 type setCommentVoteRequest struct {
@@ -298,9 +299,10 @@ func (h *Handler) UpdateComment(c *gin.Context) {
 	}
 
 	result, err := h.comments.UpdateComment(c.Request.Context(), commentusecase.UpdateCommentInput{
-		CommentID: c.Param("id"),
-		ActorID:   userID,
-		Body:      req.Body,
+		CommentID:     c.Param("id"),
+		ActorID:       userID,
+		Body:          req.Body,
+		AttachmentIDs: req.AttachmentIDs,
 	})
 	if err != nil {
 		_ = c.Error(err)

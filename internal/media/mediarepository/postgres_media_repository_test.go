@@ -126,6 +126,107 @@ func TestPostgresMediaRepositoryBindReadyImagesToComment(t *testing.T) {
 	}
 }
 
+func TestPostgresMediaRepositoryReplaceReadyImagesForPost(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresMediaRepository(pool)
+	now := testNow()
+
+	uploaderID := insertTestUser(ctx, t, pool)
+	postID := postdomain.NewGeneratedPostID()
+	first := mustAttachment(t, uploaderID, now)
+	second := mustAttachment(t, uploaderID, now)
+	for _, attachment := range []*mediadomain.Attachment{first, second} {
+		if err := repo.Create(ctx, *attachment); err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+		cleanupAttachment(ctx, t, pool, attachment.ID())
+	}
+	if _, err := repo.BindReadyImagesToPost(ctx, postID, uploaderID, []mediadomain.AttachmentID{first.ID()}, 9, now.Add(time.Minute)); err != nil {
+		t.Fatalf("BindReadyImagesToPost returned error: %v", err)
+	}
+
+	replaced, err := repo.ReplaceReadyImagesForPost(ctx, postID, uploaderID, []mediadomain.AttachmentID{second.ID()}, 9, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("ReplaceReadyImagesForPost returned error: %v", err)
+	}
+	if len(replaced) != 1 || replaced[0].ID() != second.ID() || replaced[0].OwnerType() != mediadomain.OwnerTypePost {
+		t.Fatalf("unexpected replacement result: %#v", replaced)
+	}
+
+	listed, err := repo.ListReadyImagesByPostIDs(ctx, []postdomain.PostID{postID})
+	if err != nil {
+		t.Fatalf("ListReadyImagesByPostIDs returned error: %v", err)
+	}
+	if len(listed[postID]) != 1 || listed[postID][0].ID() != second.ID() {
+		t.Fatalf("expected only second attachment after replacement, got %#v", listed)
+	}
+	unbound, err := repo.FindByID(ctx, first.ID())
+	if err != nil {
+		t.Fatalf("FindByID first returned error: %v", err)
+	}
+	if unbound.OwnerType() != mediadomain.OwnerTypeNone || unbound.OwnerID() != "" {
+		t.Fatalf("expected first attachment to be unbound, got owner=%s %q", unbound.OwnerType(), unbound.OwnerID())
+	}
+
+	cleared, err := repo.ReplaceReadyImagesForPost(ctx, postID, uploaderID, []mediadomain.AttachmentID{}, 9, now.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("ReplaceReadyImagesForPost clear returned error: %v", err)
+	}
+	if len(cleared) != 0 {
+		t.Fatalf("expected empty clear result, got %#v", cleared)
+	}
+	listed, err = repo.ListReadyImagesByPostIDs(ctx, []postdomain.PostID{postID})
+	if err != nil {
+		t.Fatalf("ListReadyImagesByPostIDs after clear returned error: %v", err)
+	}
+	if len(listed[postID]) != 0 {
+		t.Fatalf("expected no attachments after clear, got %#v", listed)
+	}
+}
+
+func TestPostgresMediaRepositoryReplaceReadyImagesForComment(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresMediaRepository(pool)
+	now := testNow()
+
+	uploaderID := insertTestUser(ctx, t, pool)
+	commentID := commentdomain.NewGeneratedCommentID()
+	first := mustAttachment(t, uploaderID, now)
+	second := mustAttachment(t, uploaderID, now)
+	for _, attachment := range []*mediadomain.Attachment{first, second} {
+		if err := repo.Create(ctx, *attachment); err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+		cleanupAttachment(ctx, t, pool, attachment.ID())
+	}
+	if _, err := repo.BindReadyImagesToComment(ctx, commentID, uploaderID, []mediadomain.AttachmentID{first.ID()}, 1, now.Add(time.Minute)); err != nil {
+		t.Fatalf("BindReadyImagesToComment returned error: %v", err)
+	}
+
+	replaced, err := repo.ReplaceReadyImagesForComment(ctx, commentID, uploaderID, []mediadomain.AttachmentID{second.ID()}, 1, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("ReplaceReadyImagesForComment returned error: %v", err)
+	}
+	if len(replaced) != 1 || replaced[0].ID() != second.ID() || replaced[0].OwnerType() != mediadomain.OwnerTypeComment {
+		t.Fatalf("unexpected replacement result: %#v", replaced)
+	}
+
+	listed, err := repo.ListReadyImagesByCommentIDs(ctx, []commentdomain.CommentID{commentID})
+	if err != nil {
+		t.Fatalf("ListReadyImagesByCommentIDs returned error: %v", err)
+	}
+	if len(listed[commentID]) != 1 || listed[commentID][0].ID() != second.ID() {
+		t.Fatalf("expected only second attachment after replacement, got %#v", listed)
+	}
+	unbound, err := repo.FindByID(ctx, first.ID())
+	if err != nil {
+		t.Fatalf("FindByID first returned error: %v", err)
+	}
+	if unbound.OwnerType() != mediadomain.OwnerTypeNone || unbound.OwnerID() != "" {
+		t.Fatalf("expected first attachment to be unbound, got owner=%s %q", unbound.OwnerType(), unbound.OwnerID())
+	}
+}
+
 func TestPostgresMediaRepositoryBindRejectsOtherUploader(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresMediaRepository(pool)

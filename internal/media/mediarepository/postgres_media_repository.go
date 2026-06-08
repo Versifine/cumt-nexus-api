@@ -206,6 +206,122 @@ func (repo *PostgresMediaRepository) BindReadyImagesToPost(ctx context.Context, 
 	return result, nil
 }
 
+func (repo *PostgresMediaRepository) ReplaceReadyImagesForPost(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error) {
+	if maxCount <= 0 || len(attachmentIDs) > maxCount {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "post image attachment count is invalid")
+	}
+
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin post attachment replacement transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	attachmentsByID := make(map[mediadomain.AttachmentID]mediadomain.Attachment, len(attachmentIDs))
+	if len(attachmentIDs) > 0 {
+		attachments, err := lockAttachmentsByIDs(ctx, tx, attachmentIDs)
+		if err != nil {
+			return nil, err
+		}
+		if len(attachments) != len(attachmentIDs) {
+			return nil, apperr.New(apperr.CodeNotFound, "media attachment not found")
+		}
+		for _, attachment := range attachments {
+			if attachment.UploaderID() != uploaderID {
+				return nil, apperr.New(apperr.CodeNotFound, "media attachment not found")
+			}
+			if attachment.Kind() != mediadomain.AttachmentKindImage || attachment.Status() != mediadomain.AttachmentStatusReady {
+				return nil, apperr.New(apperr.CodeConflict, "media attachment is not ready")
+			}
+			if attachment.OwnerType() != mediadomain.OwnerTypeNone &&
+				!(attachment.OwnerType() == mediadomain.OwnerTypePost && attachment.OwnerID() == postID.String()) {
+				return nil, apperr.New(apperr.CodeConflict, "media attachment is already bound")
+			}
+			attachmentsByID[attachment.ID()] = attachment
+		}
+	}
+
+	if len(attachmentIDs) == 0 {
+		const unbindAllQuery = `
+			UPDATE media_attachments
+			SET owner_type = 'none',
+				owner_id = NULL,
+				updated_at = $2
+			WHERE owner_type = 'post'
+				AND owner_id = $1::uuid
+				AND kind = 'image'
+		`
+		if _, err := tx.Exec(ctx, unbindAllQuery, postID.String(), now); err != nil {
+			return nil, mapPostgresWriteError("replace post media attachments", err)
+		}
+	} else {
+		const unbindRemovedQuery = `
+			UPDATE media_attachments
+			SET owner_type = 'none',
+				owner_id = NULL,
+				updated_at = $3
+			WHERE owner_type = 'post'
+				AND owner_id = $1::uuid
+				AND kind = 'image'
+				AND NOT (id = ANY($2::uuid[]))
+		`
+		if _, err := tx.Exec(ctx, unbindRemovedQuery, postID.String(), attachmentIDStrings(attachmentIDs), now); err != nil {
+			return nil, mapPostgresWriteError("replace post media attachments", err)
+		}
+
+		const bindSelectedQuery = `
+			UPDATE media_attachments
+			SET owner_type = 'post',
+				owner_id = $2::uuid,
+				updated_at = $3
+			WHERE id = ANY($1::uuid[])
+		`
+		if _, err := tx.Exec(ctx, bindSelectedQuery, attachmentIDStrings(attachmentIDs), postID.String(), now); err != nil {
+			return nil, mapPostgresWriteError("replace post media attachments", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit post attachment replacement transaction: %w", err)
+	}
+	committed = true
+
+	result := make([]mediadomain.Attachment, 0, len(attachmentIDs))
+	for _, id := range attachmentIDs {
+		attachment := attachmentsByID[id]
+		updated, err := mediadomain.RehydrateAttachment(mediadomain.NewAttachmentParams{
+			ID:                 attachment.ID(),
+			OwnerType:          mediadomain.OwnerTypePost,
+			OwnerID:            postID.String(),
+			UploaderID:         attachment.UploaderID(),
+			Kind:               attachment.Kind(),
+			StorageProvider:    attachment.StorageProvider(),
+			Bucket:             attachment.Bucket(),
+			ObjectKey:          attachment.ObjectKey(),
+			PublicURL:          attachment.PublicURL(),
+			ThumbnailObjectKey: attachment.ThumbnailObjectKey(),
+			Width:              attachment.Width(),
+			Height:             attachment.Height(),
+			SizeBytes:          attachment.SizeBytes(),
+			MimeType:           attachment.MimeType(),
+			AltText:            attachment.AltText(),
+			Status:             attachment.Status(),
+			CreatedAt:          attachment.CreatedAt(),
+			UpdatedAt:          now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *updated)
+	}
+	return result, nil
+}
+
 func (repo *PostgresMediaRepository) ListReadyImagesByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]mediadomain.Attachment, error) {
 	result := make(map[postdomain.PostID][]mediadomain.Attachment, len(postIDs))
 	if len(postIDs) == 0 {
@@ -315,6 +431,122 @@ func (repo *PostgresMediaRepository) BindReadyImagesToComment(ctx context.Contex
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit comment attachment binding transaction: %w", err)
+	}
+	committed = true
+
+	result := make([]mediadomain.Attachment, 0, len(attachmentIDs))
+	for _, id := range attachmentIDs {
+		attachment := attachmentsByID[id]
+		updated, err := mediadomain.RehydrateAttachment(mediadomain.NewAttachmentParams{
+			ID:                 attachment.ID(),
+			OwnerType:          mediadomain.OwnerTypeComment,
+			OwnerID:            commentID.String(),
+			UploaderID:         attachment.UploaderID(),
+			Kind:               attachment.Kind(),
+			StorageProvider:    attachment.StorageProvider(),
+			Bucket:             attachment.Bucket(),
+			ObjectKey:          attachment.ObjectKey(),
+			PublicURL:          attachment.PublicURL(),
+			ThumbnailObjectKey: attachment.ThumbnailObjectKey(),
+			Width:              attachment.Width(),
+			Height:             attachment.Height(),
+			SizeBytes:          attachment.SizeBytes(),
+			MimeType:           attachment.MimeType(),
+			AltText:            attachment.AltText(),
+			Status:             attachment.Status(),
+			CreatedAt:          attachment.CreatedAt(),
+			UpdatedAt:          now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *updated)
+	}
+	return result, nil
+}
+
+func (repo *PostgresMediaRepository) ReplaceReadyImagesForComment(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error) {
+	if maxCount <= 0 || len(attachmentIDs) > maxCount {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "comment image attachment count is invalid")
+	}
+
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin comment attachment replacement transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	attachmentsByID := make(map[mediadomain.AttachmentID]mediadomain.Attachment, len(attachmentIDs))
+	if len(attachmentIDs) > 0 {
+		attachments, err := lockAttachmentsByIDs(ctx, tx, attachmentIDs)
+		if err != nil {
+			return nil, err
+		}
+		if len(attachments) != len(attachmentIDs) {
+			return nil, apperr.New(apperr.CodeNotFound, "media attachment not found")
+		}
+		for _, attachment := range attachments {
+			if attachment.UploaderID() != uploaderID {
+				return nil, apperr.New(apperr.CodeNotFound, "media attachment not found")
+			}
+			if attachment.Kind() != mediadomain.AttachmentKindImage || attachment.Status() != mediadomain.AttachmentStatusReady {
+				return nil, apperr.New(apperr.CodeConflict, "media attachment is not ready")
+			}
+			if attachment.OwnerType() != mediadomain.OwnerTypeNone &&
+				!(attachment.OwnerType() == mediadomain.OwnerTypeComment && attachment.OwnerID() == commentID.String()) {
+				return nil, apperr.New(apperr.CodeConflict, "media attachment is already bound")
+			}
+			attachmentsByID[attachment.ID()] = attachment
+		}
+	}
+
+	if len(attachmentIDs) == 0 {
+		const unbindAllQuery = `
+			UPDATE media_attachments
+			SET owner_type = 'none',
+				owner_id = NULL,
+				updated_at = $2
+			WHERE owner_type = 'comment'
+				AND owner_id = $1::uuid
+				AND kind = 'image'
+		`
+		if _, err := tx.Exec(ctx, unbindAllQuery, commentID.String(), now); err != nil {
+			return nil, mapPostgresWriteError("replace comment media attachments", err)
+		}
+	} else {
+		const unbindRemovedQuery = `
+			UPDATE media_attachments
+			SET owner_type = 'none',
+				owner_id = NULL,
+				updated_at = $3
+			WHERE owner_type = 'comment'
+				AND owner_id = $1::uuid
+				AND kind = 'image'
+				AND NOT (id = ANY($2::uuid[]))
+		`
+		if _, err := tx.Exec(ctx, unbindRemovedQuery, commentID.String(), attachmentIDStrings(attachmentIDs), now); err != nil {
+			return nil, mapPostgresWriteError("replace comment media attachments", err)
+		}
+
+		const bindSelectedQuery = `
+			UPDATE media_attachments
+			SET owner_type = 'comment',
+				owner_id = $2::uuid,
+				updated_at = $3
+			WHERE id = ANY($1::uuid[])
+		`
+		if _, err := tx.Exec(ctx, bindSelectedQuery, attachmentIDStrings(attachmentIDs), commentID.String(), now); err != nil {
+			return nil, mapPostgresWriteError("replace comment media attachments", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit comment attachment replacement transaction: %w", err)
 	}
 	committed = true
 

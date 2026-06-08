@@ -37,8 +37,9 @@ type publishPostRequest struct {
 }
 
 type updatePostRequest struct {
-	Title string `json:"title" binding:"required"`
-	Body  string `json:"body" binding:"required"`
+	Title         string    `json:"title" binding:"required"`
+	Body          string    `json:"body" binding:"required"`
+	AttachmentIDs *[]string `json:"attachment_ids"`
 }
 
 type postResponse struct {
@@ -445,10 +446,11 @@ func (h *Handler) UpdatePost(c *gin.Context) {
 	}
 
 	result, err := h.posts.UpdatePost(c.Request.Context(), postusecase.UpdatePostInput{
-		PostID:  c.Param("id"),
-		ActorID: userID,
-		Title:   req.Title,
-		Body:    req.Body,
+		PostID:        c.Param("id"),
+		ActorID:       userID,
+		Title:         req.Title,
+		Body:          req.Body,
+		AttachmentIDs: req.AttachmentIDs,
 	})
 	if err != nil {
 		_ = c.Error(err)

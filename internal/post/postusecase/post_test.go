@@ -535,6 +535,55 @@ func TestUpdatePostAllowsAuthor(t *testing.T) {
 	}
 }
 
+func TestUpdatePostReplacesImageAttachments(t *testing.T) {
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	authorID := userdomain.NewGeneratedUserID()
+	attachmentID := mediadomain.NewGeneratedAttachmentID()
+	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), authorID, "Original", now)
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	attachments := &fakeAttachmentRepository{
+		replaceFunc: func(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, replaceAt time.Time) ([]mediadomain.Attachment, error) {
+			if postID != post.ID() {
+				t.Fatalf("expected post %q, got %q", post.ID().String(), postID.String())
+			}
+			if uploaderID != authorID {
+				t.Fatalf("expected uploader %q, got %q", authorID.String(), uploaderID.String())
+			}
+			if len(attachmentIDs) != 1 || attachmentIDs[0] != attachmentID {
+				t.Fatalf("unexpected attachment ids: %#v", attachmentIDs)
+			}
+			if maxCount != 9 || !replaceAt.Equal(updatedAt) {
+				t.Fatalf("unexpected replace metadata: max=%d time=%s", maxCount, replaceAt)
+			}
+			return []mediadomain.Attachment{*mustAttachment(t, attachmentID, authorID, postID, updatedAt)}, nil
+		},
+	}
+	uc := NewPostUseCaseWithAttachments(posts, &fakeCommunityPolicy{}, attachments, 9, func() time.Time { return updatedAt })
+	rawAttachmentIDs := []string{attachmentID.String()}
+
+	result, err := uc.UpdatePost(context.Background(), UpdatePostInput{
+		PostID:        post.ID().String(),
+		ActorID:       authorID,
+		Title:         "Updated",
+		Body:          "Updated body",
+		AttachmentIDs: &rawAttachmentIDs,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePost returned error: %v", err)
+	}
+	if len(result.Post.Attachments) != 1 || result.Post.Attachments[0].ID != attachmentID.String() {
+		t.Fatalf("expected replacement attachment in result, got %#v", result.Post.Attachments)
+	}
+	if !attachments.replaceCalled {
+		t.Fatal("expected replacement attachment repository call")
+	}
+}
+
 func TestUpdatePostRejectsNonAuthor(t *testing.T) {
 	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), userdomain.NewGeneratedUserID(), "Original", time.Now().UTC())
 	posts := &fakePostRepository{
@@ -724,13 +773,23 @@ type fakeVoteRepository struct {
 }
 
 type fakeAttachmentRepository struct {
-	bindFunc func(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error)
-	listFunc func(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]mediadomain.Attachment, error)
+	bindFunc      func(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error)
+	replaceFunc   func(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error)
+	listFunc      func(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]mediadomain.Attachment, error)
+	replaceCalled bool
 }
 
 func (f *fakeAttachmentRepository) BindReadyImagesToPost(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error) {
 	if f.bindFunc != nil {
 		return f.bindFunc(ctx, postID, uploaderID, attachmentIDs, maxCount, now)
+	}
+	return nil, nil
+}
+
+func (f *fakeAttachmentRepository) ReplaceReadyImagesForPost(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error) {
+	f.replaceCalled = true
+	if f.replaceFunc != nil {
+		return f.replaceFunc(ctx, postID, uploaderID, attachmentIDs, maxCount, now)
 	}
 	return nil, nil
 }

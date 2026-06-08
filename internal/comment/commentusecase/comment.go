@@ -74,9 +74,10 @@ type ListUserCommentsInput struct {
 }
 
 type UpdateCommentInput struct {
-	CommentID string
-	ActorID   userdomain.UserID
-	Body      string
+	CommentID     string
+	ActorID       userdomain.UserID
+	Body          string
+	AttachmentIDs *[]string
 }
 
 type DeleteCommentInput struct {
@@ -413,24 +414,39 @@ func (uc *CommentUseCase) UpdateComment(ctx context.Context, input UpdateComment
 	if err != nil {
 		return UpdateCommentResult{}, err
 	}
-	if err := comment.EditBody(body, uc.now().UTC()); err != nil {
+	attachmentIDs, replaceAttachments, err := parseOptionalAttachmentIDs(input.AttachmentIDs, uc.commentImageMaxCount)
+	if err != nil {
+		return UpdateCommentResult{}, err
+	}
+
+	now := uc.now().UTC()
+	if err := comment.EditBody(body, now); err != nil {
 		return UpdateCommentResult{}, err
 	}
 	if err := uc.comments.UpdateContent(ctx, *comment); err != nil {
 		return UpdateCommentResult{}, fmt.Errorf("update comment content: %w", err)
+	}
+	var attachments []mediadomain.Attachment
+	if replaceAttachments {
+		attachments, err = uc.replaceCommentAttachments(ctx, comment.ID(), input.ActorID, attachmentIDs, now)
+		if err != nil {
+			return UpdateCommentResult{}, err
+		}
 	}
 
 	metadataViews, err := uc.loadCommentMetadataViews(ctx, []commentdomain.Comment{*comment})
 	if err != nil {
 		return UpdateCommentResult{}, err
 	}
-	result := toCommentDTO(*comment, nil, metadataViews[comment.ID()], input.ActorID)
-	comments, err := uc.attachCommentImages(ctx, []Comment{result})
-	if err != nil {
-		return UpdateCommentResult{}, err
-	}
-	if len(comments) == 1 {
-		result = comments[0]
+	result := toCommentDTO(*comment, attachments, metadataViews[comment.ID()], input.ActorID)
+	if !replaceAttachments {
+		comments, err := uc.attachCommentImages(ctx, []Comment{result})
+		if err != nil {
+			return UpdateCommentResult{}, err
+		}
+		if len(comments) == 1 {
+			result = comments[0]
+		}
 	}
 
 	return UpdateCommentResult{Comment: result}, nil
@@ -636,6 +652,17 @@ func parseAttachmentIDs(rawIDs []string, maxCount int) ([]mediadomain.Attachment
 	return ids, nil
 }
 
+func parseOptionalAttachmentIDs(rawIDs *[]string, maxCount int) ([]mediadomain.AttachmentID, bool, error) {
+	if rawIDs == nil {
+		return nil, false, nil
+	}
+	attachmentIDs, err := parseAttachmentIDs(*rawIDs, maxCount)
+	if err != nil {
+		return nil, true, err
+	}
+	return attachmentIDs, true, nil
+}
+
 func (uc *CommentUseCase) bindCommentAttachments(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, now time.Time) ([]mediadomain.Attachment, error) {
 	if len(attachmentIDs) == 0 {
 		return []mediadomain.Attachment{}, nil
@@ -646,6 +673,17 @@ func (uc *CommentUseCase) bindCommentAttachments(ctx context.Context, commentID 
 	attachments, err := uc.attachments.BindReadyImagesToComment(ctx, commentID, uploaderID, attachmentIDs, uc.commentImageMaxCount, now)
 	if err != nil {
 		return nil, fmt.Errorf("bind comment image attachments: %w", err)
+	}
+	return attachments, nil
+}
+
+func (uc *CommentUseCase) replaceCommentAttachments(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, now time.Time) ([]mediadomain.Attachment, error) {
+	if uc.attachments == nil {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "comment image attachments are not supported")
+	}
+	attachments, err := uc.attachments.ReplaceReadyImagesForComment(ctx, commentID, uploaderID, attachmentIDs, uc.commentImageMaxCount, now)
+	if err != nil {
+		return nil, fmt.Errorf("replace comment image attachments: %w", err)
 	}
 	return attachments, nil
 }

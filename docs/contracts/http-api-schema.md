@@ -115,7 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `communityResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `kind`, `status`, `visibility`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions`, `created_at`, `updated_at` |
 | `communityhttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate` |
 | `posthttp` | `publishPostRequest` | `title`, `body`, `attachment_ids` |
-| `posthttp` | `updatePostRequest` | `title`, `body` |
+| `posthttp` | `updatePostRequest` | `title`, `body`, `attachment_ids` |
 | `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments` |
 | `posthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
@@ -128,7 +128,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `posthttp` | `listCommunityPostsResponse` | `posts`, `limit`, `offset` |
 | `posthttp` | `getPostResponse` | `post` |
 | `commenthttp` | `publishCommentRequest` | `body`, `parent_id`, `attachment_ids` |
-| `commenthttp` | `updateCommentRequest` | `body` |
+| `commenthttp` | `updateCommentRequest` | `body`, `attachment_ids` |
 | `commenthttp` | `setCommentVoteRequest` | `value` |
 | `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `format`, `content_refs`, `author`, `status`, `depth`, `reply_count`, `has_more_replies`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `viewer_permissions`, `children`, `created_at`, `updated_at`, `attachments` |
 | `commenthttp` | `contentRefResponse` | `kind`, `ref_id` |

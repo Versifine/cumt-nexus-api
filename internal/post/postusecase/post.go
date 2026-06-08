@@ -99,10 +99,11 @@ type DeletePostSaveInput struct {
 }
 
 type UpdatePostInput struct {
-	PostID  string
-	ActorID userdomain.UserID
-	Title   string
-	Body    string
+	PostID        string
+	ActorID       userdomain.UserID
+	Title         string
+	Body          string
+	AttachmentIDs *[]string
 }
 
 type DeletePostInput struct {
@@ -641,13 +642,26 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 		return UpdatePostResult{}, err
 	}
 
-	if err := post.Edit(title, body, uc.now().UTC()); err != nil {
+	attachmentIDs, replaceAttachments, err := parseOptionalAttachmentIDs(input.AttachmentIDs, uc.postImageMaxCount)
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
+
+	now := uc.now().UTC()
+	if err := post.Edit(title, body, now); err != nil {
 		return UpdatePostResult{}, err
 	}
 	if err := uc.posts.UpdateContent(ctx, *post); err != nil {
 		return UpdatePostResult{}, fmt.Errorf("update post content: %w", err)
 	}
 
+	var attachments []mediadomain.Attachment
+	if replaceAttachments {
+		attachments, err = uc.replacePostAttachments(ctx, post.ID(), input.ActorID, attachmentIDs, now)
+		if err != nil {
+			return UpdatePostResult{}, err
+		}
+	}
 	voteViews, err := uc.loadVoteViews(ctx, []postdomain.Post{*post}, input.ActorID)
 	if err != nil {
 		return UpdatePostResult{}, err
@@ -656,9 +670,12 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
-	attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
-	if err != nil {
-		return UpdatePostResult{}, err
+	if !replaceAttachments {
+		attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
+		if err != nil {
+			return UpdatePostResult{}, err
+		}
+		attachments = attachmentViews[post.ID()]
 	}
 	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post})
 	if err != nil {
@@ -666,7 +683,7 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	}
 
 	return UpdatePostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ActorID),
+		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachments, metadataViews[post.ID()], input.ActorID),
 	}, nil
 }
 
@@ -747,6 +764,17 @@ func parseAttachmentIDs(rawIDs []string, maxCount int) ([]mediadomain.Attachment
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+func parseOptionalAttachmentIDs(rawIDs *[]string, maxCount int) ([]mediadomain.AttachmentID, bool, error) {
+	if rawIDs == nil {
+		return nil, false, nil
+	}
+	attachmentIDs, err := parseAttachmentIDs(*rawIDs, maxCount)
+	if err != nil {
+		return nil, true, err
+	}
+	return attachmentIDs, true, nil
 }
 
 type postVoteView struct {
@@ -844,6 +872,17 @@ func (uc *PostUseCase) bindPostAttachments(ctx context.Context, postID postdomai
 	attachments, err := uc.attachments.BindReadyImagesToPost(ctx, postID, uploaderID, attachmentIDs, uc.postImageMaxCount, now)
 	if err != nil {
 		return nil, fmt.Errorf("bind post image attachments: %w", err)
+	}
+	return attachments, nil
+}
+
+func (uc *PostUseCase) replacePostAttachments(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, now time.Time) ([]mediadomain.Attachment, error) {
+	if uc.attachments == nil {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "post image attachments are not supported")
+	}
+	attachments, err := uc.attachments.ReplaceReadyImagesForPost(ctx, postID, uploaderID, attachmentIDs, uc.postImageMaxCount, now)
+	if err != nil {
+		return nil, fmt.Errorf("replace post image attachments: %w", err)
 	}
 	return attachments, nil
 }

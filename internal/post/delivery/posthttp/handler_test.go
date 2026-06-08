@@ -244,6 +244,9 @@ func TestUpdatePostReturnsUpdatedPost(t *testing.T) {
 	if posts.updateInput.Title != "Updated" || posts.updateInput.Body != "Updated body" {
 		t.Fatalf("unexpected update input: %#v", posts.updateInput)
 	}
+	if posts.updateInput.AttachmentIDs != nil {
+		t.Fatalf("expected omitted attachment_ids to stay nil, got %#v", *posts.updateInput.AttachmentIDs)
+	}
 
 	var response getPostResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -251,6 +254,45 @@ func TestUpdatePostReturnsUpdatedPost(t *testing.T) {
 	}
 	if response.Post.Title != "Updated" || response.Post.Format != "nexus_markdown" {
 		t.Fatalf("unexpected update response: %#v", response.Post)
+	}
+}
+
+func TestUpdatePostAcceptsAttachmentIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	posts := &fakePostUseCase{
+		updateResult: postusecase.UpdatePostResult{
+			Post: newPostResultWithAttachment("Updated", now),
+		},
+	}
+	router := newPostTestRouter(posts, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c", bytes.NewBufferString(`{
+		"title": "Updated",
+		"body": "Updated body",
+		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"]
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if posts.updateInput.AttachmentIDs == nil || len(*posts.updateInput.AttachmentIDs) != 1 || (*posts.updateInput.AttachmentIDs)[0] != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
+		t.Fatalf("unexpected attachment ids: %#v", posts.updateInput.AttachmentIDs)
+	}
+
+	var response getPostResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Post.Attachments) != 1 || response.Post.Attachments[0].ID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
+		t.Fatalf("expected attachment response, got %#v", response.Post.Attachments)
 	}
 }
 

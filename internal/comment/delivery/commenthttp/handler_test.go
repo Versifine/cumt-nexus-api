@@ -223,6 +223,9 @@ func TestUpdateCommentReturnsUpdatedComment(t *testing.T) {
 	if comments.updateInput.Body != "Updated body" {
 		t.Fatalf("unexpected update input: %#v", comments.updateInput)
 	}
+	if comments.updateInput.AttachmentIDs != nil {
+		t.Fatalf("expected omitted attachment_ids to stay nil, got %#v", *comments.updateInput.AttachmentIDs)
+	}
 
 	var response publishCommentResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -230,6 +233,44 @@ func TestUpdateCommentReturnsUpdatedComment(t *testing.T) {
 	}
 	if response.Comment.Body != "Updated body" || response.Comment.Format != "nexus_markdown" {
 		t.Fatalf("unexpected update response: %#v", response.Comment)
+	}
+}
+
+func TestUpdateCommentAcceptsAttachmentIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	comments := &fakeCommentUseCase{
+		updateResult: commentusecase.UpdateCommentResult{
+			Comment: newCommentResultWithAttachment("Updated body", now),
+		},
+	}
+	router := newCommentTestRouter(comments, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/comments/98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a", bytes.NewBufferString(`{
+		"body": "Updated body",
+		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"]
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if comments.updateInput.AttachmentIDs == nil || len(*comments.updateInput.AttachmentIDs) != 1 || (*comments.updateInput.AttachmentIDs)[0] != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
+		t.Fatalf("unexpected attachment ids: %#v", comments.updateInput.AttachmentIDs)
+	}
+
+	var response publishCommentResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Comment.Attachments) != 1 || response.Comment.Attachments[0].ID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
+		t.Fatalf("expected attachment response, got %#v", response.Comment.Attachments)
 	}
 }
 

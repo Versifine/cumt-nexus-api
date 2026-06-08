@@ -421,6 +421,60 @@ func TestUpdateCommentAllowsAuthor(t *testing.T) {
 	}
 }
 
+func TestUpdateCommentReplacesImageAttachments(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	attachmentID := mediadomain.NewGeneratedAttachmentID()
+	comment := mustComment(t, post.ID(), authorID, nil, "Original", now)
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	attachments := &fakeAttachmentRepository{
+		replaceReadyImagesForCommentFunc: func(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, replaceTime time.Time) ([]mediadomain.Attachment, error) {
+			if commentID != comment.ID() {
+				t.Fatalf("expected comment %q, got %q", comment.ID().String(), commentID.String())
+			}
+			if uploaderID != authorID {
+				t.Fatalf("expected uploader %q, got %q", authorID.String(), uploaderID.String())
+			}
+			if len(attachmentIDs) != 1 || attachmentIDs[0] != attachmentID {
+				t.Fatalf("unexpected attachment ids: %#v", attachmentIDs)
+			}
+			if maxCount != 1 || !replaceTime.Equal(updatedAt) {
+				t.Fatalf("unexpected replace metadata: max=%d time=%s", maxCount, replaceTime)
+			}
+			return []mediadomain.Attachment{*mustMediaAttachment(t, attachmentID, mediadomain.OwnerTypeComment, comment.ID().String(), authorID, updatedAt)}, nil
+		},
+	}
+	uc := NewCommentUseCaseWithAttachments(comments, posts, attachments, 1, func() time.Time { return updatedAt })
+	rawAttachmentIDs := []string{attachmentID.String()}
+
+	result, err := uc.UpdateComment(context.Background(), UpdateCommentInput{
+		CommentID:     comment.ID().String(),
+		ActorID:       authorID,
+		Body:          "Updated body",
+		AttachmentIDs: &rawAttachmentIDs,
+	})
+	if err != nil {
+		t.Fatalf("UpdateComment returned error: %v", err)
+	}
+	if len(result.Comment.Attachments) != 1 || result.Comment.Attachments[0].ID != attachmentID.String() {
+		t.Fatalf("expected replacement attachment in result, got %#v", result.Comment.Attachments)
+	}
+	if !attachments.replaceCalled {
+		t.Fatal("expected replacement attachment repository call")
+	}
+}
+
 func TestUpdateCommentRejectsNonAuthor(t *testing.T) {
 	now := time.Now().UTC()
 	post := mustPost(t, now)
@@ -570,13 +624,23 @@ type fakeCommentRepository struct {
 }
 
 type fakeAttachmentRepository struct {
-	bindReadyImagesToCommentFunc    func(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error)
-	listReadyImagesByCommentIDsFunc func(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]mediadomain.Attachment, error)
+	bindReadyImagesToCommentFunc     func(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error)
+	replaceReadyImagesForCommentFunc func(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error)
+	listReadyImagesByCommentIDsFunc  func(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]mediadomain.Attachment, error)
+	replaceCalled                    bool
 }
 
 func (f *fakeAttachmentRepository) BindReadyImagesToComment(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error) {
 	if f.bindReadyImagesToCommentFunc != nil {
 		return f.bindReadyImagesToCommentFunc(ctx, commentID, uploaderID, attachmentIDs, maxCount, now)
+	}
+	return nil, nil
+}
+
+func (f *fakeAttachmentRepository) ReplaceReadyImagesForComment(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error) {
+	f.replaceCalled = true
+	if f.replaceReadyImagesForCommentFunc != nil {
+		return f.replaceReadyImagesForCommentFunc(ctx, commentID, uploaderID, attachmentIDs, maxCount, now)
 	}
 	return nil, nil
 }
