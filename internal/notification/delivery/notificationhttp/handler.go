@@ -19,7 +19,9 @@ type Handler struct {
 
 type UseCase interface {
 	ListNotifications(ctx context.Context, input notificationusecase.ListNotificationsInput) (notificationusecase.ListNotificationsResult, error)
+	GetUnreadSummary(ctx context.Context, input notificationusecase.UnreadSummaryInput) (notificationusecase.UnreadSummary, error)
 	MarkNotificationRead(ctx context.Context, input notificationusecase.MarkNotificationReadInput) (notificationusecase.MarkNotificationReadResult, error)
+	MarkAllNotificationsRead(ctx context.Context, input notificationusecase.MarkAllNotificationsReadInput) (notificationusecase.MarkAllNotificationsReadResult, error)
 }
 
 type notificationResponse struct {
@@ -37,13 +39,27 @@ type notificationResponse struct {
 
 type listNotificationsResponse struct {
 	Notifications []notificationResponse `json:"notifications"`
+	Category      string                 `json:"category"`
 	Status        string                 `json:"status"`
 	Limit         int                    `json:"limit"`
 	Offset        int                    `json:"offset"`
 }
 
+type unreadSummaryResponse struct {
+	Total    int `json:"total"`
+	Replies  int `json:"replies"`
+	Mentions int `json:"mentions"`
+	Likes    int `json:"likes"`
+	System   int `json:"system"`
+}
+
 type markNotificationReadResponse struct {
 	Notification notificationResponse `json:"notification"`
+}
+
+type markAllNotificationsReadResponse struct {
+	UpdatedCount int       `json:"updated_count"`
+	ReadAt       time.Time `json:"read_at"`
 }
 
 func NewHandler(notifications UseCase) *Handler {
@@ -53,8 +69,10 @@ func NewHandler(notifications UseCase) *Handler {
 }
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
+	group.GET("/notifications/unread-summary", handler.GetUnreadSummary)
 	group.GET("/notifications", handler.ListNotifications)
 	group.POST("/notifications/:id/read", handler.MarkNotificationRead)
+	group.POST("/notifications/read-all", handler.MarkAllNotificationsRead)
 }
 
 func (h *Handler) ListNotifications(c *gin.Context) {
@@ -79,10 +97,11 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 	}
 
 	result, err := h.notifications.ListNotifications(c.Request.Context(), notificationusecase.ListNotificationsInput{
-		ActorID: userID,
-		Status:  c.Query("status"),
-		Limit:   limit,
-		Offset:  offset,
+		ActorID:  userID,
+		Category: c.Query("category"),
+		Status:   c.Query("status"),
+		Limit:    limit,
+		Offset:   offset,
 	})
 	if err != nil {
 		_ = c.Error(err)
@@ -92,6 +111,7 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 
 	response := listNotificationsResponse{
 		Notifications: make([]notificationResponse, 0, len(result.Notifications)),
+		Category:      result.Category,
 		Status:        result.Status,
 		Limit:         result.Limit,
 		Offset:        result.Offset,
@@ -100,6 +120,32 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 		response.Notifications = append(response.Notifications, toNotificationResponse(notification))
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) GetUnreadSummary(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	summary, err := h.notifications.GetUnreadSummary(c.Request.Context(), notificationusecase.UnreadSummaryInput{
+		ActorID: userID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, unreadSummaryResponse{
+		Total:    summary.Total,
+		Replies:  summary.Replies,
+		Mentions: summary.Mentions,
+		Likes:    summary.Likes,
+		System:   summary.System,
+	})
 }
 
 func (h *Handler) MarkNotificationRead(c *gin.Context) {
@@ -122,6 +168,29 @@ func (h *Handler) MarkNotificationRead(c *gin.Context) {
 
 	c.JSON(http.StatusOK, markNotificationReadResponse{
 		Notification: toNotificationResponse(result.Notification),
+	})
+}
+
+func (h *Handler) MarkAllNotificationsRead(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.notifications.MarkAllNotificationsRead(c.Request.Context(), notificationusecase.MarkAllNotificationsReadInput{
+		ActorID: userID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, markAllNotificationsReadResponse{
+		UpdatedCount: result.UpdatedCount,
+		ReadAt:       result.ReadAt,
 	})
 }
 

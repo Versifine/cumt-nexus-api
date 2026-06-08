@@ -14,9 +14,12 @@ func TestListNotificationsDefaultsUnreadAndPagination(t *testing.T) {
 	now := testNow()
 	actorID := userdomain.NewGeneratedUserID()
 	repository := &fakeRepository{
-		listFunc: func(ctx context.Context, recipientID userdomain.UserID, status StatusFilter, limit int, offset int) ([]Notification, error) {
+		listFunc: func(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error) {
 			if recipientID != actorID {
 				t.Fatalf("expected recipient %q, got %q", actorID.String(), recipientID.String())
+			}
+			if category != CategoryFilterAll {
+				t.Fatalf("expected all category, got %q", category)
 			}
 			if status != StatusFilterUnread {
 				t.Fatalf("expected unread status, got %q", status)
@@ -49,7 +52,10 @@ func TestListNotificationsDefaultsUnreadAndPagination(t *testing.T) {
 func TestListNotificationsSupportsStatusAndClampsLimit(t *testing.T) {
 	actorID := userdomain.NewGeneratedUserID()
 	repository := &fakeRepository{
-		listFunc: func(ctx context.Context, recipientID userdomain.UserID, status StatusFilter, limit int, offset int) ([]Notification, error) {
+		listFunc: func(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error) {
+			if category != CategoryFilterLikes {
+				t.Fatalf("expected likes category, got %q", category)
+			}
 			if status != StatusFilterAll {
 				t.Fatalf("expected all status, got %q", status)
 			}
@@ -62,15 +68,16 @@ func TestListNotificationsSupportsStatusAndClampsLimit(t *testing.T) {
 	uc := NewUseCase(repository, time.Now)
 
 	result, err := uc.ListNotifications(context.Background(), ListNotificationsInput{
-		ActorID: actorID,
-		Status:  "ALL",
-		Limit:   99,
-		Offset:  3,
+		ActorID:  actorID,
+		Category: "LIKES",
+		Status:   "ALL",
+		Limit:    99,
+		Offset:   3,
 	})
 	if err != nil {
 		t.Fatalf("ListNotifications returned error: %v", err)
 	}
-	if result.Status != StatusFilterAll.String() || result.Limit != MaxNotificationListLimit || result.Offset != 3 {
+	if result.Category != CategoryFilterLikes.String() || result.Status != StatusFilterAll.String() || result.Limit != MaxNotificationListLimit || result.Offset != 3 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
@@ -84,6 +91,7 @@ func TestListNotificationsRejectsInvalidInput(t *testing.T) {
 		code  apperr.Code
 	}{
 		{name: "missing actor", input: ListNotificationsInput{}, code: apperr.CodeUnauthenticated},
+		{name: "invalid category", input: ListNotificationsInput{ActorID: userdomain.NewGeneratedUserID(), Category: "direct"}, code: apperr.CodeInvalidArgument},
 		{name: "invalid status", input: ListNotificationsInput{ActorID: userdomain.NewGeneratedUserID(), Status: "deleted"}, code: apperr.CodeInvalidArgument},
 		{name: "negative limit", input: ListNotificationsInput{ActorID: userdomain.NewGeneratedUserID(), Limit: -1}, code: apperr.CodeInvalidArgument},
 		{name: "negative offset", input: ListNotificationsInput{ActorID: userdomain.NewGeneratedUserID(), Offset: -1}, code: apperr.CodeInvalidArgument},
@@ -96,6 +104,36 @@ func TestListNotificationsRejectsInvalidInput(t *testing.T) {
 				t.Fatalf("expected %s, got %v", tt.code, err)
 			}
 		})
+	}
+}
+
+func TestGetUnreadSummary(t *testing.T) {
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{
+		unreadSummary: UnreadSummary{
+			Total:    5,
+			Replies:  1,
+			Mentions: 1,
+			Likes:    2,
+			System:   1,
+		},
+	}
+	uc := NewUseCase(repository, time.Now)
+
+	result, err := uc.GetUnreadSummary(context.Background(), UnreadSummaryInput{
+		ActorID: actorID,
+	})
+	if err != nil {
+		t.Fatalf("GetUnreadSummary returned error: %v", err)
+	}
+	if !repository.countUnreadCalled {
+		t.Fatal("expected count unread repository call")
+	}
+	if repository.countUnreadRecipientID != actorID {
+		t.Fatalf("expected recipient %q, got %q", actorID.String(), repository.countUnreadRecipientID.String())
+	}
+	if result.Total != 5 || result.Likes != 2 {
+		t.Fatalf("unexpected unread summary: %#v", result)
 	}
 }
 
@@ -131,6 +169,33 @@ func TestMarkNotificationRead(t *testing.T) {
 	}
 }
 
+func TestMarkAllNotificationsRead(t *testing.T) {
+	now := testNow()
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{
+		markAllReadFunc: func(ctx context.Context, recipientID userdomain.UserID, readAt time.Time) (int, error) {
+			if recipientID != actorID || !readAt.Equal(now) {
+				t.Fatalf("unexpected mark all args: %q %s", recipientID.String(), readAt)
+			}
+			return 3, nil
+		},
+	}
+	uc := NewUseCase(repository, func() time.Time { return now })
+
+	result, err := uc.MarkAllNotificationsRead(context.Background(), MarkAllNotificationsReadInput{
+		ActorID: actorID,
+	})
+	if err != nil {
+		t.Fatalf("MarkAllNotificationsRead returned error: %v", err)
+	}
+	if !repository.markAllReadCalled {
+		t.Fatal("expected mark all read repository call")
+	}
+	if result.UpdatedCount != 3 || !result.ReadAt.Equal(now) {
+		t.Fatalf("unexpected mark all result: %#v", result)
+	}
+}
+
 func TestMarkNotificationReadRejectsInvalidInput(t *testing.T) {
 	uc := NewUseCase(&fakeRepository{}, time.Now)
 
@@ -150,6 +215,17 @@ func TestMarkNotificationReadRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestUnreadSummaryAndMarkAllRejectMissingActor(t *testing.T) {
+	uc := NewUseCase(&fakeRepository{}, time.Now)
+
+	if _, err := uc.GetUnreadSummary(context.Background(), UnreadSummaryInput{}); !apperr.IsCode(err, apperr.CodeUnauthenticated) {
+		t.Fatalf("expected unauthenticated from unread summary, got %v", err)
+	}
+	if _, err := uc.MarkAllNotificationsRead(context.Background(), MarkAllNotificationsReadInput{}); !apperr.IsCode(err, apperr.CodeUnauthenticated) {
+		t.Fatalf("expected unauthenticated from mark all, got %v", err)
+	}
+}
+
 func TestNotificationUseCasePropagatesRepositoryError(t *testing.T) {
 	repository := &fakeRepository{
 		listErr: apperr.New(apperr.CodeNotFound, "notification not found"),
@@ -165,20 +241,33 @@ func TestNotificationUseCasePropagatesRepositoryError(t *testing.T) {
 }
 
 type fakeRepository struct {
-	listCalled     bool
-	markReadCalled bool
-	listFunc       func(ctx context.Context, recipientID userdomain.UserID, status StatusFilter, limit int, offset int) ([]Notification, error)
-	markReadFunc   func(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (Notification, error)
-	listErr        error
-	markReadErr    error
+	listCalled             bool
+	countUnreadCalled      bool
+	markReadCalled         bool
+	markAllReadCalled      bool
+	countUnreadRecipientID userdomain.UserID
+	listFunc               func(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error)
+	markReadFunc           func(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (Notification, error)
+	markAllReadFunc        func(ctx context.Context, recipientID userdomain.UserID, readAt time.Time) (int, error)
+	unreadSummary          UnreadSummary
+	listErr                error
+	countUnreadErr         error
+	markReadErr            error
+	markAllReadErr         error
 }
 
-func (f *fakeRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, status StatusFilter, limit int, offset int) ([]Notification, error) {
+func (f *fakeRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error) {
 	f.listCalled = true
 	if f.listFunc != nil {
-		return f.listFunc(ctx, recipientID, status, limit, offset)
+		return f.listFunc(ctx, recipientID, category, status, limit, offset)
 	}
 	return nil, f.listErr
+}
+
+func (f *fakeRepository) CountUnreadByCategory(ctx context.Context, recipientID userdomain.UserID) (UnreadSummary, error) {
+	f.countUnreadCalled = true
+	f.countUnreadRecipientID = recipientID
+	return f.unreadSummary, f.countUnreadErr
 }
 
 func (f *fakeRepository) MarkRead(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (Notification, error) {
@@ -187,6 +276,14 @@ func (f *fakeRepository) MarkRead(ctx context.Context, id string, recipientID us
 		return f.markReadFunc(ctx, id, recipientID, readAt)
 	}
 	return Notification{}, f.markReadErr
+}
+
+func (f *fakeRepository) MarkAllRead(ctx context.Context, recipientID userdomain.UserID, readAt time.Time) (int, error) {
+	f.markAllReadCalled = true
+	if f.markAllReadFunc != nil {
+		return f.markAllReadFunc(ctx, recipientID, readAt)
+	}
+	return 0, f.markAllReadErr
 }
 
 func newNotification(recipientID userdomain.UserID, now time.Time) Notification {

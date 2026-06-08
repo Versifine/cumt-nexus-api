@@ -51,9 +51,6 @@ func NewUseCase(repository Repository) *UseCase {
 }
 
 func (uc *UseCase) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
-	if strings.TrimSpace(input.ActorID.String()) == "" {
-		return SearchResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
-	}
 	query, err := normalizeQuery(input.Query)
 	if err != nil {
 		return SearchResult{}, err

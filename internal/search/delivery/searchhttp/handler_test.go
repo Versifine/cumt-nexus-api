@@ -20,7 +20,6 @@ import (
 func TestSearchReturnsResults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	userID := userdomain.NewGeneratedUserID()
 	now := time.Date(2026, 6, 2, 6, 30, 0, 0, time.UTC)
 	usecase := &fakeSearchUseCase{
 		result: searchusecase.SearchResult{
@@ -52,11 +51,10 @@ func TestSearchReturnsResults(t *testing.T) {
 			}},
 		},
 	}
-	router := newSearchTestRouter(usecase, validParserWithUserID(userID))
+	router := newSearchTestRouter(usecase, validParser())
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=campus&scope=all&limit=50&offset=2", nil)
-	request.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(recorder, request)
 
@@ -66,7 +64,7 @@ func TestSearchReturnsResults(t *testing.T) {
 	if !usecase.called {
 		t.Fatal("expected search usecase to be called")
 	}
-	if usecase.input.ActorID != userID || usecase.input.Query != "campus" || usecase.input.Scope != "all" {
+	if usecase.input.Query != "campus" || usecase.input.Scope != "all" {
 		t.Fatalf("unexpected search input: %#v", usecase.input)
 	}
 	if usecase.input.Limit != 50 || usecase.input.Offset != 2 {
@@ -88,7 +86,7 @@ func TestSearchReturnsResults(t *testing.T) {
 	}
 }
 
-func TestSearchRejectsInvalidAuth(t *testing.T) {
+func TestSearchRejectsInvalidBearer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	usecase := &fakeSearchUseCase{}
@@ -96,6 +94,7 @@ func TestSearchRejectsInvalidAuth(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=campus", nil)
+	request.Header.Set("Authorization", "Bearer invalid-token")
 
 	router.ServeHTTP(recorder, request)
 
@@ -175,9 +174,9 @@ func newSearchTestRouter(usecase *fakeSearchUseCase, parser authhttp.AccessToken
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
 
-	protected := router.Group("/api/v1")
-	protected.Use(authhttp.RequireAuth(parser))
-	RegisterRoutes(protected, NewHandler(usecase))
+	publicRead := router.Group("/api/v1")
+	publicRead.Use(authhttp.OptionalAuth(parser))
+	RegisterRoutes(publicRead, NewHandler(usecase))
 
 	return router
 }

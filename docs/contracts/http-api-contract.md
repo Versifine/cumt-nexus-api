@@ -12,7 +12,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 - `/healthz` 不需要认证，只表示进程存活。
 - `/api/v1/auth/register` 和 `/api/v1/auth/login` 不需要认证。
-- `GET /api/v1/posts`、`GET /api/v1/posts/:id`、`GET /api/v1/communities/:slug/posts`、`GET /api/v1/posts/:id/comments`、`GET /api/v1/communities`、`GET /api/v1/communities/:slug`、`GET /api/v1/users/:username`、`GET /api/v1/users/:username/posts` 和 `GET /api/v1/users/:username/comments` 支持匿名读取公开 visible 内容，也支持可选 Bearer 读取当前用户视角字段。
+- `GET /api/v1/posts`、`GET /api/v1/posts/:id`、`GET /api/v1/communities/:slug/posts`、`GET /api/v1/posts/:id/comments`、`GET /api/v1/communities`、`GET /api/v1/communities/:slug`、`GET /api/v1/users/:username`、`GET /api/v1/users/:username/posts`、`GET /api/v1/users/:username/comments` 和 `GET /api/v1/search` 支持匿名读取公开 visible 内容，也支持可选 Bearer 读取当前用户视角字段。
 - 除 auth 入口和公开读取入口外，当前 `/api/v1` 业务接口都需要 Bearer access token。
 - `GET /uploads/*filepath` 只在 `OBJECT_STORAGE_PROVIDER=local` 时注册，用于本地 local storage fallback 文件访问；生产/主方案使用 Cloudflare R2 public base URL。
 - 错误响应统一为 `{"error":{"code":"...","message":"..."}}`。
@@ -54,6 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/posts/:id/comments | Bearer | 发布评论 |
 | GET | /api/v1/posts/:id/comments | optional Bearer | 帖子评论列表或 tree view |
 | GET | /api/v1/users/:username/comments | optional Bearer | 用户公开评论列表 |
+| GET | /api/v1/search | optional Bearer | PostgreSQL 基础搜索 |
 | PATCH | /api/v1/comments/:id | Bearer | 作者编辑评论 |
 | DELETE | /api/v1/comments/:id | Bearer | 作者软删除评论 |
 | PUT | /api/v1/comments/:id/vote | Bearer | 设置评论投票 |
@@ -68,9 +69,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/moderation/reports/:id | Bearer | 审核台举报详情 |
 | POST | /api/v1/moderation/reports/:id/dismiss | Bearer | 驳回举报 |
 | POST | /api/v1/moderation/reports/:id/remove-target | Bearer | 按举报移除目标内容 |
-| GET | /api/v1/search | Bearer | PostgreSQL 基础搜索 |
+| GET | /api/v1/notifications/unread-summary | Bearer | 当前用户分类未读通知摘要 |
 | GET | /api/v1/notifications | Bearer | 当前用户通知列表 |
 | POST | /api/v1/notifications/:id/read | Bearer | 标记单条通知已读 |
+| POST | /api/v1/notifications/read-all | Bearer | 标记当前用户全部通知已读 |
 | POST | /api/v1/uploads/images | Bearer | 图片上传 |
 
 ## 查询参数约定
@@ -80,14 +82,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/community-applications` | `status`, `limit`, `offset` | `status=pending|approved|rejected`，平台 staff 视角 |
 | `GET /api/v1/me/saved-posts` | `limit`, `offset` | 当前用户保存的公开 visible 帖子 |
 | `GET /api/v1/me/followed-communities` | `limit`, `offset` | 当前用户关注的 active public 社区 |
-| `GET /api/v1/communities/:slug/posts` | `sort`, `limit`, `offset` | `sort=new|hot`，分页默认由 usecase 收口 |
-| `GET /api/v1/posts` | `sort`, `limit`, `offset` | `sort=new|hot`，全站公开可读社区帖子流 |
-| `GET /api/v1/posts/:id/comments` | `view`, `sort`, `limit`, `offset`, `max_depth` | `view=flat|tree`，tree view 返回前序遍历扁平数组 |
-| `GET /api/v1/users/:username/posts` | `sort`, `limit`, `offset` | `sort=new|hot`，只返回该用户在公开可读社区中的 visible 帖子 |
+| `GET /api/v1/communities/:slug/posts` | `sort`, `limit`, `offset` | `sort=best|hot|new|top|rising`，分页默认由 usecase 收口 |
+| `GET /api/v1/posts` | `sort`, `limit`, `offset` | `sort=best|hot|new|top|rising`，全站公开可读社区帖子流 |
+| `GET /api/v1/posts/:id/comments` | `view`, `sort`, `limit`, `offset`, `max_depth` | `view=flat|tree`，`sort=best|top|new|old|controversial`，tree view 返回前序遍历扁平数组 |
+| `GET /api/v1/users/:username/posts` | `sort`, `limit`, `offset` | `sort=best|hot|new|top|rising`，只返回该用户在公开可读社区中的 visible 帖子 |
 | `GET /api/v1/users/:username/comments` | `limit`, `offset` | 只返回该用户在公开可读社区 visible 帖子下的 visible 评论 |
 | `GET /api/v1/moderation/reports` | `status`, `limit`, `offset` | 平台 staff 视角 |
 | `GET /api/v1/search` | `q`, `scope`, `limit`, `offset` | `scope=all|communities|posts` |
-| `GET /api/v1/notifications` | `status`, `limit`, `offset` | 当前用户通知 |
+| `GET /api/v1/notifications` | `category`, `status`, `limit`, `offset` | `category=all|replies|mentions|likes|system`，`status=all|unread|read` |
 
 ## 错误边界
 

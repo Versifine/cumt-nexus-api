@@ -26,7 +26,7 @@ func NewPostgresNotificationRepository(pool *pgxpool.Pool) *PostgresNotification
 	}
 }
 
-func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, status notificationusecase.StatusFilter, limit int, offset int) ([]notificationusecase.Notification, error) {
+func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, category notificationusecase.CategoryFilter, status notificationusecase.StatusFilter, limit int, offset int) ([]notificationusecase.Notification, error) {
 	query := `
 		SELECT
 			id::text,
@@ -43,6 +43,7 @@ func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context,
 		WHERE recipient_id = $1::uuid
 	`
 	args := []any{recipientID.String()}
+	query += notificationCategoryPredicate(category)
 	switch status {
 	case notificationusecase.StatusFilterUnread:
 		query += ` AND read_at IS NULL`
@@ -79,6 +80,41 @@ func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context,
 	return notifications, nil
 }
 
+func (repo *PostgresNotificationRepository) CountUnreadByCategory(ctx context.Context, recipientID userdomain.UserID) (notificationusecase.UnreadSummary, error) {
+	const query = `
+		SELECT
+			COUNT(*) FILTER (WHERE read_at IS NULL),
+			COUNT(*) FILTER (WHERE read_at IS NULL AND type IN ('reply', 'comment_reply', 'post_reply')),
+			COUNT(*) FILTER (WHERE read_at IS NULL AND type = 'mention'),
+			COUNT(*) FILTER (WHERE read_at IS NULL AND type IN ('like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')),
+			COUNT(*) FILTER (WHERE read_at IS NULL AND type = 'system')
+		FROM notifications
+		WHERE recipient_id = $1::uuid
+	`
+
+	var total int64
+	var replies int64
+	var mentions int64
+	var likes int64
+	var system int64
+	if err := repo.pool.QueryRow(ctx, query, recipientID.String()).Scan(
+		&total,
+		&replies,
+		&mentions,
+		&likes,
+		&system,
+	); err != nil {
+		return notificationusecase.UnreadSummary{}, fmt.Errorf("count unread notifications: %w", err)
+	}
+	return notificationusecase.UnreadSummary{
+		Total:    int(total),
+		Replies:  int(replies),
+		Mentions: int(mentions),
+		Likes:    int(likes),
+		System:   int(system),
+	}, nil
+}
+
 func (repo *PostgresNotificationRepository) MarkRead(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (notificationusecase.Notification, error) {
 	const query = `
 		UPDATE notifications
@@ -107,6 +143,39 @@ func (repo *PostgresNotificationRepository) MarkRead(ctx context.Context, id str
 		return notificationusecase.Notification{}, err
 	}
 	return notification, nil
+}
+
+func (repo *PostgresNotificationRepository) MarkAllRead(ctx context.Context, recipientID userdomain.UserID, readAt time.Time) (int, error) {
+	const query = `
+		UPDATE notifications
+		SET read_at = $2,
+			updated_at = $2
+		WHERE recipient_id = $1::uuid
+			AND read_at IS NULL
+	`
+
+	commandTag, err := repo.pool.Exec(ctx, query, recipientID.String(), readAt)
+	if err != nil {
+		return 0, fmt.Errorf("mark all notifications read: %w", err)
+	}
+	return int(commandTag.RowsAffected()), nil
+}
+
+func notificationCategoryPredicate(category notificationusecase.CategoryFilter) string {
+	switch category {
+	case notificationusecase.CategoryFilterAll:
+		return ""
+	case notificationusecase.CategoryFilterReplies:
+		return ` AND type IN ('reply', 'comment_reply', 'post_reply')`
+	case notificationusecase.CategoryFilterMentions:
+		return ` AND type = 'mention'`
+	case notificationusecase.CategoryFilterLikes:
+		return ` AND type IN ('like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
+	case notificationusecase.CategoryFilterSystem:
+		return ` AND type = 'system'`
+	default:
+		return ` AND false`
+	}
 }
 
 type rowScanner interface {

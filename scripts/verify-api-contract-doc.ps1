@@ -145,7 +145,6 @@ Add-RoutesFromFile -Routes $actualRoutes -Path 'internal/auth/delivery/authhttp/
 $protectedRouteFiles = @(
     'internal/vote/delivery/votehttp/handler.go',
     'internal/moderation/delivery/moderationhttp/handler.go',
-    'internal/search/delivery/searchhttp/handler.go',
     'internal/notification/delivery/notificationhttp/handler.go',
     'internal/media/delivery/mediahttp/handler.go'
 )
@@ -202,6 +201,12 @@ Add-RoutesFromFile `
     -Prefix '/api/v1' `
     -Auth 'optional Bearer' `
     -IncludeHandlers @('ListPostComments', 'ListUserComments')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/search/delivery/searchhttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'optional Bearer'
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `

@@ -86,10 +86,6 @@ func TestSearchRejectsInvalidInput(t *testing.T) {
 		input SearchInput
 	}{
 		{
-			name:  "missing actor",
-			input: SearchInput{Query: "campus"},
-		},
-		{
 			name:  "blank query",
 			input: SearchInput{ActorID: userdomain.NewGeneratedUserID(), Query: " "},
 		},

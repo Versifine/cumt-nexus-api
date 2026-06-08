@@ -8,11 +8,11 @@
 - 社区列表、社区详情、社区创建申请、申请审核读取和平台 staff 审批
 - 帖子发布、列表、详情、编辑、软删除
 - 评论发布、列表、树状读取、编辑、软删除
-- 帖子 upvote/downvote/cancel、保存、评论投票、社区关注和 `new` / `hot` 排序
+- 帖子 upvote/downvote/cancel、保存、评论投票、社区关注和 `best` / `hot` / `new` / `top` / `rising` 排序
 - 图片上传、帖子/评论图片附件绑定，支持本地存储和 Cloudflare R2
 - 内容举报、平台 staff 移除内容、举报列表和举报处理
-- PostgreSQL 基础搜索
-- 站内通知读取和标记已读
+- PostgreSQL 基础搜索，支持匿名读取公开内容
+- 站内通知读取、分类筛选、未读摘要和标记已读
 - 统一错误响应、request id、请求日志、panic recovery、CORS 配置
 
 ## 技术栈
@@ -123,7 +123,7 @@ OBJECT_STORAGE_FORCE_PATH_STYLE=true
 Authorization: Bearer <access_token>
 ```
 
-公开帖子流、公开帖子详情、公开评论、公开社区和公开用户主页支持匿名读取；如果请求携带 Bearer token，后端会返回当前用户视角的 `my_vote`、`is_saved`、`viewer_is_following` 和 `viewer_permissions`，无 token 时这些 viewer 字段为匿名态。格式错误、过期或签名错误的 token 仍返回 `unauthenticated`，不会静默降级为匿名。
+公开帖子流、公开帖子详情、公开评论、公开社区、公开用户主页和搜索支持匿名读取；如果请求携带 Bearer token，后端会返回当前用户视角的 `my_vote`、`is_saved`、`viewer_is_following` 和 `viewer_permissions`，无 token 时这些 viewer 字段为匿名态。格式错误、过期或签名错误的 token 仍返回 `unauthenticated`，不会静默降级为匿名。
 
 ### Auth
 
@@ -212,9 +212,11 @@ POST /api/v1/moderation/reports/:id/remove-target
 ### Search / Notifications
 
 ```text
-GET  /api/v1/search
-GET  /api/v1/notifications
+GET  /api/v1/search                         # public, optional Bearer
+GET  /api/v1/notifications/unread-summary
+GET  /api/v1/notifications?category=likes&status=unread
 POST /api/v1/notifications/:id/read
+POST /api/v1/notifications/read-all
 ```
 
 ## 响应约定

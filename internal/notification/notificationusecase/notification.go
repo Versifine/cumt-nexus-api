@@ -24,6 +24,16 @@ const (
 	StatusFilterAll    StatusFilter = "all"
 )
 
+type CategoryFilter string
+
+const (
+	CategoryFilterAll      CategoryFilter = "all"
+	CategoryFilterReplies  CategoryFilter = "replies"
+	CategoryFilterMentions CategoryFilter = "mentions"
+	CategoryFilterLikes    CategoryFilter = "likes"
+	CategoryFilterSystem   CategoryFilter = "system"
+)
+
 type UseCase struct {
 	repository Repository
 	now        func() time.Time
@@ -43,17 +53,31 @@ type Notification struct {
 }
 
 type ListNotificationsInput struct {
-	ActorID userdomain.UserID
-	Status  string
-	Limit   int
-	Offset  int
+	ActorID  userdomain.UserID
+	Category string
+	Status   string
+	Limit    int
+	Offset   int
 }
 
 type ListNotificationsResult struct {
 	Notifications []Notification
+	Category      string
 	Status        string
 	Limit         int
 	Offset        int
+}
+
+type UnreadSummaryInput struct {
+	ActorID userdomain.UserID
+}
+
+type UnreadSummary struct {
+	Total    int
+	Replies  int
+	Mentions int
+	Likes    int
+	System   int
 }
 
 type MarkNotificationReadInput struct {
@@ -63,6 +87,15 @@ type MarkNotificationReadInput struct {
 
 type MarkNotificationReadResult struct {
 	Notification Notification
+}
+
+type MarkAllNotificationsReadInput struct {
+	ActorID userdomain.UserID
+}
+
+type MarkAllNotificationsReadResult struct {
+	UpdatedCount int
+	ReadAt       time.Time
 }
 
 func NewUseCase(repository Repository, now func() time.Time) *UseCase {
@@ -79,6 +112,10 @@ func (uc *UseCase) ListNotifications(ctx context.Context, input ListNotification
 	if err := requireActor(input.ActorID); err != nil {
 		return ListNotificationsResult{}, err
 	}
+	category, err := normalizeCategory(input.Category)
+	if err != nil {
+		return ListNotificationsResult{}, err
+	}
 	status, err := normalizeStatus(input.Status)
 	if err != nil {
 		return ListNotificationsResult{}, err
@@ -88,16 +125,28 @@ func (uc *UseCase) ListNotifications(ctx context.Context, input ListNotification
 		return ListNotificationsResult{}, err
 	}
 
-	notifications, err := uc.repository.ListByRecipient(ctx, input.ActorID, status, limit, offset)
+	notifications, err := uc.repository.ListByRecipient(ctx, input.ActorID, category, status, limit, offset)
 	if err != nil {
 		return ListNotificationsResult{}, fmt.Errorf("list notifications: %w", err)
 	}
 	return ListNotificationsResult{
 		Notifications: notifications,
+		Category:      category.String(),
 		Status:        status.String(),
 		Limit:         limit,
 		Offset:        offset,
 	}, nil
+}
+
+func (uc *UseCase) GetUnreadSummary(ctx context.Context, input UnreadSummaryInput) (UnreadSummary, error) {
+	if err := requireActor(input.ActorID); err != nil {
+		return UnreadSummary{}, err
+	}
+	summary, err := uc.repository.CountUnreadByCategory(ctx, input.ActorID)
+	if err != nil {
+		return UnreadSummary{}, fmt.Errorf("count unread notifications: %w", err)
+	}
+	return summary, nil
 }
 
 func (uc *UseCase) MarkNotificationRead(ctx context.Context, input MarkNotificationReadInput) (MarkNotificationReadResult, error) {
@@ -115,6 +164,45 @@ func (uc *UseCase) MarkNotificationRead(ctx context.Context, input MarkNotificat
 	return MarkNotificationReadResult{
 		Notification: notification,
 	}, nil
+}
+
+func (uc *UseCase) MarkAllNotificationsRead(ctx context.Context, input MarkAllNotificationsReadInput) (MarkAllNotificationsReadResult, error) {
+	if err := requireActor(input.ActorID); err != nil {
+		return MarkAllNotificationsReadResult{}, err
+	}
+	readAt := uc.now().UTC()
+	updatedCount, err := uc.repository.MarkAllRead(ctx, input.ActorID, readAt)
+	if err != nil {
+		return MarkAllNotificationsReadResult{}, fmt.Errorf("mark all notifications read: %w", err)
+	}
+	return MarkAllNotificationsReadResult{
+		UpdatedCount: updatedCount,
+		ReadAt:       readAt,
+	}, nil
+}
+
+func normalizeCategory(raw string) (CategoryFilter, error) {
+	if strings.TrimSpace(raw) == "" {
+		return CategoryFilterAll, nil
+	}
+	switch CategoryFilter(strings.TrimSpace(strings.ToLower(raw))) {
+	case CategoryFilterAll:
+		return CategoryFilterAll, nil
+	case CategoryFilterReplies:
+		return CategoryFilterReplies, nil
+	case CategoryFilterMentions:
+		return CategoryFilterMentions, nil
+	case CategoryFilterLikes:
+		return CategoryFilterLikes, nil
+	case CategoryFilterSystem:
+		return CategoryFilterSystem, nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "notification category is invalid")
+	}
+}
+
+func (category CategoryFilter) String() string {
+	return string(category)
 }
 
 func normalizeStatus(raw string) (StatusFilter, error) {

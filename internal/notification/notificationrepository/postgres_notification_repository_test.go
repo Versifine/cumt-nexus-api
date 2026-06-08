@@ -29,7 +29,7 @@ func TestPostgresNotificationRepositoryListByRecipient(t *testing.T) {
 	readID := insertTestNotification(ctx, t, pool, recipientID, &readAt, now.Add(time.Minute))
 	otherNotificationID := insertTestNotification(ctx, t, pool, otherID, nil, now)
 
-	unread, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.StatusFilterUnread, 20, 0)
+	unread, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterAll, notificationusecase.StatusFilterUnread, 20, 0)
 	if err != nil {
 		t.Fatalf("ListByRecipient unread returned error: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestPostgresNotificationRepositoryListByRecipient(t *testing.T) {
 		t.Fatalf("unexpected unread results: %#v", unread)
 	}
 
-	read, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.StatusFilterRead, 20, 0)
+	read, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterAll, notificationusecase.StatusFilterRead, 20, 0)
 	if err != nil {
 		t.Fatalf("ListByRecipient read returned error: %v", err)
 	}
@@ -45,12 +45,94 @@ func TestPostgresNotificationRepositoryListByRecipient(t *testing.T) {
 		t.Fatalf("unexpected read results: %#v", read)
 	}
 
-	all, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.StatusFilterAll, 20, 0)
+	all, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterAll, notificationusecase.StatusFilterAll, 20, 0)
 	if err != nil {
 		t.Fatalf("ListByRecipient all returned error: %v", err)
 	}
 	if !containsNotification(all, unreadID) || !containsNotification(all, readID) || containsNotification(all, otherNotificationID) {
 		t.Fatalf("unexpected all results: %#v", all)
+	}
+}
+
+func TestPostgresNotificationRepositoryListByCategory(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresNotificationRepository(pool)
+	now := testNow()
+
+	recipientID := insertTestUser(ctx, t, pool)
+	replyID := insertTestNotificationWithType(ctx, t, pool, recipientID, "reply", nil, now)
+	likeID := insertTestNotificationWithType(ctx, t, pool, recipientID, "post_like", nil, now.Add(time.Minute))
+	mentionID := insertTestNotificationWithType(ctx, t, pool, recipientID, "mention", nil, now.Add(2*time.Minute))
+	systemID := insertTestNotificationWithType(ctx, t, pool, recipientID, "system", nil, now.Add(3*time.Minute))
+
+	replies, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterReplies, notificationusecase.StatusFilterAll, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByRecipient replies returned error: %v", err)
+	}
+	if !containsNotification(replies, replyID) || containsNotification(replies, likeID) {
+		t.Fatalf("unexpected replies results: %#v", replies)
+	}
+
+	likes, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterLikes, notificationusecase.StatusFilterAll, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByRecipient likes returned error: %v", err)
+	}
+	if !containsNotification(likes, likeID) || containsNotification(likes, replyID) {
+		t.Fatalf("unexpected likes results: %#v", likes)
+	}
+
+	mentions, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterMentions, notificationusecase.StatusFilterAll, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByRecipient mentions returned error: %v", err)
+	}
+	if !containsNotification(mentions, mentionID) || containsNotification(mentions, systemID) {
+		t.Fatalf("unexpected mentions results: %#v", mentions)
+	}
+
+	system, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterSystem, notificationusecase.StatusFilterAll, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByRecipient system returned error: %v", err)
+	}
+	if !containsNotification(system, systemID) || containsNotification(system, mentionID) {
+		t.Fatalf("unexpected system results: %#v", system)
+	}
+}
+
+func TestPostgresNotificationRepositoryUnreadSummaryAndMarkAllRead(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresNotificationRepository(pool)
+	now := testNow()
+
+	recipientID := insertTestUser(ctx, t, pool)
+	readAt := now.Add(time.Minute)
+	insertTestNotificationWithType(ctx, t, pool, recipientID, "reply", nil, now)
+	insertTestNotificationWithType(ctx, t, pool, recipientID, "mention", nil, now)
+	insertTestNotificationWithType(ctx, t, pool, recipientID, "post_like", nil, now)
+	insertTestNotificationWithType(ctx, t, pool, recipientID, "system", nil, now)
+	insertTestNotificationWithType(ctx, t, pool, recipientID, "system", &readAt, now)
+
+	summary, err := repo.CountUnreadByCategory(ctx, recipientID)
+	if err != nil {
+		t.Fatalf("CountUnreadByCategory returned error: %v", err)
+	}
+	if summary.Total != 4 || summary.Replies != 1 || summary.Mentions != 1 || summary.Likes != 1 || summary.System != 1 {
+		t.Fatalf("unexpected unread summary: %#v", summary)
+	}
+
+	updated, err := repo.MarkAllRead(ctx, recipientID, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("MarkAllRead returned error: %v", err)
+	}
+	if updated != 4 {
+		t.Fatalf("expected 4 updated notifications, got %d", updated)
+	}
+
+	summary, err = repo.CountUnreadByCategory(ctx, recipientID)
+	if err != nil {
+		t.Fatalf("CountUnreadByCategory after mark all returned error: %v", err)
+	}
+	if summary.Total != 0 || summary.Replies != 0 || summary.Mentions != 0 || summary.Likes != 0 || summary.System != 0 {
+		t.Fatalf("expected no unread notifications, got %#v", summary)
 	}
 }
 
@@ -204,6 +286,12 @@ func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool) userd
 func insertTestNotification(ctx context.Context, t *testing.T, pool *pgxpool.Pool, recipientID userdomain.UserID, readAt *time.Time, createdAt time.Time) string {
 	t.Helper()
 
+	return insertTestNotificationWithType(ctx, t, pool, recipientID, "system", readAt, createdAt)
+}
+
+func insertTestNotificationWithType(ctx context.Context, t *testing.T, pool *pgxpool.Pool, recipientID userdomain.UserID, notificationType string, readAt *time.Time, createdAt time.Time) string {
+	t.Helper()
+
 	id := uuid.NewString()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO notifications (
@@ -218,8 +306,8 @@ func insertTestNotification(ctx context.Context, t *testing.T, pool *pgxpool.Poo
 			created_at,
 			updated_at
 		)
-		VALUES ($1::uuid, $2::uuid, 'system', 'Test notification', 'Body', 'test', $3, $4, $5, $5)
-	`, id, recipientID.String(), "source-"+id, readAt, createdAt)
+		VALUES ($1::uuid, $2::uuid, $3, 'Test notification', 'Body', 'test', $4, $5, $6, $6)
+	`, id, recipientID.String(), notificationType, "source-"+id, readAt, createdAt)
 	if err != nil {
 		t.Fatalf("insert test notification: %v", err)
 	}

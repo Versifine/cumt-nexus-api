@@ -66,8 +66,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/moderation/reports/:id/dismiss | none | `moderationhttp.reportContentResponse` | 200 |
 | POST | /api/v1/moderation/reports/:id/remove-target | `moderationhttp.reportContentRequest` | `moderationhttp.removeContentResponse` | 200 |
 | GET | /api/v1/search | query | `searchhttp.searchResponse` | 200 |
+| GET | /api/v1/notifications/unread-summary | none | `notificationhttp.unreadSummaryResponse` | 200 |
 | GET | /api/v1/notifications | query | `notificationhttp.listNotificationsResponse` | 200 |
 | POST | /api/v1/notifications/:id/read | none | `notificationhttp.markNotificationReadResponse` | 200 |
+| POST | /api/v1/notifications/read-all | none | `notificationhttp.markAllNotificationsReadResponse` | 200 |
 | POST | /api/v1/uploads/images | multipart form | `mediahttp.uploadImageResponse` | 201 |
 
 ## 请求必填字段清单
@@ -154,8 +156,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `searchhttp` | `searchCommunityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_at`, `updated_at` |
 | `searchhttp` | `searchPostResponse` | `id`, `community_id`, `community_slug`, `author_id`, `title`, `body_excerpt`, `status`, `created_at`, `updated_at` |
 | `notificationhttp` | `notificationResponse` | `id`, `recipient_id`, `type`, `title`, `body`, `source_type`, `source_id`, `read_at`, `created_at`, `updated_at` |
-| `notificationhttp` | `listNotificationsResponse` | `notifications`, `status`, `limit`, `offset` |
+| `notificationhttp` | `listNotificationsResponse` | `notifications`, `category`, `status`, `limit`, `offset` |
+| `notificationhttp` | `unreadSummaryResponse` | `total`, `replies`, `mentions`, `likes`, `system` |
 | `notificationhttp` | `markNotificationReadResponse` | `notification` |
+| `notificationhttp` | `markAllNotificationsReadResponse` | `updated_count`, `read_at` |
 | `mediahttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `mediahttp` | `uploadImageResponse` | `attachment` |
 

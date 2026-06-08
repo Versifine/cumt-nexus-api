@@ -26,6 +26,7 @@ func TestListNotificationsReturnsNotifications(t *testing.T) {
 	usecase := &fakeUseCase{
 		listResult: notificationusecase.ListNotificationsResult{
 			Notifications: []notificationusecase.Notification{newNotification(userID, now)},
+			Category:      notificationusecase.CategoryFilterLikes.String(),
 			Status:        notificationusecase.StatusFilterUnread.String(),
 			Limit:         50,
 			Offset:        2,
@@ -34,7 +35,7 @@ func TestListNotificationsReturnsNotifications(t *testing.T) {
 	router := newNotificationTestRouter(usecase, validParserWithUserID(userID))
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?status=unread&limit=50&offset=2", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?category=likes&status=unread&limit=50&offset=2", nil)
 	request.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(recorder, request)
@@ -45,7 +46,7 @@ func TestListNotificationsReturnsNotifications(t *testing.T) {
 	if !usecase.listCalled {
 		t.Fatal("expected list usecase call")
 	}
-	if usecase.listInput.ActorID != userID || usecase.listInput.Status != "unread" || usecase.listInput.Limit != 50 || usecase.listInput.Offset != 2 {
+	if usecase.listInput.ActorID != userID || usecase.listInput.Category != "likes" || usecase.listInput.Status != "unread" || usecase.listInput.Limit != 50 || usecase.listInput.Offset != 2 {
 		t.Fatalf("unexpected list input: %#v", usecase.listInput)
 	}
 
@@ -53,7 +54,47 @@ func TestListNotificationsReturnsNotifications(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if response.Status != "unread" || response.Limit != 50 || response.Offset != 2 || len(response.Notifications) != 1 {
+	if response.Category != "likes" || response.Status != "unread" || response.Limit != 50 || response.Offset != 2 || len(response.Notifications) != 1 {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestGetUnreadSummaryReturnsCategoryCounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	usecase := &fakeUseCase{
+		summaryResult: notificationusecase.UnreadSummary{
+			Total:    5,
+			Replies:  1,
+			Mentions: 1,
+			Likes:    2,
+			System:   1,
+		},
+	}
+	router := newNotificationTestRouter(usecase, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/unread-summary", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !usecase.summaryCalled {
+		t.Fatal("expected unread summary usecase call")
+	}
+	if usecase.summaryInput.ActorID != userID {
+		t.Fatalf("unexpected summary input: %#v", usecase.summaryInput)
+	}
+
+	var response unreadSummaryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Total != 5 || response.Likes != 2 {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }
@@ -96,6 +137,44 @@ func TestMarkNotificationReadReturnsNotification(t *testing.T) {
 	}
 	if response.Notification.ReadAt == nil {
 		t.Fatalf("expected read_at, got %#v", response.Notification)
+	}
+}
+
+func TestMarkAllNotificationsReadReturnsUpdatedCount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	readAt := testNow()
+	usecase := &fakeUseCase{
+		markAllResult: notificationusecase.MarkAllNotificationsReadResult{
+			UpdatedCount: 3,
+			ReadAt:       readAt,
+		},
+	}
+	router := newNotificationTestRouter(usecase, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/read-all", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !usecase.markAllCalled {
+		t.Fatal("expected mark all usecase call")
+	}
+	if usecase.markAllInput.ActorID != userID {
+		t.Fatalf("unexpected mark all input: %#v", usecase.markAllInput)
+	}
+
+	var response markAllNotificationsReadResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.UpdatedCount != 3 || !response.ReadAt.Equal(readAt) {
+		t.Fatalf("unexpected response: %#v", response)
 	}
 }
 
@@ -161,14 +240,22 @@ func TestNotificationHandlerPropagatesUseCaseError(t *testing.T) {
 }
 
 type fakeUseCase struct {
-	listCalled bool
-	markCalled bool
-	listInput  notificationusecase.ListNotificationsInput
-	markInput  notificationusecase.MarkNotificationReadInput
-	listResult notificationusecase.ListNotificationsResult
-	markResult notificationusecase.MarkNotificationReadResult
-	listErr    error
-	markErr    error
+	listCalled    bool
+	summaryCalled bool
+	markCalled    bool
+	markAllCalled bool
+	listInput     notificationusecase.ListNotificationsInput
+	summaryInput  notificationusecase.UnreadSummaryInput
+	markInput     notificationusecase.MarkNotificationReadInput
+	markAllInput  notificationusecase.MarkAllNotificationsReadInput
+	listResult    notificationusecase.ListNotificationsResult
+	summaryResult notificationusecase.UnreadSummary
+	markResult    notificationusecase.MarkNotificationReadResult
+	markAllResult notificationusecase.MarkAllNotificationsReadResult
+	listErr       error
+	summaryErr    error
+	markErr       error
+	markAllErr    error
 }
 
 func (f *fakeUseCase) ListNotifications(ctx context.Context, input notificationusecase.ListNotificationsInput) (notificationusecase.ListNotificationsResult, error) {
@@ -177,10 +264,22 @@ func (f *fakeUseCase) ListNotifications(ctx context.Context, input notificationu
 	return f.listResult, f.listErr
 }
 
+func (f *fakeUseCase) GetUnreadSummary(ctx context.Context, input notificationusecase.UnreadSummaryInput) (notificationusecase.UnreadSummary, error) {
+	f.summaryCalled = true
+	f.summaryInput = input
+	return f.summaryResult, f.summaryErr
+}
+
 func (f *fakeUseCase) MarkNotificationRead(ctx context.Context, input notificationusecase.MarkNotificationReadInput) (notificationusecase.MarkNotificationReadResult, error) {
 	f.markCalled = true
 	f.markInput = input
 	return f.markResult, f.markErr
+}
+
+func (f *fakeUseCase) MarkAllNotificationsRead(ctx context.Context, input notificationusecase.MarkAllNotificationsReadInput) (notificationusecase.MarkAllNotificationsReadResult, error) {
+	f.markAllCalled = true
+	f.markAllInput = input
+	return f.markAllResult, f.markAllErr
 }
 
 type fakeAccessTokenParser struct {

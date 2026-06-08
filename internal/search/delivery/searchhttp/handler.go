@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
-	"github.com/Versifine/cumt-nexus-api/internal/auth/authcontext"
 	"github.com/Versifine/cumt-nexus-api/internal/search/searchusecase"
 	"github.com/gin-gonic/gin"
 )
@@ -65,13 +64,6 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 }
 
 func (h *Handler) Search(c *gin.Context) {
-	userID, ok := authcontext.CurrentUserID(c.Request.Context())
-	if !ok {
-		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
-		c.Abort()
-		return
-	}
-
 	limit, err := parseOptionalIntQuery(c, "limit")
 	if err != nil {
 		_ = c.Error(err)
@@ -86,11 +78,10 @@ func (h *Handler) Search(c *gin.Context) {
 	}
 
 	result, err := h.search.Search(c.Request.Context(), searchusecase.SearchInput{
-		ActorID: userID,
-		Query:   c.Query("q"),
-		Scope:   c.Query("scope"),
-		Limit:   limit,
-		Offset:  offset,
+		Query:  c.Query("q"),
+		Scope:  c.Query("scope"),
+		Limit:  limit,
+		Offset: offset,
 	})
 	if err != nil {
 		_ = c.Error(err)
