@@ -241,6 +241,8 @@ POST /api/v1/notifications/:id/read
 POST /api/v1/notifications/read-all
 ```
 
+搜索基于 PostgreSQL full-text search 和 `ts_rank_cd` 排序；帖子搜索字段权重为标题 > 社区名/slug > 正文，并叠加轻量时间衰减。
+
 评论、回复、帖子点赞和评论点赞会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数。
 
 ## 响应约定

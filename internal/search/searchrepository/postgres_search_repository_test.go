@@ -65,7 +65,58 @@ func TestPostgresSearchRepositorySearchPosts(t *testing.T) {
 	}
 }
 
-func TestPostgresSearchRepositoryEscapesLikeWildcards(t *testing.T) {
+func TestPostgresSearchRepositoryRanksPostTitleAboveBody(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresSearchRepository(pool)
+
+	term := "ranktitle" + randomSuffix()
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "Search Ranking "+randomSuffix(), "active")
+	titleMatch := insertTestPostAt(ctx, t, pool, communityID, authorID, "Question about "+term, "ordinary body", "visible", testNow().Add(-2*time.Hour))
+	bodyMatch := insertTestPostAt(ctx, t, pool, communityID, authorID, "ordinary title", "body has "+term, "visible", testNow())
+
+	results, err := repo.SearchPosts(ctx, term, 20, 0)
+	if err != nil {
+		t.Fatalf("SearchPosts returned error: %v", err)
+	}
+
+	titleIndex := postIndex(results, titleMatch.String())
+	bodyIndex := postIndex(results, bodyMatch.String())
+	if titleIndex < 0 || bodyIndex < 0 {
+		t.Fatalf("expected both title/body matches, got %#v", results)
+	}
+	if titleIndex > bodyIndex {
+		t.Fatalf("expected title match to rank before body match, got title=%d body=%d results=%#v", titleIndex, bodyIndex, results)
+	}
+}
+
+func TestPostgresSearchRepositoryRanksCommunityNameAbovePostBody(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresSearchRepository(pool)
+
+	term := "rankcommunity" + randomSuffix()
+	authorID := insertTestUser(ctx, t, pool)
+	communityNameMatchID := insertTestCommunity(ctx, t, pool, authorID, "Community "+term, "active")
+	bodyMatchCommunityID := insertTestCommunity(ctx, t, pool, authorID, "Search Ranking "+randomSuffix(), "active")
+	communityNameMatch := insertTestPostAt(ctx, t, pool, communityNameMatchID, authorID, "ordinary title", "ordinary body", "visible", testNow().Add(-2*time.Hour))
+	bodyMatch := insertTestPostAt(ctx, t, pool, bodyMatchCommunityID, authorID, "ordinary title", "body has "+term, "visible", testNow())
+
+	results, err := repo.SearchPosts(ctx, term, 20, 0)
+	if err != nil {
+		t.Fatalf("SearchPosts returned error: %v", err)
+	}
+
+	communityIndex := postIndex(results, communityNameMatch.String())
+	bodyIndex := postIndex(results, bodyMatch.String())
+	if communityIndex < 0 || bodyIndex < 0 {
+		t.Fatalf("expected both community/body matches, got %#v", results)
+	}
+	if communityIndex > bodyIndex {
+		t.Fatalf("expected community name match to rank before body match, got community=%d body=%d results=%#v", communityIndex, bodyIndex, results)
+	}
+}
+
+func TestPostgresSearchRepositoryHandlesPunctuationQueries(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresSearchRepository(pool)
 
@@ -124,6 +175,22 @@ func requireSearchSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) 
 		}
 		if !exists {
 			t.Skipf("%s table does not exist; run go run ./cmd/migrate up before repository tests", table)
+		}
+	}
+	for _, indexName := range []string{"communities_public_search_fts_idx", "posts_visible_search_fts_idx"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_indexes
+				WHERE schemaname = 'public'
+					AND indexname = $1
+			)
+		`, indexName).Scan(&exists); err != nil {
+			t.Fatalf("check index %s exists: %v", indexName, err)
+		}
+		if !exists {
+			t.Skipf("%s index does not exist; run go run ./cmd/migrate up before repository tests", indexName)
 		}
 	}
 }
@@ -228,6 +295,12 @@ func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, 
 func insertTestPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, body string, status string) postdomain.PostID {
 	t.Helper()
 
+	return insertTestPostAt(ctx, t, pool, communityID, authorID, title, body, status, testNow())
+}
+
+func insertTestPostAt(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, body string, status string, createdAt time.Time) postdomain.PostID {
+	t.Helper()
+
 	id := postdomain.NewGeneratedPostID()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO posts (
@@ -241,7 +314,7 @@ func insertTestPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, commu
 			updated_at
 		)
 		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $7)
-	`, id.String(), communityID.String(), authorID.String(), title, body, status, testNow())
+	`, id.String(), communityID.String(), authorID.String(), title, body, status, createdAt)
 	if err != nil {
 		t.Fatalf("insert test post: %v", err)
 	}
@@ -271,6 +344,15 @@ func containsPost(results []searchusecase.PostResult, id string) bool {
 		}
 	}
 	return false
+}
+
+func postIndex(results []searchusecase.PostResult, id string) int {
+	for index, result := range results {
+		if result.ID == id {
+			return index
+		}
+	}
+	return -1
 }
 
 func testNow() time.Time {

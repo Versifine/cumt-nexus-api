@@ -23,6 +23,33 @@ func NewPostgresSearchRepository(pool *pgxpool.Pool) *PostgresSearchRepository {
 
 func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, query string, limit int, offset int) ([]searchusecase.CommunityResult, error) {
 	const sql = `
+		WITH search_query AS (
+			SELECT websearch_to_tsquery('simple', $1) AS query
+		),
+		ranked_communities AS (
+			SELECT
+				communities.id,
+				communities.slug,
+				communities.name,
+				communities.description,
+				communities.kind,
+				communities.status,
+				communities.visibility,
+				communities.created_at,
+				communities.updated_at,
+				ts_rank_cd(community_search.document, search_query.query) AS rank_score,
+				1.0 / (1.0 + GREATEST(EXTRACT(EPOCH FROM (NOW() - communities.updated_at)), 0) / 604800.0) AS recency_score
+			FROM communities
+			CROSS JOIN search_query
+			CROSS JOIN LATERAL (
+				SELECT
+					setweight(to_tsvector('simple', COALESCE(communities.name, '')), 'A') ||
+					setweight(to_tsvector('simple', COALESCE(communities.description, '')), 'B') AS document
+			) AS community_search
+			WHERE communities.status = 'active'
+				AND communities.visibility = 'public'
+				AND community_search.document @@ search_query.query
+		)
 		SELECT
 			id::text,
 			slug,
@@ -33,16 +60,13 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 			visibility,
 			created_at,
 			updated_at
-		FROM communities
-		WHERE status = 'active'
-			AND visibility = 'public'
-			AND name ILIKE $1 ESCAPE '\'
-		ORDER BY name ASC, id ASC
+		FROM ranked_communities
+		ORDER BY rank_score DESC, recency_score DESC, updated_at DESC, id ASC
 		LIMIT $2
 		OFFSET $3
 	`
 
-	rows, err := repo.pool.Query(ctx, sql, likePattern(query), limit, offset)
+	rows, err := repo.pool.Query(ctx, sql, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("search communities: %w", err)
 	}
@@ -74,31 +98,61 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 
 func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query string, limit int, offset int) ([]searchusecase.PostResult, error) {
 	const sql = `
+		WITH search_query AS (
+			SELECT websearch_to_tsquery('simple', $1) AS query
+		),
+		ranked_posts AS (
+			SELECT
+				posts.id,
+				posts.community_id,
+				communities.slug AS community_slug,
+				posts.author_id,
+				posts.title,
+				posts.body,
+				posts.status,
+				posts.created_at,
+				posts.updated_at,
+				ts_rank_cd(post_search.document, search_query.query) AS rank_score,
+				1.0 / (1.0 + GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)), 0) / 604800.0) AS recency_score
+			FROM posts
+			INNER JOIN communities ON communities.id = posts.community_id
+			CROSS JOIN search_query
+			CROSS JOIN LATERAL (
+				SELECT
+					setweight(to_tsvector('simple', COALESCE(posts.title, '')), 'A') ||
+					setweight(to_tsvector('simple', COALESCE(posts.body, '')), 'C') AS post_document,
+					setweight(to_tsvector('simple', COALESCE(communities.name, '')), 'B') ||
+					setweight(to_tsvector('simple', COALESCE(communities.slug, '')), 'B') AS community_document,
+					setweight(to_tsvector('simple', COALESCE(posts.title, '')), 'A') ||
+					setweight(to_tsvector('simple', COALESCE(communities.name, '')), 'B') ||
+					setweight(to_tsvector('simple', COALESCE(communities.slug, '')), 'B') ||
+					setweight(to_tsvector('simple', COALESCE(posts.body, '')), 'C') AS document
+			) AS post_search
+			WHERE posts.status = 'visible'
+				AND communities.status = 'active'
+				AND communities.visibility = 'public'
+				AND (
+					post_search.post_document @@ search_query.query
+					OR post_search.community_document @@ search_query.query
+				)
+		)
 		SELECT
-			posts.id::text,
-			posts.community_id::text,
-			communities.slug,
-			posts.author_id::text,
-			posts.title,
-			posts.body,
-			posts.status,
-			posts.created_at,
-			posts.updated_at
-		FROM posts
-		INNER JOIN communities ON communities.id = posts.community_id
-		WHERE posts.status = 'visible'
-			AND communities.status = 'active'
-			AND communities.visibility = 'public'
-			AND (
-				posts.title ILIKE $1 ESCAPE '\'
-				OR posts.body ILIKE $1 ESCAPE '\'
-			)
-		ORDER BY posts.created_at DESC, posts.id DESC
+			id::text,
+			community_id::text,
+			community_slug,
+			author_id::text,
+			title,
+			body,
+			status,
+			created_at,
+			updated_at
+		FROM ranked_posts
+		ORDER BY rank_score DESC, recency_score DESC, created_at DESC, id DESC
 		LIMIT $2
 		OFFSET $3
 	`
 
-	rows, err := repo.pool.Query(ctx, sql, likePattern(query), limit, offset)
+	rows, err := repo.pool.Query(ctx, sql, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("search posts: %w", err)
 	}
@@ -128,11 +182,6 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 		return nil, fmt.Errorf("iterate post search results: %w", err)
 	}
 	return results, nil
-}
-
-func likePattern(query string) string {
-	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return "%" + replacer.Replace(query) + "%"
 }
 
 func excerptBody(raw string) string {
