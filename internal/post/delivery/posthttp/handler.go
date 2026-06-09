@@ -83,17 +83,23 @@ type userSummaryResponse struct {
 }
 
 type communitySummaryResponse struct {
-	ID                string                    `json:"id"`
-	Slug              string                    `json:"slug"`
-	Name              string                    `json:"name"`
-	Description       string                    `json:"description"`
-	AvatarURL         string                    `json:"avatar_url"`
-	BannerURL         string                    `json:"banner_url"`
-	MemberCount       int                       `json:"member_count"`
-	PostCount         int                       `json:"post_count"`
-	ViewerIsFollowing bool                      `json:"viewer_is_following"`
-	ViewerRole        string                    `json:"viewer_role"`
-	ViewerPermissions viewerPermissionsResponse `json:"viewer_permissions"`
+	ID                string                             `json:"id"`
+	Slug              string                             `json:"slug"`
+	Name              string                             `json:"name"`
+	Description       string                             `json:"description"`
+	AvatarURL         string                             `json:"avatar_url"`
+	BannerURL         string                             `json:"banner_url"`
+	MemberCount       int                                `json:"member_count"`
+	PostCount         int                                `json:"post_count"`
+	ViewerIsFollowing bool                               `json:"viewer_is_following"`
+	ViewerRole        string                             `json:"viewer_role"`
+	ViewerPermissions communityViewerPermissionsResponse `json:"viewer_permissions"`
+}
+
+type communityViewerPermissionsResponse struct {
+	CanPost     bool `json:"can_post"`
+	CanManage   bool `json:"can_manage"`
+	CanModerate bool `json:"can_moderate"`
 }
 
 type postPreviewResponse struct {
@@ -562,7 +568,15 @@ func toCommunitySummaryResponse(community postusecase.CommunitySummary) communit
 		PostCount:         community.PostCount,
 		ViewerIsFollowing: community.ViewerIsFollowing,
 		ViewerRole:        community.ViewerRole,
-		ViewerPermissions: toViewerPermissionsResponse(community.ViewerPermissions),
+		ViewerPermissions: toCommunityViewerPermissionsResponse(community.ViewerPermissions),
+	}
+}
+
+func toCommunityViewerPermissionsResponse(permissions postusecase.CommunityViewerPermissions) communityViewerPermissionsResponse {
+	return communityViewerPermissionsResponse{
+		CanPost:     permissions.CanPost,
+		CanManage:   permissions.CanManage,
+		CanModerate: permissions.CanModerate,
 	}
 }
 

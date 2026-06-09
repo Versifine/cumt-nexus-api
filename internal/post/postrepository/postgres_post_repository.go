@@ -13,6 +13,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -566,10 +567,14 @@ func postListOrderBy(sort postusecase.PostListSort) string {
 	}
 }
 
-func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]postusecase.PostMetadata, error) {
+func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID, viewerID userdomain.UserID) (map[postdomain.PostID]postusecase.PostMetadata, error) {
 	result := make(map[postdomain.PostID]postusecase.PostMetadata, len(postIDs))
 	if len(postIDs) == 0 {
 		return result, nil
+	}
+	var viewerArg any
+	if viewerID.String() != "" {
+		viewerArg = viewerID.String()
 	}
 
 	const query = `
@@ -581,6 +586,8 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 			communities.slug,
 			communities.name,
 			communities.description,
+			communities.status,
+			communities.visibility,
 			(
 				SELECT COUNT(*)::int
 				FROM comments
@@ -598,14 +605,31 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 				FROM community_memberships
 				WHERE community_memberships.community_id = communities.id
 					AND community_memberships.status = 'active'
-			) AS community_member_count
+			) AS community_member_count,
+			(
+				$2::uuid IS NOT NULL
+				AND EXISTS (
+					SELECT 1
+					FROM community_follows
+					WHERE community_follows.community_id = communities.id
+						AND community_follows.user_id = $2::uuid
+				)
+			) AS viewer_is_following,
+			(
+				SELECT community_memberships.role
+				FROM community_memberships
+				WHERE community_memberships.community_id = communities.id
+					AND community_memberships.user_id = $2::uuid
+					AND community_memberships.status = 'active'
+				LIMIT 1
+			) AS viewer_role
 		FROM posts
 		INNER JOIN users ON users.id = posts.author_id
 		INNER JOIN communities ON communities.id = posts.community_id
 		WHERE posts.id = ANY($1::uuid[])
 	`
 
-	rows, err := repo.pool.Query(ctx, query, postIDStrings(postIDs))
+	rows, err := repo.pool.Query(ctx, query, postIDStrings(postIDs), viewerArg)
 	if err != nil {
 		return nil, fmt.Errorf("load post metadata: %w", err)
 	}
@@ -619,9 +643,13 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 		var rawCommunitySlug string
 		var rawCommunityName string
 		var rawCommunityDescription string
+		var rawCommunityStatus string
+		var rawCommunityVisibility string
 		var commentCount int
 		var communityPostCount int
 		var communityMemberCount int
+		var viewerIsFollowing bool
+		var rawViewerRole pgtype.Text
 
 		if err := rows.Scan(
 			&rawPostID,
@@ -631,9 +659,13 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 			&rawCommunitySlug,
 			&rawCommunityName,
 			&rawCommunityDescription,
+			&rawCommunityStatus,
+			&rawCommunityVisibility,
 			&commentCount,
 			&communityPostCount,
 			&communityMemberCount,
+			&viewerIsFollowing,
+			&rawViewerRole,
 		); err != nil {
 			return nil, err
 		}
@@ -650,12 +682,15 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 				Badges:      []string{},
 			},
 			Community: postusecase.CommunitySummary{
-				ID:          rawCommunityID,
-				Slug:        rawCommunitySlug,
-				Name:        rawCommunityName,
-				Description: rawCommunityDescription,
-				PostCount:   communityPostCount,
-				MemberCount: communityMemberCount,
+				ID:                rawCommunityID,
+				Slug:              rawCommunitySlug,
+				Name:              rawCommunityName,
+				Description:       rawCommunityDescription,
+				PostCount:         communityPostCount,
+				MemberCount:       communityMemberCount,
+				ViewerIsFollowing: viewerIsFollowing,
+				ViewerRole:        rawViewerRole.String,
+				ViewerPermissions: communityViewerPermissionsForPostMetadata(viewerID, rawViewerRole.String, rawCommunityStatus, rawCommunityVisibility),
 			},
 			CommentCount: commentCount,
 		}
@@ -665,6 +700,17 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 	}
 
 	return result, nil
+}
+
+func communityViewerPermissionsForPostMetadata(viewerID userdomain.UserID, role string, communityStatus string, communityVisibility string) postusecase.CommunityViewerPermissions {
+	if viewerID.String() == "" {
+		return postusecase.CommunityViewerPermissions{}
+	}
+	return postusecase.CommunityViewerPermissions{
+		CanPost:     communityStatus == communitydomain.CommunityStatusActive.String() && communityVisibility == communitydomain.CommunityVisibilityPublic.String(),
+		CanManage:   role == communitydomain.MembershipRoleOwner.String(),
+		CanModerate: role == communitydomain.MembershipRoleOwner.String() || role == communitydomain.MembershipRoleModerator.String(),
+	}
 }
 
 func postIDStrings(postIDs []postdomain.PostID) []string {

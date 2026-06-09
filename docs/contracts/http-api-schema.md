@@ -146,6 +146,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `posthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `posthttp` | `communitySummaryResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions` |
+| `posthttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate` |
 | `posthttp` | `postPreviewResponse` | `kind`, `image` |
 | `posthttp` | `postPreviewImageResponse` | `url`, `width`, `height`, `mime_type`, `alt_text`, `size_bytes` |
 | `posthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |

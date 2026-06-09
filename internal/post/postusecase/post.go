@@ -226,7 +226,7 @@ type CommunitySummary struct {
 	PostCount         int
 	ViewerIsFollowing bool
 	ViewerRole        string
-	ViewerPermissions ViewerPermissions
+	ViewerPermissions CommunityViewerPermissions
 }
 
 type PostPreview struct {
@@ -249,6 +249,12 @@ type ViewerPermissions struct {
 	CanReport   bool
 	CanEdit     bool
 	CanDelete   bool
+	CanModerate bool
+}
+
+type CommunityViewerPermissions struct {
+	CanPost     bool
+	CanManage   bool
 	CanModerate bool
 }
 
@@ -364,7 +370,7 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 		return PublishPostResult{}, err
 	}
 
-	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post})
+	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post}, input.AuthorID)
 	if err != nil {
 		return PublishPostResult{}, err
 	}
@@ -422,7 +428,7 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
-	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.ViewerID)
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
@@ -484,7 +490,7 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 		Limit:  limit,
 		Offset: offset,
 	}
-	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.ViewerID)
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
@@ -531,7 +537,7 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 	if err != nil {
 		return ListUserPostsResult{}, err
 	}
-	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.ViewerID)
 	if err != nil {
 		return ListUserPostsResult{}, err
 	}
@@ -570,7 +576,7 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 	if err != nil {
 		return GetPostResult{}, err
 	}
-	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post})
+	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post}, input.ViewerID)
 	if err != nil {
 		return GetPostResult{}, err
 	}
@@ -653,7 +659,7 @@ func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsI
 	if err != nil {
 		return ListSavedPostsResult{}, err
 	}
-	metadataViews, err := uc.loadMetadataViews(ctx, posts)
+	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.UserID)
 	if err != nil {
 		return ListSavedPostsResult{}, err
 	}
@@ -731,7 +737,7 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 		}
 		attachments = attachmentViews[post.ID()]
 	}
-	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post})
+	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post}, input.ActorID)
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
@@ -1006,7 +1012,7 @@ func (uc *PostUseCase) loadAttachmentViews(ctx context.Context, posts []postdoma
 	return views, nil
 }
 
-func (uc *PostUseCase) loadMetadataViews(ctx context.Context, posts []postdomain.Post) (map[postdomain.PostID]PostMetadata, error) {
+func (uc *PostUseCase) loadMetadataViews(ctx context.Context, posts []postdomain.Post, viewerID userdomain.UserID) (map[postdomain.PostID]PostMetadata, error) {
 	views := make(map[postdomain.PostID]PostMetadata, len(posts))
 	if len(posts) == 0 {
 		return views, nil
@@ -1022,7 +1028,7 @@ func (uc *PostUseCase) loadMetadataViews(ctx context.Context, posts []postdomain
 	for _, post := range posts {
 		postIDs = append(postIDs, post.ID())
 	}
-	loaded, err := uc.metadata.LoadMetadataByPostIDs(ctx, postIDs)
+	loaded, err := uc.metadata.LoadMetadataByPostIDs(ctx, postIDs, viewerID)
 	if err != nil {
 		return nil, fmt.Errorf("load post metadata: %w", err)
 	}
@@ -1089,7 +1095,7 @@ func fallbackPostMetadata(post postdomain.Post) PostMetadata {
 		},
 		Community: CommunitySummary{
 			ID:                post.CommunityID().String(),
-			ViewerPermissions: ViewerPermissions{},
+			ViewerPermissions: CommunityViewerPermissions{},
 		},
 	}
 }

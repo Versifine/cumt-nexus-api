@@ -35,7 +35,7 @@ type PublicUserFinder interface {
 }
 
 type PostMetadataRepository interface {
-	LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]PostMetadata, error)
+	LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID, viewerID userdomain.UserID) (map[postdomain.PostID]PostMetadata, error)
 }
 
 type VoteRepository interface {

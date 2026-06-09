@@ -107,6 +107,38 @@ func TestPostgresPostRepositoryListPostsByCommunityForManagement(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryLoadMetadataByPostIDsReturnsViewerCommunityContext(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	viewerID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "metadata-"+randomSuffix())
+	insertTestCommunityFollow(ctx, t, pool, communityID, viewerID)
+	insertTestCommunityMembership(ctx, t, pool, communityID, viewerID, communitydomain.MembershipRoleModerator)
+	post := mustPost(t, communityID, authorID, "Metadata viewer context", now)
+	if err := repo.Create(ctx, *post); err != nil {
+		t.Fatalf("Create post returned error: %v", err)
+	}
+	cleanupPost(ctx, t, pool, post.ID())
+
+	metadata, err := repo.LoadMetadataByPostIDs(ctx, []postdomain.PostID{post.ID()}, viewerID)
+	if err != nil {
+		t.Fatalf("LoadMetadataByPostIDs returned error: %v", err)
+	}
+	got := metadata[post.ID()]
+	if !got.Community.ViewerIsFollowing {
+		t.Fatal("expected viewer_is_following=true")
+	}
+	if got.Community.ViewerRole != communitydomain.MembershipRoleModerator.String() {
+		t.Fatalf("expected moderator role, got %q", got.Community.ViewerRole)
+	}
+	if !got.Community.ViewerPermissions.CanPost || got.Community.ViewerPermissions.CanManage || !got.Community.ViewerPermissions.CanModerate {
+		t.Fatalf("unexpected community viewer permissions: %#v", got.Community.ViewerPermissions)
+	}
+}
+
 func TestPostgresPostRepositoryListVisibleInPublicCommunities(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)
@@ -632,6 +664,35 @@ func insertTestCommunityFollow(ctx context.Context, t *testing.T, pool *pgxpool.
 				AND user_id = $2::uuid
 		`, communityID.String(), userID.String()); err != nil {
 			t.Fatalf("cleanup test community follow community=%q user=%q: %v", communityID.String(), userID.String(), err)
+		}
+	})
+}
+
+func insertTestCommunityMembership(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, userID userdomain.UserID, role communitydomain.MembershipRole) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO community_memberships (
+			community_id,
+			user_id,
+			role,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, 'active', $4, $4)
+	`, communityID.String(), userID.String(), role.String(), testNow())
+	if err != nil {
+		t.Fatalf("insert test community membership: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `
+			DELETE FROM community_memberships
+			WHERE community_id = $1::uuid
+				AND user_id = $2::uuid
+		`, communityID.String(), userID.String()); err != nil {
+			t.Fatalf("cleanup test community membership community=%q user=%q: %v", communityID.String(), userID.String(), err)
 		}
 	})
 }
