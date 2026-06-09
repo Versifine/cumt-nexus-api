@@ -107,6 +107,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	publicUserUC := userusecase.NewPublicUserUseCase(userRepo)
 	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
 	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
+	communityReadUC.SetMembershipReader(communityrepository.NewPostgresMembershipRepository(pool))
 	communityApplicationUC := communityusecase.NewCommunityApplicationUseCase(
 		communityRepo,
 		communityApplicationRepo,
@@ -166,6 +167,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	userhttp.RegisterRoutes(protectedV1, userHandler)
 	communityhttp.RegisterApplicationRoutes(protectedV1, communityHandler)
 	communityhttp.RegisterFollowRoutes(protectedV1, communityHandler)
+	communityhttp.RegisterManageRoutes(protectedV1, communityHandler)
 	posthttp.RegisterWriteRoutes(protectedV1, postHandler)
 	commenthttp.RegisterWriteRoutes(protectedV1, commentHandler)
 	votehttp.RegisterRoutes(protectedV1, voteHandler)

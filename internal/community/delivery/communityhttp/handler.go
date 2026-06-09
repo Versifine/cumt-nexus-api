@@ -24,6 +24,8 @@ type CommunityReadUseCase interface {
 	FollowCommunity(ctx context.Context, input communityusecase.FollowCommunityInput) (communityusecase.FollowCommunityResult, error)
 	DeleteCommunityFollow(ctx context.Context, input communityusecase.DeleteCommunityFollowInput) (communityusecase.DeleteCommunityFollowResult, error)
 	ListFollowedCommunities(ctx context.Context, input communityusecase.ListFollowedCommunitiesInput) (communityusecase.ListFollowedCommunitiesResult, error)
+	GetCommunityManageContext(ctx context.Context, input communityusecase.GetCommunityManageContextInput) (communityusecase.GetCommunityManageContextResult, error)
+	ListCommunityMembers(ctx context.Context, input communityusecase.ListCommunityMembersInput) (communityusecase.ListCommunityMembersResult, error)
 }
 
 type CommunityApplicationUseCase interface {
@@ -42,10 +44,38 @@ type getCommunityResponse struct {
 	Community communityResponse `json:"community"`
 }
 
+type getCommunityManageContextResponse struct {
+	Community communityResponse `json:"community"`
+}
+
 type listFollowedCommunitiesResponse struct {
 	Communities []communityResponse `json:"communities"`
 	Limit       int                 `json:"limit"`
 	Offset      int                 `json:"offset"`
+}
+
+type listCommunityMembersResponse struct {
+	Community communityResponse         `json:"community"`
+	Members   []communityMemberResponse `json:"members"`
+	Limit     int                       `json:"limit"`
+	Offset    int                       `json:"offset"`
+}
+
+type communityMemberResponse struct {
+	User      communityMemberUserResponse `json:"user"`
+	Role      string                      `json:"role"`
+	Status    string                      `json:"status"`
+	CreatedAt time.Time                   `json:"created_at"`
+	UpdatedAt time.Time                   `json:"updated_at"`
+}
+
+type communityMemberUserResponse struct {
+	ID          string   `json:"id"`
+	Username    string   `json:"username"`
+	DisplayName string   `json:"display_name"`
+	AvatarURL   string   `json:"avatar_url"`
+	Headline    string   `json:"headline"`
+	Badges      []string `json:"badges"`
 }
 
 type submitCommunityApplicationRequest struct {
@@ -150,6 +180,11 @@ func RegisterFollowRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/me/followed-communities", handler.ListFollowedCommunities)
 	group.POST("/communities/:slug/follow", handler.FollowCommunity)
 	group.DELETE("/communities/:slug/follow", handler.DeleteCommunityFollow)
+}
+
+func RegisterManageRoutes(group *gin.RouterGroup, handler *Handler) {
+	group.GET("/communities/:slug/manage", handler.GetCommunityManageContext)
+	group.GET("/communities/:slug/manage/members", handler.ListCommunityMembers)
 }
 
 func (h *Handler) ListCommunities(c *gin.Context) {
@@ -271,6 +306,74 @@ func (h *Handler) ListFollowedCommunities(c *gin.Context) {
 	}
 	for _, community := range result.Communities {
 		response.Communities = append(response.Communities, toCommunityResponse(community))
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) GetCommunityManageContext(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.GetCommunityManageContext(c.Request.Context(), communityusecase.GetCommunityManageContextInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, getCommunityManageContextResponse{
+		Community: toCommunityResponse(result.Community),
+	})
+}
+
+func (h *Handler) ListCommunityMembers(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.ListCommunityMembers(c.Request.Context(), communityusecase.ListCommunityMembersInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityMembersResponse{
+		Community: toCommunityResponse(result.Community),
+		Members:   make([]communityMemberResponse, 0, len(result.Members)),
+		Limit:     result.Limit,
+		Offset:    result.Offset,
+	}
+	for _, member := range result.Members {
+		response.Members = append(response.Members, toCommunityMemberResponse(member))
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -486,4 +589,19 @@ func toCommunityApplicationResponse(application communityusecase.CommunityApplic
 		response.ReviewedBy = &reviewedBy
 	}
 	return response
+}
+
+func toCommunityMemberResponse(member communityusecase.CommunityMember) communityMemberResponse {
+	return communityMemberResponse{
+		User: communityMemberUserResponse{
+			ID:          member.UserID,
+			Username:    member.Username,
+			DisplayName: member.Username,
+			Badges:      []string{},
+		},
+		Role:      member.Role,
+		Status:    member.Status,
+		CreatedAt: member.CreatedAt,
+		UpdatedAt: member.UpdatedAt,
+	}
 }

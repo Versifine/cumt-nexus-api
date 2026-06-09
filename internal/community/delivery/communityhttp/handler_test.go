@@ -181,6 +181,133 @@ func TestListFollowedCommunitiesReturnsCommunities(t *testing.T) {
 	}
 }
 
+func TestGetCommunityManageContextReturnsCommunity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+	community := newCommunityResult("campus", now)
+	community.ViewerRole = "owner"
+	community.ViewerPermissions.CanManage = true
+	communities := &fakeCommunityReadUseCase{
+		manageResult: communityusecase.GetCommunityManageContextResult{
+			Community: community,
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.manageCalled {
+		t.Fatal("expected GetCommunityManageContext to be called")
+	}
+	if communities.manageInput.Slug != "campus" || communities.manageInput.ViewerID != userID {
+		t.Fatalf("unexpected manage input: %#v", communities.manageInput)
+	}
+	var response getCommunityManageContextResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Community.ViewerRole != "owner" || !response.Community.ViewerPermissions.CanManage {
+		t.Fatalf("unexpected manage community response: %#v", response.Community)
+	}
+}
+
+func TestListCommunityMembersReturnsMembers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 9, 10, 30, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		listMembersResult: communityusecase.ListCommunityMembersResult{
+			Community: newCommunityResult("campus", now),
+			Members: []communityusecase.CommunityMember{
+				{
+					UserID:    userdomain.NewGeneratedUserID().String(),
+					Username:  "alice",
+					Role:      "owner",
+					Status:    "active",
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+			},
+			Limit:  20,
+			Offset: 5,
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage/members?limit=20&offset=5", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.listMembersCalled {
+		t.Fatal("expected ListCommunityMembers to be called")
+	}
+	if communities.listMembersInput.Slug != "campus" || communities.listMembersInput.ViewerID != userID || communities.listMembersInput.Limit != 20 || communities.listMembersInput.Offset != 5 {
+		t.Fatalf("unexpected list members input: %#v", communities.listMembersInput)
+	}
+	var response listCommunityMembersResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Members) != 1 || response.Members[0].User.Username != "alice" || response.Members[0].Role != "owner" {
+		t.Fatalf("unexpected members response: %#v", response.Members)
+	}
+}
+
+func TestCommunityManageRoutesRequireAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	communities := &fakeCommunityReadUseCase{}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	}
+	assertCommunityErrorCode(t, recorder, apperr.CodeUnauthenticated)
+	if communities.manageCalled {
+		t.Fatal("GetCommunityManageContext should not be called without auth")
+	}
+}
+
+func TestCommunityManageUseCaseErrorMapsToHTTPError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	communities := &fakeCommunityReadUseCase{
+		manageErr: apperr.New(apperr.CodeForbidden, "community moderator required"),
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParser())
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, recorder.Code, recorder.Body.String())
+	}
+	assertCommunityErrorCode(t, recorder, apperr.CodeForbidden)
+}
+
 func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -198,7 +325,7 @@ func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	}
 	assertCommunityErrorCode(t, recorder, apperr.CodeUnauthenticated)
-	if communities.listCalled || communities.getCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
+	if communities.listCalled || communities.getCalled || communities.manageCalled || communities.listMembersCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
 		t.Fatal("community usecase should not be called for invalid auth")
 	}
 }
@@ -521,21 +648,29 @@ type fakeCommunityReadUseCase struct {
 	followCalled       bool
 	deleteFollowCalled bool
 	listFollowedCalled bool
+	manageCalled       bool
+	listMembersCalled  bool
 	listInput          communityusecase.ListCommunitiesInput
 	getInput           communityusecase.GetCommunityInput
 	followInput        communityusecase.FollowCommunityInput
 	deleteFollowInput  communityusecase.DeleteCommunityFollowInput
 	listFollowedInput  communityusecase.ListFollowedCommunitiesInput
+	manageInput        communityusecase.GetCommunityManageContextInput
+	listMembersInput   communityusecase.ListCommunityMembersInput
 	listResult         communityusecase.ListCommunitiesResult
 	getResult          communityusecase.GetCommunityResult
 	followResult       communityusecase.FollowCommunityResult
 	deleteFollowResult communityusecase.DeleteCommunityFollowResult
 	listFollowedResult communityusecase.ListFollowedCommunitiesResult
+	manageResult       communityusecase.GetCommunityManageContextResult
+	listMembersResult  communityusecase.ListCommunityMembersResult
 	listErr            error
 	getErr             error
 	followErr          error
 	deleteFollowErr    error
 	listFollowedErr    error
+	manageErr          error
+	listMembersErr     error
 }
 
 func (f *fakeCommunityReadUseCase) ListCommunities(ctx context.Context, input communityusecase.ListCommunitiesInput) (communityusecase.ListCommunitiesResult, error) {
@@ -566,6 +701,18 @@ func (f *fakeCommunityReadUseCase) ListFollowedCommunities(ctx context.Context, 
 	f.listFollowedCalled = true
 	f.listFollowedInput = input
 	return f.listFollowedResult, f.listFollowedErr
+}
+
+func (f *fakeCommunityReadUseCase) GetCommunityManageContext(ctx context.Context, input communityusecase.GetCommunityManageContextInput) (communityusecase.GetCommunityManageContextResult, error) {
+	f.manageCalled = true
+	f.manageInput = input
+	return f.manageResult, f.manageErr
+}
+
+func (f *fakeCommunityReadUseCase) ListCommunityMembers(ctx context.Context, input communityusecase.ListCommunityMembersInput) (communityusecase.ListCommunityMembersResult, error) {
+	f.listMembersCalled = true
+	f.listMembersInput = input
+	return f.listMembersResult, f.listMembersErr
 }
 
 type fakeCommunityApplicationUseCase struct {
@@ -642,6 +789,7 @@ func newCommunityTestRouter(communities CommunityReadUseCase, applications Commu
 	protected.Use(authhttp.RequireAuth(parser))
 	RegisterApplicationRoutes(protected, NewHandler(communities, applications))
 	RegisterFollowRoutes(protected, NewHandler(communities, applications))
+	RegisterManageRoutes(protected, NewHandler(communities, applications))
 
 	return router
 }

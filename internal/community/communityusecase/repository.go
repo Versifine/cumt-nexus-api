@@ -30,6 +30,11 @@ type CommunityMembershipRepository interface {
 	Create(ctx context.Context, membership communitydomain.CommunityMembership) error
 }
 
+type CommunityMembershipReadRepository interface {
+	FindActiveRolesByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]communitydomain.MembershipRole, error)
+	ListActiveMembers(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]CommunityMember, error)
+}
+
 type CommunityApplicationRepository interface {
 	Create(ctx context.Context, application communitydomain.CommunityApplication) error
 	FindByID(ctx context.Context, id communitydomain.CommunityApplicationID) (*communitydomain.CommunityApplication, error)

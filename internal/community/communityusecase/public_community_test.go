@@ -211,6 +211,36 @@ func TestGetCommunityBySlugReturnsViewerFollowState(t *testing.T) {
 	}
 }
 
+func TestGetCommunityBySlugReturnsViewerRoleAndPermissions(t *testing.T) {
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	expected := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return expected, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			expected.ID(): communitydomain.MembershipRoleOwner,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	result, err := uc.GetCommunityBySlug(context.Background(), GetCommunityInput{Slug: "campus", ViewerID: viewerID})
+	if err != nil {
+		t.Fatalf("GetCommunityBySlug returned error: %v", err)
+	}
+	if result.Community.ViewerRole != communitydomain.MembershipRoleOwner.String() {
+		t.Fatalf("expected owner viewer role, got %q", result.Community.ViewerRole)
+	}
+	if !result.Community.ViewerPermissions.CanPost || !result.Community.ViewerPermissions.CanManage || !result.Community.ViewerPermissions.CanModerate {
+		t.Fatalf("unexpected viewer permissions: %#v", result.Community.ViewerPermissions)
+	}
+	if !repo.findActiveRolesCalled {
+		t.Fatal("expected membership role lookup")
+	}
+}
+
 func TestGetCommunityBySlugRejectsInvalidSlug(t *testing.T) {
 	repo := &fakeCommunityRepository{}
 	uc := NewCommunityReadUseCase(repo)
@@ -233,6 +263,110 @@ func TestGetCommunityBySlugHidesNonReadableCommunity(t *testing.T) {
 	_, err := uc.GetCommunityBySlug(context.Background(), GetCommunityInput{Slug: "campus"})
 	if !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for non-readable community, got %v", err)
+	}
+}
+
+func TestListFollowedCommunitiesReturnsViewerRoleAndPermissions(t *testing.T) {
+	now := time.Date(2026, 6, 9, 9, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		listFollowedActivePublicFunc: func(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]communitydomain.Community, error) {
+			if userID != viewerID || limit != 20 || offset != 0 {
+				t.Fatalf("unexpected followed args: user=%q limit=%d offset=%d", userID.String(), limit, offset)
+			}
+			return []communitydomain.Community{*community}, nil
+		},
+		followedCommunityIDs: map[communitydomain.CommunityID]bool{
+			community.ID(): true,
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	result, err := uc.ListFollowedCommunities(context.Background(), ListFollowedCommunitiesInput{
+		UserID: viewerID,
+		Limit:  20,
+	})
+	if err != nil {
+		t.Fatalf("ListFollowedCommunities returned error: %v", err)
+	}
+	if len(result.Communities) != 1 {
+		t.Fatalf("expected one community, got %d", len(result.Communities))
+	}
+	got := result.Communities[0]
+	if !got.ViewerIsFollowing {
+		t.Fatal("expected followed community to set viewer_is_following=true")
+	}
+	if got.ViewerRole != communitydomain.MembershipRoleModerator.String() || !got.ViewerPermissions.CanModerate || got.ViewerPermissions.CanManage {
+		t.Fatalf("unexpected viewer role or permissions: role=%q permissions=%#v", got.ViewerRole, got.ViewerPermissions)
+	}
+}
+
+func TestGetCommunityManageContextRequiresModeratorRole(t *testing.T) {
+	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	_, err := uc.GetCommunityManageContext(context.Background(), GetCommunityManageContextInput{Slug: "campus", ViewerID: viewerID})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden for non-moderator, got %v", err)
+	}
+}
+
+func TestListCommunityMembersReturnsMembersForModerator(t *testing.T) {
+	now := time.Date(2026, 6, 9, 11, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	members := []CommunityMember{
+		{
+			UserID:    viewerID.String(),
+			Username:  "alice",
+			Role:      communitydomain.MembershipRoleOwner.String(),
+			Status:    communitydomain.MembershipStatusActive.String(),
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+		activeMembers: members,
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	result, err := uc.ListCommunityMembers(context.Background(), ListCommunityMembersInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+		Limit:    20,
+		Offset:   5,
+	})
+	if err != nil {
+		t.Fatalf("ListCommunityMembers returned error: %v", err)
+	}
+	if result.Community.ViewerRole != communitydomain.MembershipRoleModerator.String() || !result.Community.ViewerPermissions.CanModerate {
+		t.Fatalf("unexpected community view: %#v", result.Community)
+	}
+	if len(result.Members) != 1 || result.Members[0].Username != "alice" {
+		t.Fatalf("unexpected members: %#v", result.Members)
+	}
+	if repo.listActiveMembersCommunityID != community.ID() || repo.listActiveMembersLimit != 20 || repo.listActiveMembersOffset != 5 {
+		t.Fatalf("unexpected list active members args: community=%q limit=%d offset=%d", repo.listActiveMembersCommunityID.String(), repo.listActiveMembersLimit, repo.listActiveMembersOffset)
 	}
 }
 
@@ -318,6 +452,13 @@ type fakeCommunityRepository struct {
 	listFollowedActivePublicCalled bool
 	findFollowedCalled             bool
 	followedCommunityIDs           map[communitydomain.CommunityID]bool
+	findActiveRolesCalled          bool
+	activeRolesByCommunityID       map[communitydomain.CommunityID]communitydomain.MembershipRole
+	listActiveMembersCalled        bool
+	listActiveMembersCommunityID   communitydomain.CommunityID
+	listActiveMembersLimit         int
+	listActiveMembersOffset        int
+	activeMembers                  []CommunityMember
 }
 
 func (f *fakeCommunityRepository) Create(ctx context.Context, community communitydomain.Community) error {
@@ -378,6 +519,22 @@ func (f *fakeCommunityRepository) FindFollowedCommunityIDsByUser(ctx context.Con
 		return map[communitydomain.CommunityID]bool{}, nil
 	}
 	return f.followedCommunityIDs, nil
+}
+
+func (f *fakeCommunityRepository) FindActiveRolesByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]communitydomain.MembershipRole, error) {
+	f.findActiveRolesCalled = true
+	if f.activeRolesByCommunityID == nil {
+		return map[communitydomain.CommunityID]communitydomain.MembershipRole{}, nil
+	}
+	return f.activeRolesByCommunityID, nil
+}
+
+func (f *fakeCommunityRepository) ListActiveMembers(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]CommunityMember, error) {
+	f.listActiveMembersCalled = true
+	f.listActiveMembersCommunityID = communityID
+	f.listActiveMembersLimit = limit
+	f.listActiveMembersOffset = offset
+	return f.activeMembers, nil
 }
 
 func mustSystemCommunity(t *testing.T, rawSlug string, now time.Time) *communitydomain.Community {

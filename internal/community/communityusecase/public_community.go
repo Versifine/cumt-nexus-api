@@ -28,6 +28,7 @@ type CommunityReadUseCase struct {
 	communities CommunityRepository
 	stats       CommunityStatsRepository
 	follows     CommunityFollowRepository
+	memberships CommunityMembershipReadRepository
 	now         func() time.Time
 }
 
@@ -61,6 +62,18 @@ type ListFollowedCommunitiesInput struct {
 	Offset int
 }
 
+type GetCommunityManageContextInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+}
+
+type ListCommunityMembersInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+	Limit    int
+	Offset   int
+}
+
 type ListCommunitiesResult struct {
 	Communities []Community
 }
@@ -83,6 +96,17 @@ type CanPostInCommunityResult struct {
 	Community Community
 }
 
+type GetCommunityManageContextResult struct {
+	Community Community
+}
+
+type ListCommunityMembersResult struct {
+	Community Community
+	Members   []CommunityMember
+	Limit     int
+	Offset    int
+}
+
 type Community struct {
 	ID                string
 	Slug              string
@@ -100,6 +124,15 @@ type Community struct {
 	ViewerPermissions ViewerPermissions
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+type CommunityMember struct {
+	UserID    string
+	Username  string
+	Role      string
+	Status    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type CommunityStats struct {
@@ -136,6 +169,10 @@ func NewCommunityReadUseCase(communities CommunityRepository) *CommunityReadUseC
 		uc.follows = repo
 	}
 	return uc
+}
+
+func (uc *CommunityReadUseCase) SetMembershipReader(memberships CommunityMembershipReadRepository) {
+	uc.memberships = memberships
 }
 
 func (uc *PublicCommunityBootstrapUseCase) EnsurePublicCommunity(ctx context.Context) error {
@@ -204,8 +241,12 @@ func (uc *CommunityReadUseCase) ListCommunities(ctx context.Context, input ListC
 	if err != nil {
 		return ListCommunitiesResult{}, err
 	}
+	roleViews, err := uc.loadCommunityRoleViews(ctx, communities, input.ViewerID)
+	if err != nil {
+		return ListCommunitiesResult{}, err
+	}
 	for _, community := range communities {
-		result.Communities = append(result.Communities, toCommunityDTO(community, stats[community.ID()], followViews[community.ID()], input.ViewerID))
+		result.Communities = append(result.Communities, toCommunityDTO(community, stats[community.ID()], followViews[community.ID()], roleViews[community.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -232,9 +273,13 @@ func (uc *CommunityReadUseCase) GetCommunityBySlug(ctx context.Context, input Ge
 	if err != nil {
 		return GetCommunityResult{}, err
 	}
+	roleViews, err := uc.loadCommunityRoleViews(ctx, []communitydomain.Community{*community}, input.ViewerID)
+	if err != nil {
+		return GetCommunityResult{}, err
+	}
 
 	return GetCommunityResult{
-		Community: toCommunityDTO(*community, stats[community.ID()], followViews[community.ID()], input.ViewerID),
+		Community: toCommunityDTO(*community, stats[community.ID()], followViews[community.ID()], roleViews[community.ID()], input.ViewerID),
 	}, nil
 }
 
@@ -300,6 +345,10 @@ func (uc *CommunityReadUseCase) ListFollowedCommunities(ctx context.Context, inp
 	if err != nil {
 		return ListFollowedCommunitiesResult{}, err
 	}
+	roleViews, err := uc.loadCommunityRoleViews(ctx, communities, input.UserID)
+	if err != nil {
+		return ListFollowedCommunitiesResult{}, err
+	}
 
 	result := ListFollowedCommunitiesResult{
 		Communities: make([]Community, 0, len(communities)),
@@ -307,10 +356,68 @@ func (uc *CommunityReadUseCase) ListFollowedCommunities(ctx context.Context, inp
 		Offset:      offset,
 	}
 	for _, community := range communities {
-		result.Communities = append(result.Communities, toCommunityDTO(community, stats[community.ID()], followViews[community.ID()], input.UserID))
+		result.Communities = append(result.Communities, toCommunityDTO(community, stats[community.ID()], followViews[community.ID()], roleViews[community.ID()], input.UserID))
 	}
 
 	return result, nil
+}
+
+func (uc *CommunityReadUseCase) GetCommunityManageContext(ctx context.Context, input GetCommunityManageContextInput) (GetCommunityManageContextResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return GetCommunityManageContextResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return GetCommunityManageContextResult{}, err
+	}
+	stats, err := uc.loadCommunityStats(ctx, []communitydomain.Community{*community})
+	if err != nil {
+		return GetCommunityManageContextResult{}, err
+	}
+	followViews, err := uc.loadCommunityFollowViews(ctx, []communitydomain.Community{*community}, input.ViewerID)
+	if err != nil {
+		return GetCommunityManageContextResult{}, err
+	}
+
+	return GetCommunityManageContextResult{
+		Community: toCommunityDTO(*community, stats[community.ID()], followViews[community.ID()], roleView, input.ViewerID),
+	}, nil
+}
+
+func (uc *CommunityReadUseCase) ListCommunityMembers(ctx context.Context, input ListCommunityMembersInput) (ListCommunityMembersResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ListCommunityMembersResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.memberships == nil {
+		return ListCommunityMembersResult{}, apperr.New(apperr.CodeInternal, "community memberships are not configured")
+	}
+	limit, offset, err := normalizeCommunityListPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListCommunityMembersResult{}, err
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return ListCommunityMembersResult{}, err
+	}
+	stats, err := uc.loadCommunityStats(ctx, []communitydomain.Community{*community})
+	if err != nil {
+		return ListCommunityMembersResult{}, err
+	}
+	followViews, err := uc.loadCommunityFollowViews(ctx, []communitydomain.Community{*community}, input.ViewerID)
+	if err != nil {
+		return ListCommunityMembersResult{}, err
+	}
+	members, err := uc.memberships.ListActiveMembers(ctx, community.ID(), limit, offset)
+	if err != nil {
+		return ListCommunityMembersResult{}, fmt.Errorf("list community members: %w", err)
+	}
+
+	return ListCommunityMembersResult{
+		Community: toCommunityDTO(*community, stats[community.ID()], followViews[community.ID()], roleView, input.ViewerID),
+		Members:   members,
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
 }
 
 func (uc *CommunityReadUseCase) CanPostInCommunity(ctx context.Context, input CanPostInCommunityInput) (CanPostInCommunityResult, error) {
@@ -336,7 +443,7 @@ func (uc *CommunityReadUseCase) CanPostInCommunity(ctx context.Context, input Ca
 	}
 
 	return CanPostInCommunityResult{
-		Community: toCommunityDTO(*community, CommunityStats{}, communityFollowView{}, ""),
+		Community: toCommunityDTO(*community, CommunityStats{}, communityFollowView{}, communityRoleView{}, ""),
 	}, nil
 }
 
@@ -393,6 +500,10 @@ type communityFollowView struct {
 	isFollowing bool
 }
 
+type communityRoleView struct {
+	role communitydomain.MembershipRole
+}
+
 func (uc *CommunityReadUseCase) loadCommunityFollowViews(ctx context.Context, communities []communitydomain.Community, viewerID userdomain.UserID) (map[communitydomain.CommunityID]communityFollowView, error) {
 	views := make(map[communitydomain.CommunityID]communityFollowView, len(communities))
 	if len(communities) == 0 || uc.follows == nil || isBlankUserID(viewerID) {
@@ -413,6 +524,26 @@ func (uc *CommunityReadUseCase) loadCommunityFollowViews(ctx context.Context, co
 	return views, nil
 }
 
+func (uc *CommunityReadUseCase) loadCommunityRoleViews(ctx context.Context, communities []communitydomain.Community, viewerID userdomain.UserID) (map[communitydomain.CommunityID]communityRoleView, error) {
+	views := make(map[communitydomain.CommunityID]communityRoleView, len(communities))
+	if len(communities) == 0 || uc.memberships == nil || isBlankUserID(viewerID) {
+		return views, nil
+	}
+
+	communityIDs := make([]communitydomain.CommunityID, 0, len(communities))
+	for _, community := range communities {
+		communityIDs = append(communityIDs, community.ID())
+	}
+	roles, err := uc.memberships.FindActiveRolesByUser(ctx, communityIDs, viewerID)
+	if err != nil {
+		return nil, fmt.Errorf("find community roles by viewer: %w", err)
+	}
+	for communityID, role := range roles {
+		views[communityID] = communityRoleView{role: role}
+	}
+	return views, nil
+}
+
 func (uc *CommunityReadUseCase) findReadableCommunityBySlug(ctx context.Context, rawSlug string) (*communitydomain.Community, error) {
 	slug, err := communitydomain.NewCommunitySlug(rawSlug)
 	if err != nil {
@@ -426,6 +557,25 @@ func (uc *CommunityReadUseCase) findReadableCommunityBySlug(ctx context.Context,
 		return nil, apperr.New(apperr.CodeNotFound, "community not found")
 	}
 	return community, nil
+}
+
+func (uc *CommunityReadUseCase) findManageableCommunityBySlug(ctx context.Context, rawSlug string, viewerID userdomain.UserID) (*communitydomain.Community, communityRoleView, error) {
+	if uc.memberships == nil {
+		return nil, communityRoleView{}, apperr.New(apperr.CodeInternal, "community memberships are not configured")
+	}
+	community, err := uc.findReadableCommunityBySlug(ctx, rawSlug)
+	if err != nil {
+		return nil, communityRoleView{}, err
+	}
+	roleViews, err := uc.loadCommunityRoleViews(ctx, []communitydomain.Community{*community}, viewerID)
+	if err != nil {
+		return nil, communityRoleView{}, err
+	}
+	roleView := roleViews[community.ID()]
+	if !canModerateCommunity(roleView.role) {
+		return nil, communityRoleView{}, apperr.New(apperr.CodeForbidden, "community moderator required")
+	}
+	return community, roleView, nil
 }
 
 func normalizeCommunityListPagination(limit int, offset int) (int, int, error) {
@@ -444,7 +594,7 @@ func normalizeCommunityListPagination(limit int, offset int) (int, int, error) {
 	return limit, offset, nil
 }
 
-func toCommunityDTO(community communitydomain.Community, stats CommunityStats, followView communityFollowView, viewerID userdomain.UserID) Community {
+func toCommunityDTO(community communitydomain.Community, stats CommunityStats, followView communityFollowView, roleView communityRoleView, viewerID userdomain.UserID) Community {
 	return Community{
 		ID:                community.ID().String(),
 		Slug:              community.Slug().String(),
@@ -456,17 +606,24 @@ func toCommunityDTO(community communitydomain.Community, stats CommunityStats, f
 		MemberCount:       stats.MemberCount,
 		PostCount:         stats.PostCount,
 		ViewerIsFollowing: followView.isFollowing,
-		ViewerPermissions: communityViewerPermissions(community, viewerID),
+		ViewerRole:        roleView.role.String(),
+		ViewerPermissions: communityViewerPermissions(community, roleView.role, viewerID),
 		CreatedAt:         community.CreatedAt(),
 		UpdatedAt:         community.UpdatedAt(),
 	}
 }
 
-func communityViewerPermissions(community communitydomain.Community, viewerID userdomain.UserID) ViewerPermissions {
+func communityViewerPermissions(community communitydomain.Community, role communitydomain.MembershipRole, viewerID userdomain.UserID) ViewerPermissions {
 	if isBlankUserID(viewerID) {
 		return ViewerPermissions{}
 	}
 	return ViewerPermissions{
-		CanPost: isPostableCommunity(&community),
+		CanPost:     isPostableCommunity(&community),
+		CanManage:   role == communitydomain.MembershipRoleOwner,
+		CanModerate: canModerateCommunity(role),
 	}
+}
+
+func canModerateCommunity(role communitydomain.MembershipRole) bool {
+	return role == communitydomain.MembershipRoleOwner || role == communitydomain.MembershipRoleModerator
 }

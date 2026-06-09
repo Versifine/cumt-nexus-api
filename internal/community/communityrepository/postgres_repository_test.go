@@ -93,6 +93,119 @@ func TestPostgresMembershipRepositoryCreateAndConflict(t *testing.T) {
 	}
 }
 
+func TestPostgresMembershipRepositoryFindActiveRolesByUser(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	communityRepo := NewPostgresCommunityRepository(pool)
+	membershipRepo := NewPostgresMembershipRepository(pool)
+	now := testNow()
+
+	viewerID := insertTestUser(ctx, t, pool, false)
+	otherID := insertTestUser(ctx, t, pool, false)
+
+	ownerCommunity := mustUserCreatedCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), viewerID, now)
+	moderatorCommunity := mustUserCreatedCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), otherID, now)
+	inactiveCommunity := mustUserCreatedCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), otherID, now)
+	for _, community := range []*communitydomain.Community{ownerCommunity, moderatorCommunity, inactiveCommunity} {
+		if err := communityRepo.Create(ctx, *community); err != nil {
+			t.Fatalf("Create community returned error: %v", err)
+		}
+		cleanupCommunity(ctx, t, pool, community.ID())
+	}
+
+	memberships := []*communitydomain.CommunityMembership{
+		mustMembership(t, ownerCommunity.ID(), viewerID, communitydomain.MembershipRoleOwner, communitydomain.MembershipStatusActive, now),
+		mustMembership(t, moderatorCommunity.ID(), viewerID, communitydomain.MembershipRoleModerator, communitydomain.MembershipStatusActive, now),
+		mustMembership(t, inactiveCommunity.ID(), viewerID, communitydomain.MembershipRoleMember, communitydomain.MembershipStatusLeft, now),
+		mustMembership(t, inactiveCommunity.ID(), otherID, communitydomain.MembershipRoleOwner, communitydomain.MembershipStatusActive, now),
+	}
+	for _, membership := range memberships {
+		if err := membershipRepo.Create(ctx, *membership); err != nil {
+			t.Fatalf("Create membership returned error: %v", err)
+		}
+		cleanupMembership(ctx, t, pool, membership.CommunityID(), membership.UserID())
+	}
+
+	roles, err := membershipRepo.FindActiveRolesByUser(
+		ctx,
+		[]communitydomain.CommunityID{ownerCommunity.ID(), moderatorCommunity.ID(), inactiveCommunity.ID()},
+		viewerID,
+	)
+	if err != nil {
+		t.Fatalf("FindActiveRolesByUser returned error: %v", err)
+	}
+	if got := roles[ownerCommunity.ID()]; got != communitydomain.MembershipRoleOwner {
+		t.Fatalf("expected owner role, got %q", got.String())
+	}
+	if got := roles[moderatorCommunity.ID()]; got != communitydomain.MembershipRoleModerator {
+		t.Fatalf("expected moderator role, got %q", got.String())
+	}
+	if _, ok := roles[inactiveCommunity.ID()]; ok {
+		t.Fatal("did not expect inactive membership role to be returned")
+	}
+}
+
+func TestPostgresMembershipRepositoryListActiveMembers(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	communityRepo := NewPostgresCommunityRepository(pool)
+	membershipRepo := NewPostgresMembershipRepository(pool)
+	now := testNow()
+
+	ownerID := insertTestUser(ctx, t, pool, false)
+	moderatorID := insertTestUser(ctx, t, pool, false)
+	memberID := insertTestUser(ctx, t, pool, false)
+	leftID := insertTestUser(ctx, t, pool, false)
+
+	community := mustUserCreatedCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), ownerID, now)
+	if err := communityRepo.Create(ctx, *community); err != nil {
+		t.Fatalf("Create community returned error: %v", err)
+	}
+	cleanupCommunity(ctx, t, pool, community.ID())
+
+	memberships := []*communitydomain.CommunityMembership{
+		mustMembership(t, community.ID(), memberID, communitydomain.MembershipRoleMember, communitydomain.MembershipStatusActive, now.Add(time.Minute)),
+		mustMembership(t, community.ID(), moderatorID, communitydomain.MembershipRoleModerator, communitydomain.MembershipStatusActive, now.Add(2*time.Minute)),
+		mustMembership(t, community.ID(), ownerID, communitydomain.MembershipRoleOwner, communitydomain.MembershipStatusActive, now.Add(3*time.Minute)),
+		mustMembership(t, community.ID(), leftID, communitydomain.MembershipRoleMember, communitydomain.MembershipStatusLeft, now.Add(4*time.Minute)),
+	}
+	for _, membership := range memberships {
+		if err := membershipRepo.Create(ctx, *membership); err != nil {
+			t.Fatalf("Create membership returned error: %v", err)
+		}
+		cleanupMembership(ctx, t, pool, membership.CommunityID(), membership.UserID())
+	}
+
+	members, err := membershipRepo.ListActiveMembers(ctx, community.ID(), 20, 0)
+	if err != nil {
+		t.Fatalf("ListActiveMembers returned error: %v", err)
+	}
+	if len(members) != 3 {
+		t.Fatalf("expected 3 active members, got %d", len(members))
+	}
+
+	expected := []struct {
+		userID userdomain.UserID
+		role   string
+	}{
+		{userID: ownerID, role: communitydomain.MembershipRoleOwner.String()},
+		{userID: moderatorID, role: communitydomain.MembershipRoleModerator.String()},
+		{userID: memberID, role: communitydomain.MembershipRoleMember.String()},
+	}
+	for index, want := range expected {
+		if members[index].UserID != want.userID.String() {
+			t.Fatalf("member %d user id = %q, want %q", index, members[index].UserID, want.userID.String())
+		}
+		if members[index].Role != want.role {
+			t.Fatalf("member %d role = %q, want %q", index, members[index].Role, want.role)
+		}
+		if members[index].Status != communitydomain.MembershipStatusActive.String() {
+			t.Fatalf("member %d status = %q, want active", index, members[index].Status)
+		}
+		if strings.TrimSpace(members[index].Username) == "" {
+			t.Fatalf("member %d username is empty", index)
+		}
+	}
+}
+
 func TestPostgresApplicationRepositoryCreateFindSaveAndConflict(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresApplicationRepository(pool)
@@ -594,6 +707,23 @@ func mustUserCreatedCommunity(t *testing.T, slug communitydomain.CommunitySlug, 
 		t.Fatalf("NewUserCreatedCommunity returned error: %v", err)
 	}
 	return community
+}
+
+func mustMembership(
+	t *testing.T,
+	communityID communitydomain.CommunityID,
+	userID userdomain.UserID,
+	role communitydomain.MembershipRole,
+	status communitydomain.MembershipStatus,
+	now time.Time,
+) *communitydomain.CommunityMembership {
+	t.Helper()
+
+	membership, err := communitydomain.RehydrateCommunityMembership(communityID, userID, role, status, now, now)
+	if err != nil {
+		t.Fatalf("RehydrateCommunityMembership returned error: %v", err)
+	}
+	return membership
 }
 
 func mustApplication(t *testing.T, applicantID userdomain.UserID, slug communitydomain.CommunitySlug, now time.Time) *communitydomain.CommunityApplication {

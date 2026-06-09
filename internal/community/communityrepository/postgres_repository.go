@@ -20,6 +20,7 @@ var _ communityusecase.CommunityRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityStatsRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityFollowRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityMembershipRepository = (*PostgresMembershipRepository)(nil)
+var _ communityusecase.CommunityMembershipReadRepository = (*PostgresMembershipRepository)(nil)
 var _ communityusecase.CommunityApplicationRepository = (*PostgresApplicationRepository)(nil)
 var _ communityusecase.PlatformStaffRepository = (*PostgresPlatformStaffRepository)(nil)
 var _ communityusecase.CommunityTransactionManager = (*PostgresCommunityTransactionManager)(nil)
@@ -390,6 +391,102 @@ func (repo *PostgresMembershipRepository) Create(ctx context.Context, membership
 	}
 
 	return nil
+}
+
+func (repo *PostgresMembershipRepository) FindActiveRolesByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]communitydomain.MembershipRole, error) {
+	result := make(map[communitydomain.CommunityID]communitydomain.MembershipRole, len(communityIDs))
+	if len(communityIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			community_id::text,
+			role
+		FROM community_memberships
+		WHERE community_id = ANY($1::uuid[])
+			AND user_id = $2::uuid
+			AND status = 'active'
+	`
+	rows, err := repo.db.Query(ctx, query, communityIDStrings(communityIDs), userID.String())
+	if err != nil {
+		return nil, fmt.Errorf("find active community roles by user: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommunityID string
+		var rawRole string
+		if err := rows.Scan(&rawCommunityID, &rawRole); err != nil {
+			return nil, err
+		}
+		communityID, err := communitydomain.NewCommunityID(rawCommunityID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate community membership community id: %v", err)
+		}
+		role, err := communitydomain.NewMembershipRole(rawRole)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate community membership role: %v", err)
+		}
+		result[communityID] = role
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active community roles by user: %w", err)
+	}
+
+	return result, nil
+}
+
+func (repo *PostgresMembershipRepository) ListActiveMembers(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]communityusecase.CommunityMember, error) {
+	const query = `
+		SELECT
+			users.id::text,
+			users.username,
+			community_memberships.role,
+			community_memberships.status,
+			community_memberships.created_at,
+			community_memberships.updated_at
+		FROM community_memberships
+		INNER JOIN users ON users.id = community_memberships.user_id
+		WHERE community_memberships.community_id = $1::uuid
+			AND community_memberships.status = 'active'
+		ORDER BY
+			CASE community_memberships.role
+				WHEN 'owner' THEN 1
+				WHEN 'moderator' THEN 2
+				ELSE 3
+			END ASC,
+			community_memberships.created_at ASC,
+			users.username ASC
+		LIMIT $2
+		OFFSET $3
+	`
+	rows, err := repo.db.Query(ctx, query, communityID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list active community members: %w", err)
+	}
+	defer rows.Close()
+
+	members := make([]communityusecase.CommunityMember, 0)
+	for rows.Next() {
+		var member communityusecase.CommunityMember
+		if err := rows.Scan(
+			&member.UserID,
+			&member.Username,
+			&member.Role,
+			&member.Status,
+			&member.CreatedAt,
+			&member.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active community members: %w", err)
+	}
+
+	return members, nil
 }
 
 type PostgresApplicationRepository struct {

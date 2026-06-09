@@ -33,6 +33,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/users/:username | none | `userhttp.getPublicUserResponse` | 200 |
 | GET | /api/v1/communities | none | `communityhttp.listCommunitiesResponse` | 200 |
 | GET | /api/v1/communities/:slug | none | `communityhttp.getCommunityResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage | none | `communityhttp.getCommunityManageContextResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage/members | query | `communityhttp.listCommunityMembersResponse` | 200 |
 | POST | /api/v1/communities/:slug/follow | none | none | 204 |
 | DELETE | /api/v1/communities/:slug/follow | none | none | 204 |
 | POST | /api/v1/community-applications | `communityhttp.submitCommunityApplicationRequest` | `communityhttp.submitCommunityApplicationResponse` | 201 |
@@ -113,7 +115,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `userhttp` | `getPublicUserResponse` | `user` |
 | `communityhttp` | `listCommunitiesResponse` | `communities` |
 | `communityhttp` | `getCommunityResponse` | `community` |
+| `communityhttp` | `getCommunityManageContextResponse` | `community` |
 | `communityhttp` | `listFollowedCommunitiesResponse` | `communities`, `limit`, `offset` |
+| `communityhttp` | `listCommunityMembersResponse` | `community`, `members`, `limit`, `offset` |
+| `communityhttp` | `communityMemberResponse` | `user`, `role`, `status`, `created_at`, `updated_at` |
+| `communityhttp` | `communityMemberUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `communityhttp` | `rejectCommunityApplicationRequest` | `reject_reason` |
 | `communityhttp` | `communityApplicationResponse` | `id`, `applicant_id`, `requested_slug`, `requested_name`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `reject_reason`, `created_at`, `updated_at` |
