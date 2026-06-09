@@ -168,6 +168,15 @@ PUT    /api/v1/posts/:id/vote
 DELETE /api/v1/posts/:id/vote
 ```
 
+全站 feed 支持：
+
+```text
+GET /api/v1/posts?source=all&sort=new&limit=20&offset=0
+GET /api/v1/posts?source=recommended&sort=best&t=day&limit=20&offset=0
+```
+
+`source=recommended` 当前是后端公开可解释排序流，默认 `sort=best`，不是个性化推荐。`t` 支持 `hour|day|week|month|year|all`。
+
 ### Comments
 
 ```text

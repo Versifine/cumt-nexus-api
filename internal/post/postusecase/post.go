@@ -32,6 +32,24 @@ const (
 	PostListSortRising PostListSort = "rising"
 )
 
+type PostFeedSource string
+
+const (
+	PostFeedSourceAll         PostFeedSource = "all"
+	PostFeedSourceRecommended PostFeedSource = "recommended"
+)
+
+type PostListTimeRange string
+
+const (
+	PostListTimeRangeAll   PostListTimeRange = "all"
+	PostListTimeRangeHour  PostListTimeRange = "hour"
+	PostListTimeRangeDay   PostListTimeRange = "day"
+	PostListTimeRangeWeek  PostListTimeRange = "week"
+	PostListTimeRangeMonth PostListTimeRange = "month"
+	PostListTimeRangeYear  PostListTimeRange = "year"
+)
+
 type CommunityPolicy interface {
 	GetCommunityBySlug(ctx context.Context, input communityusecase.GetCommunityInput) (communityusecase.GetCommunityResult, error)
 	CanPostInCommunity(ctx context.Context, input communityusecase.CanPostInCommunityInput) (communityusecase.CanPostInCommunityResult, error)
@@ -61,23 +79,27 @@ type ListCommunityPostsInput struct {
 	CommunitySlug string
 	ViewerID      userdomain.UserID
 	Sort          string
+	TimeRange     string
 	Limit         int
 	Offset        int
 }
 
 type ListLatestPostsInput struct {
-	ViewerID userdomain.UserID
-	Sort     string
-	Limit    int
-	Offset   int
+	ViewerID  userdomain.UserID
+	Source    string
+	Sort      string
+	TimeRange string
+	Limit     int
+	Offset    int
 }
 
 type ListUserPostsInput struct {
-	Username string
-	ViewerID userdomain.UserID
-	Sort     string
-	Limit    int
-	Offset   int
+	Username  string
+	ViewerID  userdomain.UserID
+	Sort      string
+	TimeRange string
+	Limit     int
+	Offset    int
 }
 
 type ListSavedPostsInput struct {
@@ -360,6 +382,11 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
+	timeRange, err := normalizePostListTimeRange(input.TimeRange)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
+	createdAfter := postListCreatedAfter(timeRange, uc.now().UTC())
 
 	community, err := uc.communities.GetCommunityBySlug(ctx, communityusecase.GetCommunityInput{
 		Slug: input.CommunitySlug,
@@ -372,7 +399,7 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 		return ListCommunityPostsResult{}, err
 	}
 
-	posts, err := uc.posts.ListVisibleByCommunity(ctx, communityID, sort, limit, offset)
+	posts, err := uc.posts.ListVisibleByCommunity(ctx, communityID, sort, createdAfter, limit, offset)
 	if err != nil {
 		return ListCommunityPostsResult{}, fmt.Errorf("list community posts: %w", err)
 	}
@@ -410,12 +437,25 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
-	sort, err := normalizePostListSort(input.Sort)
+	source, err := normalizePostFeedSource(input.Source)
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
+	defaultSort := PostListSortNew
+	if source == PostFeedSourceRecommended {
+		defaultSort = PostListSortBest
+	}
+	sort, err := normalizePostListSortWithDefault(input.Sort, defaultSort)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
+	timeRange, err := normalizePostListTimeRange(input.TimeRange)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
+	createdAfter := postListCreatedAfter(timeRange, uc.now().UTC())
 
-	posts, err := uc.posts.ListVisibleInPublicCommunities(ctx, sort, limit, offset)
+	posts, err := uc.posts.ListVisibleInPublicCommunities(ctx, sort, createdAfter, limit, offset)
 	if err != nil {
 		return ListLatestPostsResult{}, fmt.Errorf("list latest posts: %w", err)
 	}
@@ -458,12 +498,17 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 	if err != nil {
 		return ListUserPostsResult{}, err
 	}
+	timeRange, err := normalizePostListTimeRange(input.TimeRange)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
+	createdAfter := postListCreatedAfter(timeRange, uc.now().UTC())
 	author, err := uc.findActivePublicUser(ctx, input.Username)
 	if err != nil {
 		return ListUserPostsResult{}, err
 	}
 
-	posts, err := uc.posts.ListVisibleByAuthorInPublicCommunities(ctx, author.ID(), sort, limit, offset)
+	posts, err := uc.posts.ListVisibleByAuthorInPublicCommunities(ctx, author.ID(), sort, createdAfter, limit, offset)
 	if err != nil {
 		return ListUserPostsResult{}, fmt.Errorf("list public user posts: %w", err)
 	}
@@ -734,9 +779,13 @@ func normalizePagination(limit int, offset int) (int, int, error) {
 }
 
 func normalizePostListSort(raw string) (PostListSort, error) {
+	return normalizePostListSortWithDefault(raw, PostListSortNew)
+}
+
+func normalizePostListSortWithDefault(raw string, defaultSort PostListSort) (PostListSort, error) {
 	sort := PostListSort(strings.ToLower(strings.TrimSpace(raw)))
 	if sort == "" {
-		return PostListSortNew, nil
+		return defaultSort, nil
 	}
 	switch sort {
 	case PostListSortBest, PostListSortHot, PostListSortNew, PostListSortTop, PostListSortRising:
@@ -744,6 +793,51 @@ func normalizePostListSort(raw string) (PostListSort, error) {
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "post list sort is invalid")
 	}
+}
+
+func normalizePostFeedSource(raw string) (PostFeedSource, error) {
+	source := PostFeedSource(strings.ToLower(strings.TrimSpace(raw)))
+	if source == "" {
+		return PostFeedSourceAll, nil
+	}
+	switch source {
+	case PostFeedSourceAll, PostFeedSourceRecommended:
+		return source, nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "post feed source is invalid")
+	}
+}
+
+func normalizePostListTimeRange(raw string) (PostListTimeRange, error) {
+	timeRange := PostListTimeRange(strings.ToLower(strings.TrimSpace(raw)))
+	if timeRange == "" {
+		return PostListTimeRangeAll, nil
+	}
+	switch timeRange {
+	case PostListTimeRangeAll, PostListTimeRangeHour, PostListTimeRangeDay, PostListTimeRangeWeek, PostListTimeRangeMonth, PostListTimeRangeYear:
+		return timeRange, nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "post list time range is invalid")
+	}
+}
+
+func postListCreatedAfter(timeRange PostListTimeRange, now time.Time) *time.Time {
+	var createdAfter time.Time
+	switch timeRange {
+	case PostListTimeRangeHour:
+		createdAfter = now.Add(-time.Hour)
+	case PostListTimeRangeDay:
+		createdAfter = now.Add(-24 * time.Hour)
+	case PostListTimeRangeWeek:
+		createdAfter = now.Add(-7 * 24 * time.Hour)
+	case PostListTimeRangeMonth:
+		createdAfter = now.AddDate(0, -1, 0)
+	case PostListTimeRangeYear:
+		createdAfter = now.AddDate(-1, 0, 0)
+	default:
+		return nil
+	}
+	return &createdAfter
 }
 
 func parseAttachmentIDs(rawIDs []string, maxCount int) ([]mediadomain.AttachmentID, error) {

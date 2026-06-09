@@ -142,7 +142,7 @@ func (repo *PostgresPostRepository) MarkDeleted(ctx context.Context, post postdo
 	return nil
 }
 
-func (repo *PostgresPostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+func (repo *PostgresPostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	return repo.listVisiblePosts(
 		ctx,
 		"list visible posts by community",
@@ -150,12 +150,13 @@ func (repo *PostgresPostRepository) ListVisibleByCommunity(ctx context.Context, 
 		"posts.community_id = $1::uuid AND posts.status = 'visible'",
 		[]any{communityID.String()},
 		sort,
+		createdAfter,
 		limit,
 		offset,
 	)
 }
 
-func (repo *PostgresPostRepository) ListVisibleInPublicCommunities(ctx context.Context, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+func (repo *PostgresPostRepository) ListVisibleInPublicCommunities(ctx context.Context, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	return repo.listVisiblePosts(
 		ctx,
 		"list visible posts in public communities",
@@ -163,12 +164,13 @@ func (repo *PostgresPostRepository) ListVisibleInPublicCommunities(ctx context.C
 		"posts.status = 'visible' AND communities.status = 'active' AND communities.visibility = 'public'",
 		nil,
 		sort,
+		createdAfter,
 		limit,
 		offset,
 	)
 }
 
-func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	return repo.listVisiblePosts(
 		ctx,
 		"list visible posts by author in public communities",
@@ -176,14 +178,20 @@ func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx c
 		"posts.author_id = $1::uuid AND posts.status = 'visible' AND communities.status = 'active' AND communities.visibility = 'public'",
 		[]any{authorID.String()},
 		sort,
+		createdAfter,
 		limit,
 		offset,
 	)
 }
 
-func (repo *PostgresPostRepository) listVisiblePosts(ctx context.Context, operation string, scopeJoin string, whereClause string, args []any, sort postusecase.PostListSort, limit int, offset int) ([]postdomain.Post, error) {
-	limitPlaceholder := len(args) + 1
-	offsetPlaceholder := len(args) + 2
+func (repo *PostgresPostRepository) listVisiblePosts(ctx context.Context, operation string, scopeJoin string, whereClause string, args []any, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+	queryArgs := append([]any{}, args...)
+	if createdAfter != nil {
+		queryArgs = append(queryArgs, createdAfter.UTC())
+		whereClause = fmt.Sprintf("%s AND posts.created_at >= $%d", whereClause, len(queryArgs))
+	}
+	limitPlaceholder := len(queryArgs) + 1
+	offsetPlaceholder := len(queryArgs) + 2
 	query := fmt.Sprintf(`
 		SELECT
 			posts.id::text,
@@ -203,7 +211,7 @@ func (repo *PostgresPostRepository) listVisiblePosts(ctx context.Context, operat
 		OFFSET $%d
 	`, scopeJoin, postListStatsJoin(sort), whereClause, postListOrderBy(sort), limitPlaceholder, offsetPlaceholder)
 
-	queryArgs := append(append([]any{}, args...), limit, offset)
+	queryArgs = append(queryArgs, limit, offset)
 	rows, err := repo.pool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", operation, err)

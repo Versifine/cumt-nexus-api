@@ -160,9 +160,12 @@ func TestListCommunityPostsNormalizesPagination(t *testing.T) {
 	var gotLimit int
 	var gotOffset int
 	posts := &fakePostRepository{
-		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 			if sort != PostListSortNew {
 				t.Fatalf("expected default sort %q, got %q", PostListSortNew, sort)
+			}
+			if createdAfter != nil {
+				t.Fatalf("expected no time range filter, got %v", createdAfter)
 			}
 			gotLimit = limit
 			gotOffset = offset
@@ -231,7 +234,7 @@ func TestListCommunityPostsPassesHotSort(t *testing.T) {
 	communityID := communitydomain.NewGeneratedCommunityID()
 	var gotSort PostListSort
 	posts := &fakePostRepository{
-		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 			gotSort = sort
 			return nil, nil
 		},
@@ -253,6 +256,34 @@ func TestListCommunityPostsPassesHotSort(t *testing.T) {
 	}
 }
 
+func TestListCommunityPostsPassesTimeRange(t *testing.T) {
+	communityID := communitydomain.NewGeneratedCommunityID()
+	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	wantCreatedAfter := now.Add(-7 * 24 * time.Hour)
+	var gotCreatedAfter *time.Time
+	posts := &fakePostRepository{
+		listVisibleByCommunityFunc: func(ctx context.Context, id communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+			gotCreatedAfter = createdAfter
+			return nil, nil
+		},
+	}
+	communities := &fakeCommunityPolicy{
+		getResult: communityusecase.GetCommunityResult{Community: newCommunityDTO(communityID, "campus")},
+	}
+	uc := NewPostUseCase(posts, communities, func() time.Time { return now })
+
+	_, err := uc.ListCommunityPosts(context.Background(), ListCommunityPostsInput{
+		CommunitySlug: "campus",
+		TimeRange:     "week",
+	})
+	if err != nil {
+		t.Fatalf("ListCommunityPosts returned error: %v", err)
+	}
+	if gotCreatedAfter == nil || !gotCreatedAfter.Equal(wantCreatedAfter) {
+		t.Fatalf("expected created_after %v, got %v", wantCreatedAfter, gotCreatedAfter)
+	}
+}
+
 func TestListLatestPostsReturnsVoteView(t *testing.T) {
 	viewerID := userdomain.NewGeneratedUserID()
 	communityID := communitydomain.NewGeneratedCommunityID()
@@ -260,9 +291,12 @@ func TestListLatestPostsReturnsVoteView(t *testing.T) {
 	var gotLimit int
 	var gotOffset int
 	posts := &fakePostRepository{
-		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 			if sort != PostListSortNew {
 				t.Fatalf("expected default sort %q, got %q", PostListSortNew, sort)
+			}
+			if createdAfter != nil {
+				t.Fatalf("expected no time range filter, got %v", createdAfter)
 			}
 			gotLimit = limit
 			gotOffset = offset
@@ -309,7 +343,7 @@ func TestListLatestPostsAnonymousViewerSkipsMyVoteLookup(t *testing.T) {
 	communityID := communitydomain.NewGeneratedCommunityID()
 	post := mustPost(t, communityID, userdomain.NewGeneratedUserID(), "Latest", time.Now().UTC())
 	posts := &fakePostRepository{
-		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 			return []postdomain.Post{*post}, nil
 		},
 	}
@@ -360,7 +394,7 @@ func TestListLatestPostsPassesSupportedSort(t *testing.T) {
 		t.Run(tt.raw, func(t *testing.T) {
 			var gotSort PostListSort
 			posts := &fakePostRepository{
-				listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+				listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 					gotSort = sort
 					return nil, nil
 				},
@@ -378,12 +412,59 @@ func TestListLatestPostsPassesSupportedSort(t *testing.T) {
 	}
 }
 
+func TestListLatestPostsRecommendedDefaultsToBestAndPassesTimeRange(t *testing.T) {
+	now := time.Date(2026, 6, 9, 12, 30, 0, 0, time.UTC)
+	wantCreatedAfter := now.Add(-24 * time.Hour)
+	var gotSort PostListSort
+	var gotCreatedAfter *time.Time
+	posts := &fakePostRepository{
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+			gotSort = sort
+			gotCreatedAfter = createdAfter
+			return nil, nil
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, func() time.Time { return now })
+
+	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{
+		Source:    "recommended",
+		TimeRange: "day",
+	})
+	if err != nil {
+		t.Fatalf("ListLatestPosts returned error: %v", err)
+	}
+	if gotSort != PostListSortBest {
+		t.Fatalf("expected recommended default sort %q, got %q", PostListSortBest, gotSort)
+	}
+	if gotCreatedAfter == nil || !gotCreatedAfter.Equal(wantCreatedAfter) {
+		t.Fatalf("expected created_after %v, got %v", wantCreatedAfter, gotCreatedAfter)
+	}
+}
+
 func TestListLatestPostsRejectsInvalidSort(t *testing.T) {
 	uc := NewPostUseCase(&fakePostRepository{}, &fakeCommunityPolicy{}, time.Now)
 
 	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{Sort: "popular"})
 	if !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for invalid sort, got %v", err)
+	}
+}
+
+func TestListLatestPostsRejectsInvalidSource(t *testing.T) {
+	uc := NewPostUseCase(&fakePostRepository{}, &fakeCommunityPolicy{}, time.Now)
+
+	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{Source: "friends"})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for invalid source, got %v", err)
+	}
+}
+
+func TestListLatestPostsRejectsInvalidTimeRange(t *testing.T) {
+	uc := NewPostUseCase(&fakePostRepository{}, &fakeCommunityPolicy{}, time.Now)
+
+	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{TimeRange: "forever"})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for invalid time range, got %v", err)
 	}
 }
 
@@ -673,9 +754,9 @@ type fakePostRepository struct {
 	findVisibleByIDFunc                func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
 	updateContentFunc                  func(ctx context.Context, post postdomain.Post) error
 	markDeletedFunc                    func(ctx context.Context, post postdomain.Post) error
-	listVisibleByCommunityFunc         func(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
-	listVisibleInPublicCommunitiesFunc func(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
-	listVisibleByAuthorFunc            func(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+	listVisibleByCommunityFunc         func(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
+	listVisibleInPublicCommunitiesFunc func(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
+	listVisibleByAuthorFunc            func(ctx context.Context, authorID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	savePostFunc                       func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID, now time.Time) error
 	deletePostSaveFunc                 func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) error
 	listSavedVisiblePostsFunc          func(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error)
@@ -716,23 +797,23 @@ func (f *fakePostRepository) MarkDeleted(ctx context.Context, post postdomain.Po
 	return nil
 }
 
-func (f *fakePostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+func (f *fakePostRepository) ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	if f.listVisibleByCommunityFunc != nil {
-		return f.listVisibleByCommunityFunc(ctx, communityID, sort, limit, offset)
+		return f.listVisibleByCommunityFunc(ctx, communityID, sort, createdAfter, limit, offset)
 	}
 	return nil, nil
 }
 
-func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	if f.listVisibleInPublicCommunitiesFunc != nil {
-		return f.listVisibleInPublicCommunitiesFunc(ctx, sort, limit, offset)
+		return f.listVisibleInPublicCommunitiesFunc(ctx, sort, createdAfter, limit, offset)
 	}
 	return nil, nil
 }
 
-func (f *fakePostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error) {
+func (f *fakePostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	if f.listVisibleByAuthorFunc != nil {
-		return f.listVisibleByAuthorFunc(ctx, authorID, sort, limit, offset)
+		return f.listVisibleByAuthorFunc(ctx, authorID, sort, createdAfter, limit, offset)
 	}
 	return nil, nil
 }

@@ -87,7 +87,7 @@ func TestListCommunityPostsReturnsPosts(t *testing.T) {
 	router := newPostTestRouter(posts, validParserWithUserID(userID))
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/posts?sort=hot&limit=20&offset=5", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/posts?sort=hot&t=week&limit=20&offset=5", nil)
 	request.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(recorder, request)
@@ -103,6 +103,9 @@ func TestListCommunityPostsReturnsPosts(t *testing.T) {
 	}
 	if posts.listInput.Sort != "hot" {
 		t.Fatalf("expected sort hot, got %q", posts.listInput.Sort)
+	}
+	if posts.listInput.TimeRange != "week" {
+		t.Fatalf("expected time range week, got %q", posts.listInput.TimeRange)
 	}
 	if posts.listInput.ViewerID != userID {
 		t.Fatalf("expected viewer %q, got %q", userID.String(), posts.listInput.ViewerID.String())
@@ -400,7 +403,7 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	router := newPostTestRouter(posts, validParserWithUserID(userID))
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts?sort=hot&limit=20&offset=5", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/posts?source=recommended&sort=hot&t=day&limit=20&offset=5", nil)
 	request.Header.Set("Authorization", "Bearer valid-token")
 
 	router.ServeHTTP(recorder, request)
@@ -416,6 +419,9 @@ func TestListLatestPostsReturnsPosts(t *testing.T) {
 	}
 	if posts.listLatestInput.Sort != "hot" {
 		t.Fatalf("expected sort hot, got %q", posts.listLatestInput.Sort)
+	}
+	if posts.listLatestInput.Source != "recommended" || posts.listLatestInput.TimeRange != "day" {
+		t.Fatalf("unexpected feed source/time range: %#v", posts.listLatestInput)
 	}
 	if posts.listLatestInput.ViewerID != userID {
 		t.Fatalf("expected viewer %q, got %q", userID.String(), posts.listLatestInput.ViewerID.String())

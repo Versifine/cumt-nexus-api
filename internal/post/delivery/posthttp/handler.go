@@ -226,6 +226,7 @@ func (h *Handler) ListCommunityPosts(c *gin.Context) {
 		CommunitySlug: c.Param("slug"),
 		ViewerID:      userID,
 		Sort:          c.Query("sort"),
+		TimeRange:     c.Query("t"),
 		Limit:         limit,
 		Offset:        offset,
 	})
@@ -264,10 +265,12 @@ func (h *Handler) ListLatestPosts(c *gin.Context) {
 	}
 
 	result, err := h.posts.ListLatestPosts(c.Request.Context(), postusecase.ListLatestPostsInput{
-		ViewerID: userID,
-		Sort:     c.Query("sort"),
-		Limit:    limit,
-		Offset:   offset,
+		ViewerID:  userID,
+		Source:    c.Query("source"),
+		Sort:      c.Query("sort"),
+		TimeRange: c.Query("t"),
+		Limit:     limit,
+		Offset:    offset,
 	})
 	if err != nil {
 		_ = c.Error(err)

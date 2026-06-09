@@ -16,9 +16,9 @@ type PostRepository interface {
 	FindVisibleByID(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error)
 	UpdateContent(ctx context.Context, post postdomain.Post) error
 	MarkDeleted(ctx context.Context, post postdomain.Post) error
-	ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
-	ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
-	ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, limit int, offset int) ([]postdomain.Post, error)
+	ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
+	ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
+	ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 }
 
 type PostSaveRepository interface {

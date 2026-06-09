@@ -84,8 +84,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/community-applications` | `status`, `limit`, `offset` | `status=pending|approved|rejected`，平台 staff 视角 |
 | `GET /api/v1/me/saved-posts` | `limit`, `offset` | 当前用户保存的公开 visible 帖子 |
 | `GET /api/v1/me/followed-communities` | `limit`, `offset` | 当前用户关注的 active public 社区 |
-| `GET /api/v1/communities/:slug/posts` | `sort`, `limit`, `offset` | `sort=best|hot|new|top|rising`，分页默认由 usecase 收口 |
-| `GET /api/v1/posts` | `sort`, `limit`, `offset` | `sort=best|hot|new|top|rising`，全站公开可读社区帖子流 |
+| `GET /api/v1/communities/:slug/posts` | `sort`, `t`, `limit`, `offset` | `sort=best|hot|new|top|rising`，`t=hour|day|week|month|year|all`，分页默认由 usecase 收口 |
+| `GET /api/v1/posts` | `source`, `sort`, `t`, `limit`, `offset` | `source=all|recommended`；`recommended` 当前为公开可解释排序流，默认 `sort=best`；`sort=best|hot|new|top|rising`；`t=hour|day|week|month|year|all` |
 | `GET /api/v1/posts/:id/comments` | `view`, `sort`, `limit`, `offset`, `max_depth` | `view=flat|tree`，`sort=best|top|new|old|controversial`，tree view 返回前序遍历扁平数组 |
 | `GET /api/v1/users/:username/posts` | `sort`, `limit`, `offset` | `sort=best|hot|new|top|rising`，只返回该用户在公开可读社区中的 visible 帖子 |
 | `GET /api/v1/users/:username/comments` | `limit`, `offset` | 只返回该用户在公开可读社区 visible 帖子下的 visible 评论 |
