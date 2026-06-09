@@ -190,9 +190,12 @@ GET /api/v1/posts/:id/comments?view=tree&sort=new&limit=20&offset=0&max_depth=6
 
 ```text
 POST /api/v1/uploads/images
+POST /api/v1/link-previews/resolve
+POST /api/v1/embeds/resolve
 ```
 
 上传使用 `multipart/form-data`，字段为 `file` 和可选 `alt_text`。
+链接预览和嵌入解析使用 JSON `{"url":"https://..."}`，会校验公开 HTTP(S) URL、拦截本机/私网地址，并只对首批白名单 provider 返回嵌入结果。
 
 完整接口合同见 [docs/contracts/http-api-contract.md](docs/contracts/http-api-contract.md)，请求/响应字段合同见 [docs/contracts/http-api-schema.md](docs/contracts/http-api-schema.md)。
 

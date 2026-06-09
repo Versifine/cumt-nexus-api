@@ -146,7 +146,8 @@ $protectedRouteFiles = @(
     'internal/vote/delivery/votehttp/handler.go',
     'internal/moderation/delivery/moderationhttp/handler.go',
     'internal/notification/delivery/notificationhttp/handler.go',
-    'internal/media/delivery/mediahttp/handler.go'
+    'internal/media/delivery/mediahttp/handler.go',
+    'internal/contentref/delivery/contentrefhttp/handler.go'
 )
 
 foreach ($file in $protectedRouteFiles) {

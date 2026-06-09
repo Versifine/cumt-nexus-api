@@ -71,6 +71,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/notifications/:id/read | none | `notificationhttp.markNotificationReadResponse` | 200 |
 | POST | /api/v1/notifications/read-all | none | `notificationhttp.markAllNotificationsReadResponse` | 200 |
 | POST | /api/v1/uploads/images | multipart form | `mediahttp.uploadImageResponse` | 201 |
+| POST | /api/v1/link-previews/resolve | `contentrefhttp.resolveLinkPreviewRequest` | `contentrefhttp.resolveLinkPreviewResponse` | 200 |
+| POST | /api/v1/embeds/resolve | `contentrefhttp.resolveEmbedRequest` | `contentrefhttp.resolveEmbedResponse` | 200 |
 
 ## 请求必填字段清单
 
@@ -84,6 +86,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `commenthttp.setCommentVoteRequest` | `value` |
 | `commenthttp.updateCommentRequest` | `body` |
 | `communityhttp.rejectCommunityApplicationRequest` | `reject_reason` |
+| `contentrefhttp.resolveEmbedRequest` | `url` |
+| `contentrefhttp.resolveLinkPreviewRequest` | `url` |
 | `communityhttp.submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `moderationhttp.reportContentRequest` | `reason` |
 | `posthttp.publishPostRequest` | `title`, `body` |
@@ -162,6 +166,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `notificationhttp` | `markAllNotificationsReadResponse` | `updated_count`, `read_at` |
 | `mediahttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `mediahttp` | `uploadImageResponse` | `attachment` |
+| `contentrefhttp` | `resolveLinkPreviewRequest` | `url` |
+| `contentrefhttp` | `resolveEmbedRequest` | `url` |
+| `contentrefhttp` | `linkPreviewResponse` | `provider`, `url`, `canonical_url`, `host`, `title`, `description`, `image_url` |
+| `contentrefhttp` | `resolveLinkPreviewResponse` | `preview` |
+| `contentrefhttp` | `embedResponse` | `provider`, `url`, `canonical_url`, `embed_url`, `iframe_allowed` |
+| `contentrefhttp` | `resolveEmbedResponse` | `embed` |
 
 ## 不在本快照内
 

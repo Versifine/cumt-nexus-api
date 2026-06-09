@@ -74,6 +74,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/notifications/:id/read | Bearer | 标记单条通知已读 |
 | POST | /api/v1/notifications/read-all | Bearer | 标记当前用户全部通知已读 |
 | POST | /api/v1/uploads/images | Bearer | 图片上传 |
+| POST | /api/v1/link-previews/resolve | Bearer | 解析公开链接预览 |
+| POST | /api/v1/embeds/resolve | Bearer | 解析白名单嵌入内容 |
 
 ## 查询参数约定
 

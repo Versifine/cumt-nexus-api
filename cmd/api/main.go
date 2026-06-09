@@ -21,6 +21,8 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/community/delivery/communityhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/contentref/contentrefusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/contentref/delivery/contentrefhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/media/delivery/mediahttp"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediarepository"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediausecase"
@@ -121,6 +123,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	mediaUC := mediausecase.NewUseCase(mediaRepo, objectStorage, mediausecase.UploadLimits{
 		ImageMaxBytes: cfg.Upload.ImageMaxBytes,
 	}, time.Now)
+	contentRefUC := contentrefusecase.NewUseCase()
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
@@ -134,6 +137,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	searchHandler := searchhttp.NewHandler(searchUC)
 	notificationHandler := notificationhttp.NewHandler(notificationUC)
 	mediaHandler := mediahttp.NewHandler(mediaUC)
+	contentRefHandler := contentrefhttp.NewHandler(contentRefUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	if cfg.Storage.Provider == "local" {
@@ -159,6 +163,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	moderationhttp.RegisterRoutes(protectedV1, moderationHandler)
 	notificationhttp.RegisterRoutes(protectedV1, notificationHandler)
 	mediahttp.RegisterRoutes(protectedV1, mediaHandler)
+	contentrefhttp.RegisterRoutes(protectedV1, contentRefHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)
