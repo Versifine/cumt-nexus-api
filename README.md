@@ -172,10 +172,10 @@ DELETE /api/v1/posts/:id/vote
 
 ```text
 GET /api/v1/posts?source=all&sort=new&limit=20&offset=0
-GET /api/v1/posts?source=recommended&sort=best&t=day&limit=20&offset=0
+GET /api/v1/posts?source=recommended&sort=hot&t=day&limit=20&offset=0
 ```
 
-`source=recommended` 当前是后端公开可解释排序流，默认 `sort=best`，不是个性化推荐。`t` 支持 `hour|day|week|month|year|all`。
+`source=recommended` 当前是后端公开可解释推荐流，默认 `sort=hot`，匿名读取使用 `hot + new` 混排并做社区 rank 去重；携带有效 Bearer 时会给关注社区和互动过的社区加权。显式传 `sort=best|hot|new|top|rising` 时，该排序语义作为推荐基线；它不是机器学习推荐，也不是预计算时间线。`t` 支持 `hour|day|week|month|year|all`。
 
 ### Comments
 

@@ -170,6 +170,121 @@ func (repo *PostgresPostRepository) ListVisibleInPublicCommunities(ctx context.C
 	)
 }
 
+func (repo *PostgresPostRepository) ListRecommendedInPublicCommunities(ctx context.Context, viewerID userdomain.UserID, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+	var viewerArg any
+	if viewerID.String() != "" {
+		viewerArg = viewerID.String()
+	}
+
+	queryArgs := []any{viewerArg}
+	whereClause := "posts.status = 'visible' AND communities.status = 'active' AND communities.visibility = 'public'"
+	if createdAfter != nil {
+		queryArgs = append(queryArgs, createdAfter.UTC())
+		whereClause = fmt.Sprintf("%s AND posts.created_at >= $%d", whereClause, len(queryArgs))
+	}
+	limitPlaceholder := len(queryArgs) + 1
+	offsetPlaceholder := len(queryArgs) + 2
+
+	query := fmt.Sprintf(`
+		WITH viewer_interactions AS (
+			SELECT DISTINCT interacted_posts.community_id
+			FROM (
+				SELECT posts.community_id
+				FROM post_votes
+				INNER JOIN posts ON posts.id = post_votes.post_id
+				WHERE post_votes.user_id = $1::uuid
+
+				UNION
+
+				SELECT posts.community_id
+				FROM comments
+				INNER JOIN posts ON posts.id = comments.post_id
+				WHERE comments.author_id = $1::uuid
+					AND comments.status = 'visible'
+
+				UNION
+
+				SELECT posts.community_id
+				FROM post_saves
+				INNER JOIN posts ON posts.id = post_saves.post_id
+				WHERE post_saves.user_id = $1::uuid
+			) AS interacted_posts
+		),
+		score_source AS (
+			SELECT
+				posts.id::text,
+				posts.community_id::text,
+				posts.author_id::text,
+				posts.title,
+				posts.body,
+				posts.status,
+				posts.created_at,
+				posts.updated_at,
+				(
+					%s
+					+ CASE WHEN viewer_follows.community_id IS NOT NULL THEN 2.5 ELSE 0 END
+					+ CASE WHEN viewer_interactions.community_id IS NOT NULL THEN 1.5 ELSE 0 END
+				) AS recommended_score
+			FROM posts
+			INNER JOIN communities ON communities.id = posts.community_id
+			%s
+			LEFT JOIN community_follows AS viewer_follows
+				ON viewer_follows.community_id = posts.community_id
+				AND viewer_follows.user_id = $1::uuid
+			LEFT JOIN viewer_interactions
+				ON viewer_interactions.community_id = posts.community_id
+			WHERE %s
+		),
+		ranked AS (
+			SELECT
+				score_source.*,
+				ROW_NUMBER() OVER (
+					PARTITION BY score_source.community_id
+					ORDER BY score_source.recommended_score DESC, score_source.created_at DESC, score_source.id DESC
+				) AS community_rank
+			FROM score_source
+		)
+		SELECT
+			id,
+			community_id,
+			author_id,
+			title,
+			body,
+			status,
+			created_at,
+			updated_at
+		FROM ranked
+		ORDER BY
+			community_rank ASC,
+			recommended_score DESC,
+			created_at DESC,
+			id DESC
+		LIMIT $%d
+		OFFSET $%d
+	`, postRecommendationScore(sort), postListStatsJoin(postusecase.PostListSortHot), whereClause, limitPlaceholder, offsetPlaceholder)
+
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := repo.pool.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("list recommended posts in public communities: %w", err)
+	}
+	defer rows.Close()
+
+	var posts []postdomain.Post
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, *post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recommended posts in public communities: %w", err)
+	}
+
+	return posts, nil
+}
+
 func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	return repo.listVisiblePosts(
 		ctx,
@@ -267,6 +382,79 @@ func postListStatsJoin(sort postusecase.PostListSort) string {
 			GROUP BY post_id
 		) AS post_save_stats ON post_save_stats.post_id = posts.id
 	`
+}
+
+func postRecommendationScore(sort postusecase.PostListSort) string {
+	freshness := postFreshnessScore()
+	switch sort {
+	case postusecase.PostListSortBest:
+		return fmt.Sprintf("(%s * 4.0) + %s + (%s * 1.5)", postWilsonScore(), postHotScore(), freshness)
+	case postusecase.PostListSortNew:
+		return freshness
+	case postusecase.PostListSortTop:
+		return fmt.Sprintf("(COALESCE(post_vote_stats.net_score, 0)::double precision * 1.0) + (COALESCE(post_vote_stats.upvote_count, 0)::double precision * 0.1) + (%s * 0.2)", freshness)
+	case postusecase.PostListSortRising:
+		return fmt.Sprintf("%s + (%s * 0.5)", postRisingScore(), freshness)
+	default:
+		return fmt.Sprintf("%s + (%s * 1.5)", postHotScore(), freshness)
+	}
+}
+
+func postHotScore() string {
+	return fmt.Sprintf(`
+		(
+			(
+				COALESCE(post_vote_stats.net_score, 0)::double precision * 3.0
+				+ COALESCE(post_comment_stats.comment_count, 0)::double precision * 2.0
+				+ COALESCE(post_save_stats.save_count, 0)::double precision * 4.0
+			) / POWER(%s + 2.0, 1.3)
+		)
+	`, postAgeHours())
+}
+
+func postFreshnessScore() string {
+	return fmt.Sprintf("(1.0 / POWER(%s + 1.0, 1.1))", postAgeHours())
+}
+
+func postRisingScore() string {
+	return fmt.Sprintf(`
+		(
+			(
+				COALESCE(post_vote_stats.recent_vote_count, 0)::double precision * 3.0
+				+ COALESCE(post_comment_stats.recent_comment_count, 0)::double precision * 2.0
+				+ COALESCE(post_save_stats.recent_save_count, 0)::double precision * 4.0
+			) / POWER(%s + 0.5, 1.2)
+		)
+	`, postAgeHours())
+}
+
+func postWilsonScore() string {
+	return `
+		CASE
+			WHEN COALESCE(post_vote_stats.vote_count, 0) = 0 THEN 0
+			ELSE (
+				(
+					(COALESCE(post_vote_stats.upvote_count, 0)::double precision / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+					+ (1.9208 / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+					- (
+						1.96 * sqrt(
+							(
+								(
+									(COALESCE(post_vote_stats.upvote_count, 0)::double precision / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+									* (1 - (COALESCE(post_vote_stats.upvote_count, 0)::double precision / COALESCE(post_vote_stats.vote_count, 0)::double precision))
+								)
+								+ (0.9604 / COALESCE(post_vote_stats.vote_count, 0)::double precision)
+							) / COALESCE(post_vote_stats.vote_count, 0)::double precision
+						)
+					)
+				) / (1 + (3.8416 / COALESCE(post_vote_stats.vote_count, 0)::double precision))
+			)
+		END
+	`
+}
+
+func postAgeHours() string {
+	return "GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)) / 3600.0, 0)"
 }
 
 func postListOrderBy(sort postusecase.PostListSort) string {

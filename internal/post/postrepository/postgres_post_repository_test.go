@@ -344,6 +344,52 @@ func TestPostgresPostRepositoryListVisibleInPublicCommunitiesHotSort(t *testing.
 	}
 }
 
+func TestPostgresPostRepositoryListRecommendedInPublicCommunitiesDiversifiesAndBoostsViewer(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	viewerID := insertTestUser(ctx, t, pool)
+	followedCommunityID := insertTestCommunity(ctx, t, pool, authorID, "recommended-followed-"+randomSuffix())
+	otherCommunityID := insertTestCommunity(ctx, t, pool, authorID, "recommended-other-"+randomSuffix())
+
+	followedOlderPost := mustPost(t, followedCommunityID, authorID, "Recommended followed older", now)
+	otherPost := mustPost(t, otherCommunityID, authorID, "Recommended other", now.Add(30*time.Second))
+	followedNewerPost := mustPost(t, followedCommunityID, authorID, "Recommended followed newer", now.Add(time.Minute))
+
+	for _, post := range []*postdomain.Post{followedOlderPost, otherPost, followedNewerPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+	insertTestCommunityFollow(ctx, t, pool, followedCommunityID, viewerID)
+
+	posts, err := repo.ListRecommendedInPublicCommunities(ctx, viewerID, postusecase.PostListSortNew, nil, 200, 0)
+	if err != nil {
+		t.Fatalf("ListRecommendedInPublicCommunities returned error: %v", err)
+	}
+
+	var gotIDs []postdomain.PostID
+	for _, post := range posts {
+		switch post.ID() {
+		case followedOlderPost.ID(), otherPost.ID(), followedNewerPost.ID():
+			gotIDs = append(gotIDs, post.ID())
+		}
+	}
+
+	wantIDs := []postdomain.PostID{followedNewerPost.ID(), otherPost.ID(), followedOlderPost.ID()}
+	if len(gotIDs) != len(wantIDs) {
+		t.Fatalf("expected recommended test posts %#v, got %#v", wantIDs, gotIDs)
+	}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("expected recommended order %#v, got %#v", wantIDs, gotIDs)
+		}
+	}
+}
+
 func TestPostgresPostRepositoryMapsForeignKeyFailure(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)
@@ -380,7 +426,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requirePostSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "post_votes"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "community_follows"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -523,6 +569,32 @@ func insertTestPostVote(ctx context.Context, t *testing.T, pool *pgxpool.Pool, p
 				AND user_id = $2::uuid
 		`, postID.String(), userID.String()); err != nil {
 			t.Fatalf("cleanup test post vote post=%q user=%q: %v", postID.String(), userID.String(), err)
+		}
+	})
+}
+
+func insertTestCommunityFollow(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, userID userdomain.UserID) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO community_follows (
+			community_id,
+			user_id,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3)
+	`, communityID.String(), userID.String(), testNow())
+	if err != nil {
+		t.Fatalf("insert test community follow: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `
+			DELETE FROM community_follows
+			WHERE community_id = $1::uuid
+				AND user_id = $2::uuid
+		`, communityID.String(), userID.String()); err != nil {
+			t.Fatalf("cleanup test community follow community=%q user=%q: %v", communityID.String(), userID.String(), err)
 		}
 	})
 }

@@ -443,7 +443,7 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	}
 	defaultSort := PostListSortNew
 	if source == PostFeedSourceRecommended {
-		defaultSort = PostListSortBest
+		defaultSort = PostListSortHot
 	}
 	sort, err := normalizePostListSortWithDefault(input.Sort, defaultSort)
 	if err != nil {
@@ -455,7 +455,12 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	}
 	createdAfter := postListCreatedAfter(timeRange, uc.now().UTC())
 
-	posts, err := uc.posts.ListVisibleInPublicCommunities(ctx, sort, createdAfter, limit, offset)
+	var posts []postdomain.Post
+	if source == PostFeedSourceRecommended {
+		posts, err = uc.posts.ListRecommendedInPublicCommunities(ctx, input.ViewerID, sort, createdAfter, limit, offset)
+	} else {
+		posts, err = uc.posts.ListVisibleInPublicCommunities(ctx, sort, createdAfter, limit, offset)
+	}
 	if err != nil {
 		return ListLatestPostsResult{}, fmt.Errorf("list latest posts: %w", err)
 	}
