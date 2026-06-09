@@ -12,7 +12,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 - `/healthz` 不需要认证，只表示进程存活。
 - `/api/v1/auth/register` 和 `/api/v1/auth/login` 不需要认证。
-- `GET /api/v1/posts`、`GET /api/v1/posts/:id`、`GET /api/v1/communities/:slug/posts`、`GET /api/v1/posts/:id/comments`、`GET /api/v1/communities`、`GET /api/v1/communities/:slug`、`GET /api/v1/users/:username`、`GET /api/v1/users/:username/posts`、`GET /api/v1/users/:username/comments` 和 `GET /api/v1/search` 支持匿名读取公开 visible 内容，也支持可选 Bearer 读取当前用户视角字段。
+- `GET /api/v1/posts`、`GET /api/v1/posts/:id`、`GET /api/v1/communities/:slug/posts`、`GET /api/v1/posts/:id/comments`、`GET /api/v1/communities`、`GET /api/v1/communities/:slug`、`GET /api/v1/users/:username`、`GET /api/v1/users/:username/posts`、`GET /api/v1/users/:username/comments`、`GET /api/v1/search` 和 `GET /api/v1/effects/catalog` 支持匿名读取公开 visible 内容，也支持可选 Bearer 读取当前用户视角字段。
 - 除 auth 入口和公开读取入口外，当前 `/api/v1` 业务接口都需要 Bearer access token。
 - `GET /uploads/*filepath` 只在 `OBJECT_STORAGE_PROVIDER=local` 时注册，用于本地 local storage fallback 文件访问；生产/主方案使用 Cloudflare R2 public base URL。
 - 错误响应统一为 `{"error":{"code":"...","message":"..."}}`。
@@ -32,6 +32,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/me | Bearer | 当前用户 |
 | GET | /api/v1/me/saved-posts | Bearer | 当前用户保存的公开帖子 |
 | GET | /api/v1/me/followed-communities | Bearer | 当前用户关注的公开社区 |
+| GET | /api/v1/me/points | Bearer | 当前用户积分账户 |
 | GET | /api/v1/users/:username | optional Bearer | 公开用户主页 |
 | GET | /api/v1/communities | optional Bearer | 社区列表 |
 | GET | /api/v1/communities/:slug | optional Bearer | 社区详情 |
@@ -57,6 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/search | optional Bearer | PostgreSQL 基础搜索 |
 | PATCH | /api/v1/comments/:id | Bearer | 作者编辑评论 |
 | DELETE | /api/v1/comments/:id | Bearer | 作者软删除评论 |
+| POST | /api/v1/comments/:id/effects | Bearer | 给评论应用积分效果 |
 | PUT | /api/v1/comments/:id/vote | Bearer | 设置评论投票 |
 | DELETE | /api/v1/comments/:id/vote | Bearer | 取消评论投票 |
 | PUT | /api/v1/posts/:id/vote | Bearer | 设置帖子投票 |
@@ -76,6 +78,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/uploads/images | Bearer | 图片上传 |
 | POST | /api/v1/link-previews/resolve | Bearer | 解析公开链接预览 |
 | POST | /api/v1/embeds/resolve | Bearer | 解析白名单嵌入内容 |
+| GET | /api/v1/effects/catalog | optional Bearer | 公开评论效果目录 |
 
 ## 查询参数约定
 

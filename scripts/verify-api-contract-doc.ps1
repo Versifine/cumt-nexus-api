@@ -211,10 +211,24 @@ Add-RoutesFromFile `
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
+    -Path 'internal/effect/delivery/effecthttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'optional Bearer' `
+    -IncludeHandlers @('ListEffectsCatalog')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
     -Path 'internal/comment/delivery/commenthttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
     -IncludeHandlers @('PublishComment', 'SetCommentVote', 'DeleteCommentVote', 'UpdateComment', 'DeleteComment')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/effect/delivery/effecthttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'Bearer' `
+    -IncludeHandlers @('GetMyPoints', 'ApplyCommentEffect')
 
 if (-not (Test-Path -LiteralPath $docFullPath)) {
     throw "contract doc not found: $DocPath"

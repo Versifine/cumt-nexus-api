@@ -208,6 +208,16 @@ POST /api/v1/embeds/resolve
 
 完整接口合同见 [docs/contracts/http-api-contract.md](docs/contracts/http-api-contract.md)，请求/响应字段合同见 [docs/contracts/http-api-schema.md](docs/contracts/http-api-schema.md)。
 
+### Effects / Points
+
+```text
+GET  /api/v1/effects/catalog       # public, optional Bearer
+GET  /api/v1/me/points
+POST /api/v1/comments/:id/effects
+```
+
+评论效果应用使用 JSON `{"effect_id":"sparkle"}`。后端负责积分账户初始化、余额扣减、评论效果记录和积分流水审计。
+
 ### Moderation
 
 ```text

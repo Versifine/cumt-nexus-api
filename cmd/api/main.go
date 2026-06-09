@@ -23,6 +23,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/delivery/communityhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/contentref/contentrefusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/contentref/delivery/contentrefhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/delivery/effecthttp"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/effectrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/effectusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/media/delivery/mediahttp"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediarepository"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediausecase"
@@ -91,6 +94,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	searchRepo := searchrepository.NewPostgresSearchRepository(pool)
 	notificationRepo := notificationrepository.NewPostgresNotificationRepository(pool)
 	mediaRepo := mediarepository.NewPostgresMediaRepository(pool)
+	effectRepo := effectrepository.NewPostgresEffectRepository(pool)
 	objectStorage, err := newObjectStorage(ctx, cfg.Storage)
 	if err != nil {
 		return err
@@ -124,6 +128,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 		ImageMaxBytes: cfg.Upload.ImageMaxBytes,
 	}, time.Now)
 	contentRefUC := contentrefusecase.NewUseCase()
+	effectUC := effectusecase.NewUseCase(effectRepo, commentRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
@@ -138,6 +143,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	notificationHandler := notificationhttp.NewHandler(notificationUC)
 	mediaHandler := mediahttp.NewHandler(mediaUC)
 	contentRefHandler := contentrefhttp.NewHandler(contentRefUC)
+	effectHandler := effecthttp.NewHandler(effectUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	if cfg.Storage.Provider == "local" {
@@ -152,6 +158,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	posthttp.RegisterReadRoutes(publicReadV1, postHandler)
 	commenthttp.RegisterReadRoutes(publicReadV1, commentHandler)
 	searchhttp.RegisterRoutes(publicReadV1, searchHandler)
+	effecthttp.RegisterPublicRoutes(publicReadV1, effectHandler)
 	protectedV1 := apiV1.Group("")
 	protectedV1.Use(authhttp.RequireAuth(tokenIssuer))
 	userhttp.RegisterRoutes(protectedV1, userHandler)
@@ -164,6 +171,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	notificationhttp.RegisterRoutes(protectedV1, notificationHandler)
 	mediahttp.RegisterRoutes(protectedV1, mediaHandler)
 	contentrefhttp.RegisterRoutes(protectedV1, contentRefHandler)
+	effecthttp.RegisterRoutes(protectedV1, effectHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)

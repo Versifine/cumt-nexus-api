@@ -29,6 +29,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/me | none | `userhttp.currentUserResponse` | 200 |
 | GET | /api/v1/me/saved-posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/me/followed-communities | query | `communityhttp.listFollowedCommunitiesResponse` | 200 |
+| GET | /api/v1/me/points | none | `effecthttp.getMyPointsResponse` | 200 |
 | GET | /api/v1/users/:username | none | `userhttp.getPublicUserResponse` | 200 |
 | GET | /api/v1/communities | none | `communityhttp.listCommunitiesResponse` | 200 |
 | GET | /api/v1/communities/:slug | none | `communityhttp.getCommunityResponse` | 200 |
@@ -53,6 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/users/:username/comments | query | `commenthttp.listUserCommentsResponse` | 200 |
 | PATCH | /api/v1/comments/:id | `commenthttp.updateCommentRequest` | `commenthttp.publishCommentResponse` | 200 |
 | DELETE | /api/v1/comments/:id | none | none | 204 |
+| POST | /api/v1/comments/:id/effects | `effecthttp.applyCommentEffectRequest` | `effecthttp.applyCommentEffectResponse` | 201 |
 | PUT | /api/v1/comments/:id/vote | `commenthttp.setCommentVoteRequest` | `commenthttp.setCommentVoteResponse` | 200 |
 | DELETE | /api/v1/comments/:id/vote | none | none | 204 |
 | PUT | /api/v1/posts/:id/vote | `votehttp.setPostVoteRequest` | `votehttp.setPostVoteResponse` | 200 |
@@ -73,6 +75,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/uploads/images | multipart form | `mediahttp.uploadImageResponse` | 201 |
 | POST | /api/v1/link-previews/resolve | `contentrefhttp.resolveLinkPreviewRequest` | `contentrefhttp.resolveLinkPreviewResponse` | 200 |
 | POST | /api/v1/embeds/resolve | `contentrefhttp.resolveEmbedRequest` | `contentrefhttp.resolveEmbedResponse` | 200 |
+| GET | /api/v1/effects/catalog | none | `effecthttp.listEffectsCatalogResponse` | 200 |
 
 ## 请求必填字段清单
 
@@ -88,6 +91,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp.rejectCommunityApplicationRequest` | `reject_reason` |
 | `contentrefhttp.resolveEmbedRequest` | `url` |
 | `contentrefhttp.resolveLinkPreviewRequest` | `url` |
+| `effecthttp.applyCommentEffectRequest` | `effect_id` |
 | `communityhttp.submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `moderationhttp.reportContentRequest` | `reason` |
 | `posthttp.publishPostRequest` | `title`, `body` |
@@ -172,6 +176,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `contentrefhttp` | `resolveLinkPreviewResponse` | `preview` |
 | `contentrefhttp` | `embedResponse` | `provider`, `url`, `canonical_url`, `embed_url`, `iframe_allowed` |
 | `contentrefhttp` | `resolveEmbedResponse` | `embed` |
+| `effecthttp` | `effectResponse` | `id`, `name`, `description`, `cost_points`, `asset_url`, `animation_key`, `is_active`, `created_at`, `updated_at` |
+| `effecthttp` | `listEffectsCatalogResponse` | `effects` |
+| `effecthttp` | `pointAccountResponse` | `user_id`, `balance`, `lifetime_earned`, `lifetime_spent`, `updated_at` |
+| `effecthttp` | `getMyPointsResponse` | `points` |
+| `effecthttp` | `applyCommentEffectRequest` | `effect_id` |
+| `effecthttp` | `commentEffectResponse` | `id`, `comment_id`, `effect_id`, `user_id`, `points_spent`, `created_at` |
+| `effecthttp` | `applyCommentEffectResponse` | `comment_effect`, `points` |
 
 ## 不在本快照内
 
