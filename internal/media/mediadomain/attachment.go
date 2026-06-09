@@ -306,6 +306,25 @@ func (attachment *Attachment) PublicURL() string {
 	return attachment.publicURL
 }
 
+func (attachment *Attachment) ThumbnailURL() string {
+	if strings.TrimSpace(attachment.thumbnailObjectKey) == "" {
+		return attachment.publicURL
+	}
+	publicURL := strings.TrimSpace(attachment.publicURL)
+	objectKey := strings.TrimSpace(attachment.objectKey)
+	thumbnailObjectKey := strings.TrimSpace(attachment.thumbnailObjectKey)
+	if objectKey == "" || publicURL == "" {
+		return publicURL
+	}
+	if strings.HasSuffix(publicURL, "/"+objectKey) {
+		return strings.TrimSuffix(publicURL, objectKey) + thumbnailObjectKey
+	}
+	if strings.HasSuffix(publicURL, objectKey) {
+		return strings.TrimSuffix(publicURL, objectKey) + thumbnailObjectKey
+	}
+	return publicURL
+}
+
 func (attachment *Attachment) ThumbnailObjectKey() string {
 	return attachment.thumbnailObjectKey
 }

@@ -42,6 +42,25 @@ func TestNewReadyImageAttachment(t *testing.T) {
 	if attachment.MimeType() != "image/png" || attachment.AltText() != "Campus" {
 		t.Fatalf("unexpected mime/alt: %s %s", attachment.MimeType(), attachment.AltText())
 	}
+	if attachment.ThumbnailURL() != attachment.PublicURL() {
+		t.Fatalf("expected thumbnail url fallback to public url, got %q", attachment.ThumbnailURL())
+	}
+}
+
+func TestAttachmentThumbnailURLUsesThumbnailObjectKey(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	params := validAttachmentParams(now)
+	params.ObjectKey = "images/2026/06/image.png"
+	params.PublicURL = "https://assets.example.com/nexus/images/2026/06/image.png"
+	params.ThumbnailObjectKey = "thumbnails/2026/06/image.webp"
+
+	attachment, err := RehydrateAttachment(params)
+	if err != nil {
+		t.Fatalf("RehydrateAttachment returned error: %v", err)
+	}
+	if attachment.ThumbnailURL() != "https://assets.example.com/nexus/thumbnails/2026/06/image.webp" {
+		t.Fatalf("unexpected thumbnail url: %q", attachment.ThumbnailURL())
+	}
 }
 
 func TestAttachmentRejectsInvalidInput(t *testing.T) {

@@ -27,14 +27,15 @@ func TestUploadImageReturnsAttachment(t *testing.T) {
 	media := &fakeMediaUseCase{
 		result: mediausecase.UploadImageResult{
 			Attachment: mediausecase.Attachment{
-				ID:        "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
-				Kind:      "image",
-				PublicURL: "http://localhost:8080/uploads/images/test.png",
-				SizeBytes: 9,
-				MimeType:  "image/png",
-				AltText:   "Campus",
-				Status:    "ready",
-				CreatedAt: now,
+				ID:           "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
+				Kind:         "image",
+				PublicURL:    "http://localhost:8080/uploads/images/test.png",
+				ThumbnailURL: "http://localhost:8080/uploads/images/test.png",
+				SizeBytes:    9,
+				MimeType:     "image/png",
+				AltText:      "Campus",
+				Status:       "ready",
+				CreatedAt:    now,
 			},
 		},
 	}
@@ -64,6 +65,9 @@ func TestUploadImageReturnsAttachment(t *testing.T) {
 	}
 	if response.Attachment.URL == "" || response.Attachment.Status != "ready" {
 		t.Fatalf("unexpected attachment response: %#v", response.Attachment)
+	}
+	if response.Attachment.ThumbnailURL != response.Attachment.URL {
+		t.Fatalf("expected thumbnail_url fallback to url, got %#v", response.Attachment)
 	}
 }
 

@@ -70,6 +70,9 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	if len(response.Post.Attachments) != 1 || response.Post.Attachments[0].URL == "" {
 		t.Fatalf("expected attachment response, got %#v", response.Post.Attachments)
 	}
+	if response.Post.Attachments[0].ThumbnailURL != response.Post.Attachments[0].URL {
+		t.Fatalf("expected attachment thumbnail_url fallback, got %#v", response.Post.Attachments[0])
+	}
 }
 
 func TestListCommunityPostsReturnsPosts(t *testing.T) {
@@ -773,13 +776,14 @@ func newPostResultWithAttachment(title string, now time.Time) postusecase.Post {
 	post := newPostResult(title, now)
 	post.Attachments = []postusecase.Attachment{
 		{
-			ID:        "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
-			Kind:      "image",
-			URL:       "http://localhost:8080/uploads/images/test.png",
-			SizeBytes: 100,
-			MimeType:  "image/png",
-			Status:    "ready",
-			CreatedAt: now,
+			ID:           "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
+			Kind:         "image",
+			URL:          "http://localhost:8080/uploads/images/test.png",
+			ThumbnailURL: "http://localhost:8080/uploads/images/test.png",
+			SizeBytes:    100,
+			MimeType:     "image/png",
+			Status:       "ready",
+			CreatedAt:    now,
 		},
 	}
 	return post

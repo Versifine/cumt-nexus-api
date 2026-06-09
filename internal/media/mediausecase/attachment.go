@@ -55,6 +55,7 @@ type Attachment struct {
 	Bucket             string
 	ObjectKey          string
 	PublicURL          string
+	ThumbnailURL       string
 	ThumbnailObjectKey string
 	Width              *int
 	Height             *int
@@ -269,6 +270,7 @@ func toAttachmentDTO(attachment mediadomain.Attachment) Attachment {
 		Bucket:             attachment.Bucket(),
 		ObjectKey:          attachment.ObjectKey(),
 		PublicURL:          attachment.PublicURL(),
+		ThumbnailURL:       attachment.ThumbnailURL(),
 		ThumbnailObjectKey: attachment.ThumbnailObjectKey(),
 		Width:              attachment.Width(),
 		Height:             attachment.Height(),

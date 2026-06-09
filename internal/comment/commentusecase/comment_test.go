@@ -110,6 +110,9 @@ func TestPublishCommentBindsImageAttachments(t *testing.T) {
 	if len(result.Comment.Attachments) != 1 || result.Comment.Attachments[0].ID != attachmentID.String() {
 		t.Fatalf("expected bound attachment in response, got %#v", result.Comment.Attachments)
 	}
+	if result.Comment.Attachments[0].ThumbnailURL != result.Comment.Attachments[0].URL {
+		t.Fatalf("expected thumbnail url fallback, got %#v", result.Comment.Attachments[0])
+	}
 }
 
 func TestPublishCommentRejectsInvalidInput(t *testing.T) {

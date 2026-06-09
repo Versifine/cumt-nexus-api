@@ -164,16 +164,17 @@ type Comment struct {
 }
 
 type Attachment struct {
-	ID        string
-	Kind      string
-	URL       string
-	Width     *int
-	Height    *int
-	SizeBytes int64
-	MimeType  string
-	AltText   string
-	Status    string
-	CreatedAt time.Time
+	ID           string
+	Kind         string
+	URL          string
+	ThumbnailURL string
+	Width        *int
+	Height       *int
+	SizeBytes    int64
+	MimeType     string
+	AltText      string
+	Status       string
+	CreatedAt    time.Time
 }
 
 func NewCommentUseCase(comments CommentRepository, posts PostReader, now func() time.Time) *CommentUseCase {
@@ -1036,16 +1037,17 @@ func toAttachmentDTOs(attachments []mediadomain.Attachment) []Attachment {
 	result := make([]Attachment, 0, len(attachments))
 	for _, attachment := range attachments {
 		result = append(result, Attachment{
-			ID:        attachment.ID().String(),
-			Kind:      attachment.Kind().String(),
-			URL:       attachment.PublicURL(),
-			Width:     attachment.Width(),
-			Height:    attachment.Height(),
-			SizeBytes: attachment.SizeBytes(),
-			MimeType:  attachment.MimeType(),
-			AltText:   attachment.AltText(),
-			Status:    attachment.Status().String(),
-			CreatedAt: attachment.CreatedAt(),
+			ID:           attachment.ID().String(),
+			Kind:         attachment.Kind().String(),
+			URL:          attachment.PublicURL(),
+			ThumbnailURL: attachment.ThumbnailURL(),
+			Width:        attachment.Width(),
+			Height:       attachment.Height(),
+			SizeBytes:    attachment.SizeBytes(),
+			MimeType:     attachment.MimeType(),
+			AltText:      attachment.AltText(),
+			Status:       attachment.Status().String(),
+			CreatedAt:    attachment.CreatedAt(),
 		})
 	}
 	return result

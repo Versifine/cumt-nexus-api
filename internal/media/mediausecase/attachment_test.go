@@ -43,6 +43,9 @@ func TestSaveImageAttachmentCreatesReadyAttachment(t *testing.T) {
 	if result.Attachment.OwnerType != mediadomain.OwnerTypeNone.String() || result.Attachment.StorageProvider != mediadomain.StorageProviderR2.String() {
 		t.Fatalf("unexpected result: %#v", result.Attachment)
 	}
+	if result.Attachment.ThumbnailURL != result.Attachment.PublicURL {
+		t.Fatalf("expected thumbnail url fallback, got %#v", result.Attachment)
+	}
 }
 
 func TestSaveImageAttachmentRejectsInvalidInput(t *testing.T) {
@@ -112,6 +115,9 @@ func TestUploadImageStoresObjectAndCreatesAttachment(t *testing.T) {
 	}
 	if result.Attachment.Width == nil || *result.Attachment.Width != 1 || result.Attachment.Height == nil || *result.Attachment.Height != 1 {
 		t.Fatalf("expected result dimensions, got width=%v height=%v", result.Attachment.Width, result.Attachment.Height)
+	}
+	if result.Attachment.ThumbnailURL != result.Attachment.PublicURL {
+		t.Fatalf("expected thumbnail url fallback, got %#v", result.Attachment)
 	}
 }
 

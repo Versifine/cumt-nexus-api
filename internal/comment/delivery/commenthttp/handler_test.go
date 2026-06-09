@@ -66,6 +66,9 @@ func TestPublishCommentReturnsCreatedComment(t *testing.T) {
 	if len(response.Comment.Attachments) != 1 || response.Comment.Attachments[0].URL != "https://assets.example.com/comment.png" {
 		t.Fatalf("expected attachment in response, got %#v", response.Comment.Attachments)
 	}
+	if response.Comment.Attachments[0].ThumbnailURL != response.Comment.Attachments[0].URL {
+		t.Fatalf("expected attachment thumbnail_url fallback, got %#v", response.Comment.Attachments[0])
+	}
 }
 
 func TestListPostCommentsReturnsComments(t *testing.T) {
@@ -556,14 +559,15 @@ func newChildCommentResultWithAttachment(body string, parentID string, now time.
 
 func newAttachmentResult(now time.Time) commentusecase.Attachment {
 	return commentusecase.Attachment{
-		ID:        "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
-		Kind:      "image",
-		URL:       "https://assets.example.com/comment.png",
-		SizeBytes: 100,
-		MimeType:  "image/png",
-		AltText:   "Campus",
-		Status:    "ready",
-		CreatedAt: now,
+		ID:           "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a",
+		Kind:         "image",
+		URL:          "https://assets.example.com/comment.png",
+		ThumbnailURL: "https://assets.example.com/comment.png",
+		SizeBytes:    100,
+		MimeType:     "image/png",
+		AltText:      "Campus",
+		Status:       "ready",
+		CreatedAt:    now,
 	}
 }
 

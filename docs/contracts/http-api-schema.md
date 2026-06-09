@@ -133,7 +133,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `posthttp` | `postPreviewResponse` | `kind`, `image` |
 | `posthttp` | `postPreviewImageResponse` | `url`, `width`, `height`, `mime_type`, `alt_text`, `size_bytes` |
 | `posthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
-| `posthttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
+| `posthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `posthttp` | `publishPostResponse` | `post` |
 | `posthttp` | `listCommunityPostsResponse` | `posts`, `limit`, `offset` |
 | `posthttp` | `getPostResponse` | `post` |
@@ -144,7 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `commenthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `commenthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
-| `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
+| `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `commenthttp` | `publishCommentResponse` | `comment` |
 | `commenthttp` | `commentVoteResponse` | `comment_id`, `user_id`, `value`, `created_at`, `updated_at` |
 | `commenthttp` | `setCommentVoteResponse` | `vote` |
@@ -168,7 +168,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `notificationhttp` | `unreadSummaryResponse` | `total`, `replies`, `mentions`, `likes`, `system` |
 | `notificationhttp` | `markNotificationReadResponse` | `notification` |
 | `notificationhttp` | `markAllNotificationsReadResponse` | `updated_count`, `read_at` |
-| `mediahttp` | `attachmentResponse` | `id`, `kind`, `url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
+| `mediahttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `mediahttp` | `uploadImageResponse` | `attachment` |
 | `contentrefhttp` | `resolveLinkPreviewRequest` | `url` |
 | `contentrefhttp` | `resolveEmbedRequest` | `url` |

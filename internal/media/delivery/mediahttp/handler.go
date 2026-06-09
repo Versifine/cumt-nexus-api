@@ -21,16 +21,17 @@ type MediaUseCase interface {
 }
 
 type attachmentResponse struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	URL       string    `json:"url"`
-	Width     *int      `json:"width"`
-	Height    *int      `json:"height"`
-	SizeBytes int64     `json:"size_bytes"`
-	MimeType  string    `json:"mime_type"`
-	AltText   string    `json:"alt_text"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Kind         string    `json:"kind"`
+	URL          string    `json:"url"`
+	ThumbnailURL string    `json:"thumbnail_url"`
+	Width        *int      `json:"width"`
+	Height       *int      `json:"height"`
+	SizeBytes    int64     `json:"size_bytes"`
+	MimeType     string    `json:"mime_type"`
+	AltText      string    `json:"alt_text"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type uploadImageResponse struct {
@@ -94,15 +95,16 @@ func (h *Handler) UploadImage(c *gin.Context) {
 
 func toAttachmentResponse(attachment mediausecase.Attachment) attachmentResponse {
 	return attachmentResponse{
-		ID:        attachment.ID,
-		Kind:      attachment.Kind,
-		URL:       attachment.PublicURL,
-		Width:     attachment.Width,
-		Height:    attachment.Height,
-		SizeBytes: attachment.SizeBytes,
-		MimeType:  attachment.MimeType,
-		AltText:   attachment.AltText,
-		Status:    attachment.Status,
-		CreatedAt: attachment.CreatedAt,
+		ID:           attachment.ID,
+		Kind:         attachment.Kind,
+		URL:          attachment.PublicURL,
+		ThumbnailURL: attachment.ThumbnailURL,
+		Width:        attachment.Width,
+		Height:       attachment.Height,
+		SizeBytes:    attachment.SizeBytes,
+		MimeType:     attachment.MimeType,
+		AltText:      attachment.AltText,
+		Status:       attachment.Status,
+		CreatedAt:    attachment.CreatedAt,
 	}
 }
