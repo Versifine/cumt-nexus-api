@@ -43,6 +43,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000009 | create_media_attachments | 创建图片附件元数据表和上传/归属查询索引 |
 | 000010 | create_engagement_schema | 创建帖子保存、社区关注和评论投票事实表 |
 | 000011 | create_effects_points | 创建评论效果目录、用户积分账户、评论效果记录和积分流水 |
+| 000012 | add_notification_aggregation | 为通知增加点赞聚合键、聚合计数和最近 actor 字段 |
 
 ## 阶段 19 边界
 

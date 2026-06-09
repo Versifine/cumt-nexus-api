@@ -16,6 +16,16 @@ const (
 	MaxNotificationListLimit     = 50
 )
 
+const (
+	NotificationTypePostReply    = "post_reply"
+	NotificationTypeCommentReply = "comment_reply"
+	NotificationTypePostLike     = "post_like"
+	NotificationTypeCommentLike  = "comment_like"
+
+	NotificationSourcePost    = "post"
+	NotificationSourceComment = "comment"
+)
+
 type StatusFilter string
 
 const (
@@ -40,16 +50,19 @@ type UseCase struct {
 }
 
 type Notification struct {
-	ID          string
-	RecipientID string
-	Type        string
-	Title       string
-	Body        string
-	SourceType  string
-	SourceID    string
-	ReadAt      *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             string
+	RecipientID    string
+	Type           string
+	Title          string
+	Body           string
+	SourceType     string
+	SourceID       string
+	AggregateKey   string
+	AggregateCount int
+	LastActorID    string
+	ReadAt         *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type ListNotificationsInput struct {
@@ -108,6 +121,50 @@ func NewUseCase(repository Repository, now func() time.Time) *UseCase {
 	}
 }
 
+func (uc *UseCase) NotifyPostCommented(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error {
+	if shouldSkipNotification(recipientID, actorID) {
+		return nil
+	}
+	notification := uc.newNotification(recipientID, actorID, NotificationTypePostReply, "新的评论", "有人评论了你的帖子", NotificationSourcePost, postID, "")
+	if err := uc.repository.Create(ctx, notification); err != nil {
+		return fmt.Errorf("create post comment notification: %w", err)
+	}
+	return nil
+}
+
+func (uc *UseCase) NotifyCommentReplied(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error {
+	if shouldSkipNotification(recipientID, actorID) {
+		return nil
+	}
+	notification := uc.newNotification(recipientID, actorID, NotificationTypeCommentReply, "新的回复", "有人回复了你的评论", NotificationSourceComment, commentID, "")
+	if err := uc.repository.Create(ctx, notification); err != nil {
+		return fmt.Errorf("create comment reply notification: %w", err)
+	}
+	return nil
+}
+
+func (uc *UseCase) NotifyPostUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error {
+	if shouldSkipNotification(recipientID, actorID) {
+		return nil
+	}
+	notification := uc.newNotification(recipientID, actorID, NotificationTypePostLike, "新的点赞", "有人赞了你的帖子", NotificationSourcePost, postID, uc.aggregateKey(NotificationTypePostLike, postID))
+	if err := uc.repository.UpsertAggregated(ctx, notification); err != nil {
+		return fmt.Errorf("upsert post like notification: %w", err)
+	}
+	return nil
+}
+
+func (uc *UseCase) NotifyCommentUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error {
+	if shouldSkipNotification(recipientID, actorID) {
+		return nil
+	}
+	notification := uc.newNotification(recipientID, actorID, NotificationTypeCommentLike, "新的点赞", "有人赞了你的评论", NotificationSourceComment, commentID, uc.aggregateKey(NotificationTypeCommentLike, commentID))
+	if err := uc.repository.UpsertAggregated(ctx, notification); err != nil {
+		return fmt.Errorf("upsert comment like notification: %w", err)
+	}
+	return nil
+}
+
 func (uc *UseCase) ListNotifications(ctx context.Context, input ListNotificationsInput) (ListNotificationsResult, error) {
 	if err := requireActor(input.ActorID); err != nil {
 		return ListNotificationsResult{}, err
@@ -136,6 +193,35 @@ func (uc *UseCase) ListNotifications(ctx context.Context, input ListNotification
 		Limit:         limit,
 		Offset:        offset,
 	}, nil
+}
+
+func (uc *UseCase) newNotification(recipientID userdomain.UserID, actorID userdomain.UserID, notificationType string, title string, body string, sourceType string, sourceID string, aggregateKey string) Notification {
+	now := uc.now().UTC()
+	return Notification{
+		ID:             uuid.NewString(),
+		RecipientID:    recipientID.String(),
+		Type:           notificationType,
+		Title:          title,
+		Body:           body,
+		SourceType:     sourceType,
+		SourceID:       strings.TrimSpace(sourceID),
+		AggregateKey:   aggregateKey,
+		AggregateCount: 1,
+		LastActorID:    actorID.String(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+}
+
+func (uc *UseCase) aggregateKey(notificationType string, sourceID string) string {
+	window := uc.now().UTC().Truncate(time.Hour).Format("2006010215")
+	return notificationType + ":" + strings.TrimSpace(sourceID) + ":" + window
+}
+
+func shouldSkipNotification(recipientID userdomain.UserID, actorID userdomain.UserID) bool {
+	recipient := strings.TrimSpace(recipientID.String())
+	actor := strings.TrimSpace(actorID.String())
+	return recipient == "" || actor == "" || recipient == actor
 }
 
 func (uc *UseCase) GetUnreadSummary(ctx context.Context, input UnreadSummaryInput) (UnreadSummary, error) {

@@ -25,16 +25,18 @@ type UseCase interface {
 }
 
 type notificationResponse struct {
-	ID          string     `json:"id"`
-	RecipientID string     `json:"recipient_id"`
-	Type        string     `json:"type"`
-	Title       string     `json:"title"`
-	Body        string     `json:"body"`
-	SourceType  string     `json:"source_type"`
-	SourceID    string     `json:"source_id"`
-	ReadAt      *time.Time `json:"read_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID             string     `json:"id"`
+	RecipientID    string     `json:"recipient_id"`
+	Type           string     `json:"type"`
+	Title          string     `json:"title"`
+	Body           string     `json:"body"`
+	SourceType     string     `json:"source_type"`
+	SourceID       string     `json:"source_id"`
+	AggregateCount int        `json:"aggregate_count"`
+	LastActorID    string     `json:"last_actor_id"`
+	ReadAt         *time.Time `json:"read_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type listNotificationsResponse struct {
@@ -208,15 +210,17 @@ func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
 
 func toNotificationResponse(notification notificationusecase.Notification) notificationResponse {
 	return notificationResponse{
-		ID:          notification.ID,
-		RecipientID: notification.RecipientID,
-		Type:        notification.Type,
-		Title:       notification.Title,
-		Body:        notification.Body,
-		SourceType:  notification.SourceType,
-		SourceID:    notification.SourceID,
-		ReadAt:      notification.ReadAt,
-		CreatedAt:   notification.CreatedAt,
-		UpdatedAt:   notification.UpdatedAt,
+		ID:             notification.ID,
+		RecipientID:    notification.RecipientID,
+		Type:           notification.Type,
+		Title:          notification.Title,
+		Body:           notification.Body,
+		SourceType:     notification.SourceType,
+		SourceID:       notification.SourceID,
+		AggregateCount: notification.AggregateCount,
+		LastActorID:    notification.LastActorID,
+		ReadAt:         notification.ReadAt,
+		CreatedAt:      notification.CreatedAt,
+		UpdatedAt:      notification.UpdatedAt,
 	}
 }

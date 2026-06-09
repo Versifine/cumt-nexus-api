@@ -96,6 +96,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/search` | `q`, `scope`, `limit`, `offset` | `scope=all|communities|posts` |
 | `GET /api/v1/notifications` | `category`, `status`, `limit`, `offset` | `category=all|replies|mentions|likes|system`，`status=all|unread|read` |
 
+评论、回复、帖子点赞和评论点赞会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，并在通知响应中返回 `aggregate_count` 与 `last_actor_id`。
+
 ## 错误边界
 
 错误码和 HTTP 状态码映射以 `docs/contracts/http-error-handling.md` 为准。

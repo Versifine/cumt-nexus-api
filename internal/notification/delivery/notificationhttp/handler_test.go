@@ -57,6 +57,9 @@ func TestListNotificationsReturnsNotifications(t *testing.T) {
 	if response.Category != "likes" || response.Status != "unread" || response.Limit != 50 || response.Offset != 2 || len(response.Notifications) != 1 {
 		t.Fatalf("unexpected response: %#v", response)
 	}
+	if response.Notifications[0].AggregateCount != 2 || response.Notifications[0].LastActorID == "" {
+		t.Fatalf("expected aggregate notification fields, got %#v", response.Notifications[0])
+	}
 }
 
 func TestGetUnreadSummaryReturnsCategoryCounts(t *testing.T) {
@@ -316,15 +319,17 @@ func validParserWithUserID(userID userdomain.UserID) *fakeAccessTokenParser {
 
 func newNotification(recipientID userdomain.UserID, now time.Time) notificationusecase.Notification {
 	return notificationusecase.Notification{
-		ID:          uuid.NewString(),
-		RecipientID: recipientID.String(),
-		Type:        "system",
-		Title:       "Title",
-		Body:        "Body",
-		SourceType:  "system",
-		SourceID:    "source-1",
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:             uuid.NewString(),
+		RecipientID:    recipientID.String(),
+		Type:           "system",
+		Title:          "Title",
+		Body:           "Body",
+		SourceType:     "system",
+		SourceID:       "source-1",
+		AggregateCount: 2,
+		LastActorID:    userdomain.NewGeneratedUserID().String(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 

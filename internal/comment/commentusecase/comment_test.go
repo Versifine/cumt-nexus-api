@@ -177,6 +177,78 @@ func TestPublishCommentRejectsParentFromDifferentPost(t *testing.T) {
 	}
 }
 
+func TestPublishRootCommentNotifiesPostAuthor(t *testing.T) {
+	now := time.Date(2026, 6, 2, 15, 0, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	comments := &fakeCommentRepository{}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.PublishComment(context.Background(), PublishCommentInput{
+		PostID:   post.ID().String(),
+		AuthorID: authorID,
+		Body:     "Root comment",
+	})
+	if err != nil {
+		t.Fatalf("PublishComment returned error: %v", err)
+	}
+	if !notifications.postCommentedCalled {
+		t.Fatal("expected post comment notification")
+	}
+	if notifications.recipientID != post.AuthorID() || notifications.actorID != authorID || notifications.postID != post.ID().String() {
+		t.Fatalf("unexpected notification args: %#v", notifications)
+	}
+}
+
+func TestPublishReplyNotifiesParentCommentAuthor(t *testing.T) {
+	now := time.Date(2026, 6, 2, 15, 5, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	parentAuthorID := userdomain.NewGeneratedUserID()
+	parent := mustComment(t, post.ID(), parentAuthorID, nil, "Parent", now.Add(-time.Minute))
+	var createdCommentID commentdomain.CommentID
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return parent, nil
+		},
+		createFunc: func(ctx context.Context, comment commentdomain.Comment) error {
+			createdCommentID = comment.ID()
+			return nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.PublishComment(context.Background(), PublishCommentInput{
+		PostID:   post.ID().String(),
+		AuthorID: authorID,
+		ParentID: parent.ID().String(),
+		Body:     "Reply",
+	})
+	if err != nil {
+		t.Fatalf("PublishComment returned error: %v", err)
+	}
+	if !notifications.commentRepliedCalled {
+		t.Fatal("expected comment reply notification")
+	}
+	if notifications.recipientID != parentAuthorID || notifications.actorID != authorID || notifications.commentID != createdCommentID.String() {
+		t.Fatalf("unexpected notification args: %#v", notifications)
+	}
+}
+
 func TestListPostCommentsNormalizesPagination(t *testing.T) {
 	post := mustPost(t, time.Now().UTC())
 	var gotLimit int
@@ -679,6 +751,77 @@ func TestSetCommentVoteChecksVisibleCommentAndPost(t *testing.T) {
 	}
 }
 
+func TestSetCommentVoteNotifiesCommentAuthorOnFirstUpvote(t *testing.T) {
+	now := time.Date(2026, 6, 6, 11, 5, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	commentAuthorID := userdomain.NewGeneratedUserID()
+	comment := mustComment(t, post.ID(), commentAuthorID, nil, "Body", now)
+	userID := userdomain.NewGeneratedUserID()
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.SetCommentVote(context.Background(), SetCommentVoteInput{
+		CommentID: comment.ID().String(),
+		UserID:    userID,
+		Value:     1,
+	})
+	if err != nil {
+		t.Fatalf("SetCommentVote returned error: %v", err)
+	}
+	if !notifications.commentUpvotedCalled {
+		t.Fatal("expected comment upvote notification")
+	}
+	if notifications.recipientID != commentAuthorID || notifications.actorID != userID || notifications.commentID != comment.ID().String() {
+		t.Fatalf("unexpected notification args: %#v", notifications)
+	}
+}
+
+func TestSetCommentVoteDoesNotNotifyRepeatedUpvote(t *testing.T) {
+	now := time.Date(2026, 6, 6, 11, 10, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	comment := mustComment(t, post.ID(), userdomain.NewGeneratedUserID(), nil, "Body", now)
+	userID := userdomain.NewGeneratedUserID()
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+		myVotes: map[commentdomain.CommentID]votedomain.VoteValue{
+			comment.ID(): votedomain.VoteValueUp,
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.SetCommentVote(context.Background(), SetCommentVoteInput{
+		CommentID: comment.ID().String(),
+		UserID:    userID,
+		Value:     1,
+	})
+	if err != nil {
+		t.Fatalf("SetCommentVote returned error: %v", err)
+	}
+	if notifications.commentUpvotedCalled {
+		t.Fatal("did not expect repeated comment upvote notification")
+	}
+}
+
 type fakeCommentRepository struct {
 	createFunc                func(ctx context.Context, comment commentdomain.Comment) error
 	findVisibleByIDFunc       func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error)
@@ -807,6 +950,40 @@ func (f *fakeCommentRepository) SummarizeCommentVotesByIDs(ctx context.Context, 
 		return map[commentdomain.CommentID]votedomain.CommentVoteSummary{}, nil
 	}
 	return f.voteSummaries, nil
+}
+
+type fakeNotificationPublisher struct {
+	postCommentedCalled  bool
+	commentRepliedCalled bool
+	commentUpvotedCalled bool
+	recipientID          userdomain.UserID
+	actorID              userdomain.UserID
+	postID               string
+	commentID            string
+}
+
+func (f *fakeNotificationPublisher) NotifyPostCommented(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error {
+	f.postCommentedCalled = true
+	f.recipientID = recipientID
+	f.actorID = actorID
+	f.postID = postID
+	return nil
+}
+
+func (f *fakeNotificationPublisher) NotifyCommentReplied(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error {
+	f.commentRepliedCalled = true
+	f.recipientID = recipientID
+	f.actorID = actorID
+	f.commentID = commentID
+	return nil
+}
+
+func (f *fakeNotificationPublisher) NotifyCommentUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error {
+	f.commentUpvotedCalled = true
+	f.recipientID = recipientID
+	f.actorID = actorID
+	f.commentID = commentID
+	return nil
 }
 
 type fakePostRepository struct {

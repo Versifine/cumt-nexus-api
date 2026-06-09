@@ -47,6 +47,67 @@ func TestSetPostVoteUpsertsVoteForVisiblePost(t *testing.T) {
 	}
 }
 
+func TestSetPostVoteNotifiesPostAuthorOnFirstUpvote(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 5, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	userID := userdomain.NewGeneratedUserID()
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	votes := &fakePostVoteRepository{}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewPostVoteUseCase(posts, votes, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.SetPostVote(context.Background(), SetPostVoteInput{
+		PostID: post.ID().String(),
+		UserID: userID,
+		Value:  1,
+	})
+	if err != nil {
+		t.Fatalf("SetPostVote returned error: %v", err)
+	}
+	if !notifications.postUpvotedCalled {
+		t.Fatal("expected post upvote notification")
+	}
+	if notifications.recipientID != post.AuthorID() || notifications.actorID != userID || notifications.postID != post.ID().String() {
+		t.Fatalf("unexpected notification args: %#v", notifications)
+	}
+}
+
+func TestSetPostVoteDoesNotNotifyRepeatedUpvote(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 10, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	userID := userdomain.NewGeneratedUserID()
+	previousVote, err := votedomain.NewPostVote(post.ID(), userID, votedomain.VoteValueUp, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("NewPostVote returned error: %v", err)
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	votes := &fakePostVoteRepository{previousVote: previousVote}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewPostVoteUseCase(posts, votes, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	_, err = uc.SetPostVote(context.Background(), SetPostVoteInput{
+		PostID: post.ID().String(),
+		UserID: userID,
+		Value:  1,
+	})
+	if err != nil {
+		t.Fatalf("SetPostVote returned error: %v", err)
+	}
+	if notifications.postUpvotedCalled {
+		t.Fatal("did not expect repeated upvote notification")
+	}
+}
+
 func TestSetPostVoteRejectsInvalidInput(t *testing.T) {
 	uc := NewPostVoteUseCase(&fakePostRepository{}, &fakePostVoteRepository{}, time.Now)
 	postID := postdomain.NewGeneratedPostID().String()
@@ -135,9 +196,12 @@ func (f *fakePostRepository) FindVisibleByID(ctx context.Context, id postdomain.
 type fakePostVoteRepository struct {
 	upsertCalled  bool
 	deleteCalled  bool
+	findCalled    bool
 	upsertedVote  votedomain.PostVote
 	deletedPostID postdomain.PostID
 	deletedUserID userdomain.UserID
+	previousVote  *votedomain.PostVote
+	findErr       error
 	upsertErr     error
 	deleteErr     error
 }
@@ -156,6 +220,13 @@ func (f *fakePostVoteRepository) DeleteByPostAndUser(ctx context.Context, postID
 }
 
 func (f *fakePostVoteRepository) FindByPostAndUser(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) (*votedomain.PostVote, error) {
+	f.findCalled = true
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	if f.previousVote != nil {
+		return f.previousVote, nil
+	}
 	return nil, apperr.New(apperr.CodeNotFound, "post vote not found")
 }
 
@@ -165,6 +236,21 @@ func (f *fakePostVoteRepository) FindByPostIDsAndUser(ctx context.Context, postI
 
 func (f *fakePostVoteRepository) SummarizeByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]PostVoteSummary, error) {
 	return map[postdomain.PostID]PostVoteSummary{}, nil
+}
+
+type fakeNotificationPublisher struct {
+	postUpvotedCalled bool
+	recipientID       userdomain.UserID
+	actorID           userdomain.UserID
+	postID            string
+}
+
+func (f *fakeNotificationPublisher) NotifyPostUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error {
+	f.postUpvotedCalled = true
+	f.recipientID = recipientID
+	f.actorID = actorID
+	f.postID = postID
+	return nil
 }
 
 func mustPost(t *testing.T, now time.Time) *postdomain.Post {

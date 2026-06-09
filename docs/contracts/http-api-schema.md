@@ -163,7 +163,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `searchhttp` | `searchResponse` | `query`, `scope`, `limit`, `offset`, `communities`, `posts` |
 | `searchhttp` | `searchCommunityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_at`, `updated_at` |
 | `searchhttp` | `searchPostResponse` | `id`, `community_id`, `community_slug`, `author_id`, `title`, `body_excerpt`, `status`, `created_at`, `updated_at` |
-| `notificationhttp` | `notificationResponse` | `id`, `recipient_id`, `type`, `title`, `body`, `source_type`, `source_id`, `read_at`, `created_at`, `updated_at` |
+| `notificationhttp` | `notificationResponse` | `id`, `recipient_id`, `type`, `title`, `body`, `source_type`, `source_id`, `aggregate_count`, `last_actor_id`, `read_at`, `created_at`, `updated_at` |
 | `notificationhttp` | `listNotificationsResponse` | `notifications`, `category`, `status`, `limit`, `offset` |
 | `notificationhttp` | `unreadSummaryResponse` | `total`, `replies`, `mentions`, `likes`, `system` |
 | `notificationhttp` | `markNotificationReadResponse` | `notification` |

@@ -124,6 +124,8 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	consoleUC := moderationusecase.NewConsoleUseCase(moderationRepo, moderationRepo, moderationRepo, platformStaffRepo, time.Now)
 	searchUC := searchusecase.NewUseCase(searchRepo)
 	notificationUC := notificationusecase.NewUseCase(notificationRepo, time.Now)
+	commentUC.SetNotificationPublisher(notificationUC)
+	voteUC.SetNotificationPublisher(notificationUC)
 	mediaUC := mediausecase.NewUseCase(mediaRepo, objectStorage, mediausecase.UploadLimits{
 		ImageMaxBytes: cfg.Upload.ImageMaxBytes,
 	}, time.Now)

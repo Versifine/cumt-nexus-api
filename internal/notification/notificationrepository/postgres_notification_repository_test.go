@@ -178,6 +178,53 @@ func TestPostgresNotificationRepositoryMarkReadFiltersRecipient(t *testing.T) {
 	}
 }
 
+func TestPostgresNotificationRepositoryUpsertAggregatedIncrementsUnreadAggregate(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresNotificationRepository(pool)
+	now := testNow()
+
+	recipientID := insertTestUser(ctx, t, pool)
+	actorID := insertTestUser(ctx, t, pool)
+	nextActorID := insertTestUser(ctx, t, pool)
+	notification := notificationusecase.Notification{
+		ID:             uuid.NewString(),
+		RecipientID:    recipientID.String(),
+		Type:           notificationusecase.NotificationTypePostLike,
+		Title:          "新的点赞",
+		Body:           "有人赞了你的帖子",
+		SourceType:     notificationusecase.NotificationSourcePost,
+		SourceID:       "post-1",
+		AggregateKey:   "post_like:post-1:2026060207",
+		AggregateCount: 1,
+		LastActorID:    actorID.String(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := repo.UpsertAggregated(ctx, notification); err != nil {
+		t.Fatalf("first UpsertAggregated returned error: %v", err)
+	}
+
+	notification.ID = uuid.NewString()
+	notification.LastActorID = nextActorID.String()
+	notification.CreatedAt = now.Add(time.Minute)
+	notification.UpdatedAt = now.Add(time.Minute)
+	if err := repo.UpsertAggregated(ctx, notification); err != nil {
+		t.Fatalf("second UpsertAggregated returned error: %v", err)
+	}
+
+	notifications, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterLikes, notificationusecase.StatusFilterUnread, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByRecipient returned error: %v", err)
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("expected one aggregated notification, got %#v", notifications)
+	}
+	got := notifications[0]
+	if got.AggregateCount != 2 || got.LastActorID != nextActorID.String() {
+		t.Fatalf("unexpected aggregate result: %#v", got)
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -215,6 +262,23 @@ func requireNotificationSchema(ctx context.Context, t *testing.T, pool *pgxpool.
 		}
 		if !exists {
 			t.Skipf("%s table does not exist; run go run ./cmd/migrate up before repository tests", table)
+		}
+	}
+	for _, column := range []string{"aggregate_key", "aggregate_count", "last_actor_id"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+					AND table_name = 'notifications'
+					AND column_name = $1
+			)
+		`, column).Scan(&exists); err != nil {
+			t.Fatalf("check notifications.%s exists: %v", column, err)
+		}
+		if !exists {
+			t.Skipf("notifications.%s column does not exist; run go run ./cmd/migrate up before repository tests", column)
 		}
 	}
 }

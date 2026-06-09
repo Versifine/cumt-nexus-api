@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/notification/notificationusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -26,6 +28,99 @@ func NewPostgresNotificationRepository(pool *pgxpool.Pool) *PostgresNotification
 	}
 }
 
+func (repo *PostgresNotificationRepository) Create(ctx context.Context, notification notificationusecase.Notification) error {
+	const query = `
+		INSERT INTO notifications (
+			id,
+			recipient_id,
+			type,
+			title,
+			body,
+			source_type,
+			source_id,
+			aggregate_key,
+			aggregate_count,
+			last_actor_id,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11, $12)
+	`
+
+	_, err := repo.pool.Exec(
+		ctx,
+		query,
+		notification.ID,
+		notification.RecipientID,
+		notification.Type,
+		notification.Title,
+		notification.Body,
+		notification.SourceType,
+		notification.SourceID,
+		notification.AggregateKey,
+		normalizeAggregateCount(notification.AggregateCount),
+		nullableUUID(notification.LastActorID),
+		notification.CreatedAt,
+		notification.UpdatedAt,
+	)
+	if err != nil {
+		return mapPostgresNotificationWriteError("create notification", err)
+	}
+	return nil
+}
+
+func (repo *PostgresNotificationRepository) UpsertAggregated(ctx context.Context, notification notificationusecase.Notification) error {
+	const query = `
+		INSERT INTO notifications (
+			id,
+			recipient_id,
+			type,
+			title,
+			body,
+			source_type,
+			source_id,
+			aggregate_key,
+			aggregate_count,
+			last_actor_id,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::uuid, $11, $12)
+		ON CONFLICT (recipient_id, type, aggregate_key)
+			WHERE read_at IS NULL
+				AND aggregate_key <> ''
+		DO UPDATE
+		SET
+			aggregate_count = notifications.aggregate_count + 1,
+			last_actor_id = EXCLUDED.last_actor_id,
+			updated_at = EXCLUDED.updated_at
+	`
+
+	if strings.TrimSpace(notification.AggregateKey) == "" {
+		return repo.Create(ctx, notification)
+	}
+	_, err := repo.pool.Exec(
+		ctx,
+		query,
+		notification.ID,
+		notification.RecipientID,
+		notification.Type,
+		notification.Title,
+		notification.Body,
+		notification.SourceType,
+		notification.SourceID,
+		notification.AggregateKey,
+		normalizeAggregateCount(notification.AggregateCount),
+		nullableUUID(notification.LastActorID),
+		notification.CreatedAt,
+		notification.UpdatedAt,
+	)
+	if err != nil {
+		return mapPostgresNotificationWriteError("upsert aggregated notification", err)
+	}
+	return nil
+}
+
 func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, category notificationusecase.CategoryFilter, status notificationusecase.StatusFilter, limit int, offset int) ([]notificationusecase.Notification, error) {
 	query := `
 		SELECT
@@ -36,6 +131,9 @@ func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context,
 			body,
 			source_type,
 			source_id,
+			aggregate_key,
+			aggregate_count,
+			last_actor_id::text,
 			read_at,
 			created_at,
 			updated_at
@@ -130,6 +228,9 @@ func (repo *PostgresNotificationRepository) MarkRead(ctx context.Context, id str
 			body,
 			source_type,
 			source_id,
+			aggregate_key,
+			aggregate_count,
+			last_actor_id::text,
 			read_at,
 			created_at,
 			updated_at
@@ -184,6 +285,7 @@ type rowScanner interface {
 
 func scanNotification(row rowScanner) (notificationusecase.Notification, error) {
 	var notification notificationusecase.Notification
+	var lastActorID pgtype.Text
 	var readAt pgtype.Timestamptz
 	if err := row.Scan(
 		&notification.ID,
@@ -193,15 +295,48 @@ func scanNotification(row rowScanner) (notificationusecase.Notification, error) 
 		&notification.Body,
 		&notification.SourceType,
 		&notification.SourceID,
+		&notification.AggregateKey,
+		&notification.AggregateCount,
+		&lastActorID,
 		&readAt,
 		&notification.CreatedAt,
 		&notification.UpdatedAt,
 	); err != nil {
 		return notificationusecase.Notification{}, err
 	}
+	if lastActorID.Valid {
+		notification.LastActorID = lastActorID.String
+	}
 	if readAt.Valid {
 		value := readAt.Time
 		notification.ReadAt = &value
 	}
 	return notification, nil
+}
+
+func normalizeAggregateCount(count int) int {
+	if count <= 0 {
+		return 1
+	}
+	return count
+}
+
+func nullableUUID(raw string) any {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return strings.TrimSpace(raw)
+}
+
+func mapPostgresNotificationWriteError(operation string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23503" {
+			return apperr.New(apperr.CodeNotFound, "related user not found")
+		}
+		if pgErr.Code == "23505" {
+			return apperr.New(apperr.CodeConflict, "notification already exists")
+		}
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }

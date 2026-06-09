@@ -240,20 +240,98 @@ func TestNotificationUseCasePropagatesRepositoryError(t *testing.T) {
 	}
 }
 
+func TestNotifyPostUpvotedUpsertsAggregate(t *testing.T) {
+	now := testNow()
+	recipientID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository, func() time.Time { return now })
+
+	err := uc.NotifyPostUpvoted(context.Background(), recipientID, actorID, "post-1")
+	if err != nil {
+		t.Fatalf("NotifyPostUpvoted returned error: %v", err)
+	}
+	if !repository.upsertAggregatedCalled {
+		t.Fatal("expected aggregated notification upsert")
+	}
+	notification := repository.upsertAggregatedNotification
+	if notification.RecipientID != recipientID.String() || notification.LastActorID != actorID.String() {
+		t.Fatalf("unexpected notification actors: %#v", notification)
+	}
+	if notification.Type != NotificationTypePostLike || notification.SourceType != NotificationSourcePost || notification.SourceID != "post-1" {
+		t.Fatalf("unexpected post like notification: %#v", notification)
+	}
+	if notification.AggregateKey == "" || notification.AggregateCount != 1 {
+		t.Fatalf("unexpected aggregate fields: %#v", notification)
+	}
+}
+
+func TestNotifyPostUpvotedSkipsSelf(t *testing.T) {
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository, time.Now)
+
+	if err := uc.NotifyPostUpvoted(context.Background(), actorID, actorID, "post-1"); err != nil {
+		t.Fatalf("NotifyPostUpvoted returned error: %v", err)
+	}
+	if repository.createCalled || repository.upsertAggregatedCalled {
+		t.Fatal("expected self notification to be skipped")
+	}
+}
+
+func TestNotifyCommentRepliedCreatesNotification(t *testing.T) {
+	recipientID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository, time.Now)
+
+	if err := uc.NotifyCommentReplied(context.Background(), recipientID, actorID, "comment-1"); err != nil {
+		t.Fatalf("NotifyCommentReplied returned error: %v", err)
+	}
+	if !repository.createCalled {
+		t.Fatal("expected notification create")
+	}
+	notification := repository.createdNotification
+	if notification.Type != NotificationTypeCommentReply || notification.SourceType != NotificationSourceComment || notification.SourceID != "comment-1" {
+		t.Fatalf("unexpected comment reply notification: %#v", notification)
+	}
+	if notification.LastActorID != actorID.String() || notification.AggregateCount != 1 {
+		t.Fatalf("unexpected actor or aggregate count: %#v", notification)
+	}
+}
+
 type fakeRepository struct {
-	listCalled             bool
-	countUnreadCalled      bool
-	markReadCalled         bool
-	markAllReadCalled      bool
-	countUnreadRecipientID userdomain.UserID
-	listFunc               func(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error)
-	markReadFunc           func(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (Notification, error)
-	markAllReadFunc        func(ctx context.Context, recipientID userdomain.UserID, readAt time.Time) (int, error)
-	unreadSummary          UnreadSummary
-	listErr                error
-	countUnreadErr         error
-	markReadErr            error
-	markAllReadErr         error
+	listCalled                   bool
+	createCalled                 bool
+	upsertAggregatedCalled       bool
+	countUnreadCalled            bool
+	markReadCalled               bool
+	markAllReadCalled            bool
+	countUnreadRecipientID       userdomain.UserID
+	createdNotification          Notification
+	upsertAggregatedNotification Notification
+	listFunc                     func(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error)
+	createErr                    error
+	upsertAggregatedErr          error
+	markReadFunc                 func(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (Notification, error)
+	markAllReadFunc              func(ctx context.Context, recipientID userdomain.UserID, readAt time.Time) (int, error)
+	unreadSummary                UnreadSummary
+	listErr                      error
+	countUnreadErr               error
+	markReadErr                  error
+	markAllReadErr               error
+}
+
+func (f *fakeRepository) Create(ctx context.Context, notification Notification) error {
+	f.createCalled = true
+	f.createdNotification = notification
+	return f.createErr
+}
+
+func (f *fakeRepository) UpsertAggregated(ctx context.Context, notification Notification) error {
+	f.upsertAggregatedCalled = true
+	f.upsertAggregatedNotification = notification
+	return f.upsertAggregatedErr
 }
 
 func (f *fakeRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error) {
@@ -288,15 +366,16 @@ func (f *fakeRepository) MarkAllRead(ctx context.Context, recipientID userdomain
 
 func newNotification(recipientID userdomain.UserID, now time.Time) Notification {
 	return Notification{
-		ID:          uuid.NewString(),
-		RecipientID: recipientID.String(),
-		Type:        "system",
-		Title:       "Title",
-		Body:        "Body",
-		SourceType:  "system",
-		SourceID:    "source-1",
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:             uuid.NewString(),
+		RecipientID:    recipientID.String(),
+		Type:           "system",
+		Title:          "Title",
+		Body:           "Body",
+		SourceType:     "system",
+		SourceID:       "source-1",
+		AggregateCount: 1,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 

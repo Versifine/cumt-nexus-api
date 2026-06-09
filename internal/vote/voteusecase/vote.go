@@ -17,9 +17,10 @@ type PostRepository interface {
 }
 
 type PostVoteUseCase struct {
-	posts PostRepository
-	votes PostVoteRepository
-	now   func() time.Time
+	posts         PostRepository
+	votes         PostVoteRepository
+	notifications NotificationPublisher
+	now           func() time.Time
 }
 
 func NewPostVoteUseCase(posts PostRepository, votes PostVoteRepository, now func() time.Time) *PostVoteUseCase {
@@ -32,6 +33,14 @@ func NewPostVoteUseCase(posts PostRepository, votes PostVoteRepository, now func
 		votes: votes,
 		now:   now,
 	}
+}
+
+type NotificationPublisher interface {
+	NotifyPostUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error
+}
+
+func (uc *PostVoteUseCase) SetNotificationPublisher(notifications NotificationPublisher) {
+	uc.notifications = notifications
 }
 
 type SetPostVoteInput struct {
@@ -75,6 +84,10 @@ func (uc *PostVoteUseCase) SetPostVote(ctx context.Context, input SetPostVoteInp
 	if err != nil {
 		return SetPostVoteResult{}, fmt.Errorf("find post for vote: %w", err)
 	}
+	previousVote, err := uc.votes.FindByPostAndUser(ctx, post.ID(), input.UserID)
+	if err != nil && !apperr.IsCode(err, apperr.CodeNotFound) {
+		return SetPostVoteResult{}, fmt.Errorf("find existing post vote: %w", err)
+	}
 
 	now := uc.now().UTC()
 	vote, err := votedomain.NewPostVote(post.ID(), input.UserID, value, now)
@@ -85,10 +98,25 @@ func (uc *PostVoteUseCase) SetPostVote(ctx context.Context, input SetPostVoteInp
 	if err := uc.votes.Upsert(ctx, *vote); err != nil {
 		return SetPostVoteResult{}, fmt.Errorf("upsert post vote: %w", err)
 	}
+	if uc.shouldNotifyPostUpvote(post.AuthorID(), input.UserID, value, previousVote) {
+		if err := uc.notifications.NotifyPostUpvoted(ctx, post.AuthorID(), input.UserID, post.ID().String()); err != nil {
+			return SetPostVoteResult{}, err
+		}
+	}
 
 	return SetPostVoteResult{
 		Vote: toPostVoteDTO(*vote),
 	}, nil
+}
+
+func (uc *PostVoteUseCase) shouldNotifyPostUpvote(postAuthorID userdomain.UserID, voterID userdomain.UserID, value votedomain.VoteValue, previousVote *votedomain.PostVote) bool {
+	if uc.notifications == nil || postAuthorID == voterID || value != votedomain.VoteValueUp {
+		return false
+	}
+	if previousVote == nil {
+		return true
+	}
+	return previousVote.Value() != votedomain.VoteValueUp
 }
 
 func (uc *PostVoteUseCase) DeletePostVote(ctx context.Context, input DeletePostVoteInput) error {

@@ -49,6 +49,7 @@ type CommentUseCase struct {
 	users                PublicUserFinder
 	metadata             CommentMetadataRepository
 	votes                CommentVoteRepository
+	notifications        NotificationPublisher
 	commentImageMaxCount int
 	now                  func() time.Time
 }
@@ -208,6 +209,16 @@ func (uc *CommentUseCase) SetPublicUserFinder(users PublicUserFinder) {
 	uc.users = users
 }
 
+type NotificationPublisher interface {
+	NotifyPostCommented(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error
+	NotifyCommentReplied(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error
+	NotifyCommentUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error
+}
+
+func (uc *CommentUseCase) SetNotificationPublisher(notifications NotificationPublisher) {
+	uc.notifications = notifications
+}
+
 func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishCommentInput) (PublishCommentResult, error) {
 	if strings.TrimSpace(input.AuthorID.String()) == "" {
 		return PublishCommentResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
@@ -222,9 +233,14 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 		return PublishCommentResult{}, fmt.Errorf("find post for comment: %w", err)
 	}
 
-	parentID, err := uc.resolveParentComment(ctx, post.ID(), input.ParentID)
+	parent, err := uc.resolveParentComment(ctx, post.ID(), input.ParentID)
 	if err != nil {
 		return PublishCommentResult{}, err
+	}
+	var parentID *commentdomain.CommentID
+	if parent != nil {
+		id := parent.ID()
+		parentID = &id
 	}
 	body, err := commentdomain.NewCommentBody(input.Body)
 	if err != nil {
@@ -257,6 +273,9 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 	}
 	metadataViews, err := uc.loadCommentMetadataViews(ctx, []commentdomain.Comment{*comment})
 	if err != nil {
+		return PublishCommentResult{}, err
+	}
+	if err := uc.notifyCommentPublished(ctx, post, parent, *comment, input.AuthorID); err != nil {
 		return PublishCommentResult{}, err
 	}
 
@@ -513,6 +532,10 @@ func (uc *CommentUseCase) SetCommentVote(ctx context.Context, input SetCommentVo
 	if _, err := uc.posts.FindVisibleByID(ctx, comment.PostID()); err != nil {
 		return SetCommentVoteResult{}, fmt.Errorf("find post for comment vote: %w", err)
 	}
+	previousVotes, err := uc.votes.FindCommentVotesByIDsAndUser(ctx, []commentdomain.CommentID{comment.ID()}, input.UserID)
+	if err != nil {
+		return SetCommentVoteResult{}, fmt.Errorf("find existing comment vote: %w", err)
+	}
 
 	vote, err := votedomain.NewCommentVote(comment.ID(), input.UserID, value, uc.now().UTC())
 	if err != nil {
@@ -520,6 +543,11 @@ func (uc *CommentUseCase) SetCommentVote(ctx context.Context, input SetCommentVo
 	}
 	if err := uc.votes.UpsertCommentVote(ctx, *vote); err != nil {
 		return SetCommentVoteResult{}, fmt.Errorf("upsert comment vote: %w", err)
+	}
+	if uc.shouldNotifyCommentUpvote(comment.AuthorID(), input.UserID, value, previousVotes[comment.ID()]) {
+		if err := uc.notifications.NotifyCommentUpvoted(ctx, comment.AuthorID(), input.UserID, comment.ID().String()); err != nil {
+			return SetCommentVoteResult{}, err
+		}
 	}
 
 	return SetCommentVoteResult{
@@ -553,7 +581,30 @@ func (uc *CommentUseCase) DeleteCommentVote(ctx context.Context, input DeleteCom
 	return nil
 }
 
-func (uc *CommentUseCase) resolveParentComment(ctx context.Context, postID postdomain.PostID, rawParentID string) (*commentdomain.CommentID, error) {
+func (uc *CommentUseCase) notifyCommentPublished(ctx context.Context, post *postdomain.Post, parent *commentdomain.Comment, comment commentdomain.Comment, actorID userdomain.UserID) error {
+	if uc.notifications == nil {
+		return nil
+	}
+	if parent != nil {
+		if err := uc.notifications.NotifyCommentReplied(ctx, parent.AuthorID(), actorID, comment.ID().String()); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := uc.notifications.NotifyPostCommented(ctx, post.AuthorID(), actorID, post.ID().String()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (uc *CommentUseCase) shouldNotifyCommentUpvote(commentAuthorID userdomain.UserID, voterID userdomain.UserID, value votedomain.VoteValue, previousVote votedomain.VoteValue) bool {
+	if uc.notifications == nil || commentAuthorID == voterID || value != votedomain.VoteValueUp {
+		return false
+	}
+	return previousVote != votedomain.VoteValueUp
+}
+
+func (uc *CommentUseCase) resolveParentComment(ctx context.Context, postID postdomain.PostID, rawParentID string) (*commentdomain.Comment, error) {
 	rawParentID = strings.TrimSpace(rawParentID)
 	if rawParentID == "" {
 		return nil, nil
@@ -571,7 +622,7 @@ func (uc *CommentUseCase) resolveParentComment(ctx context.Context, postID postd
 		return nil, apperr.New(apperr.CodeInvalidArgument, "parent comment does not belong to post")
 	}
 
-	return &parentID, nil
+	return parent, nil
 }
 
 func normalizePagination(limit int, offset int) (int, int, error) {

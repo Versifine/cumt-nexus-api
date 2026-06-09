@@ -8,6 +8,8 @@ import (
 )
 
 type Repository interface {
+	Create(ctx context.Context, notification Notification) error
+	UpsertAggregated(ctx context.Context, notification Notification) error
 	ListByRecipient(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error)
 	CountUnreadByCategory(ctx context.Context, recipientID userdomain.UserID) (UnreadSummary, error)
 	MarkRead(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (Notification, error)

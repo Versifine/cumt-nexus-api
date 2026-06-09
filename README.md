@@ -241,6 +241,8 @@ POST /api/v1/notifications/:id/read
 POST /api/v1/notifications/read-all
 ```
 
+评论、回复、帖子点赞和评论点赞会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数。
+
 ## 响应约定
 
 错误响应统一为：
