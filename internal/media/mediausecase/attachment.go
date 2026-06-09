@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"strings"
 	"time"
@@ -120,6 +123,10 @@ func (uc *UseCase) UploadImage(ctx context.Context, input UploadImageInput) (Upl
 	if err != nil {
 		return UploadImageResult{}, err
 	}
+	width, height, err := detectImageDimensions(mimeType, input.FileBytes)
+	if err != nil {
+		return UploadImageResult{}, err
+	}
 	if uc.storage == nil {
 		return UploadImageResult{}, fmt.Errorf("object storage is not configured")
 	}
@@ -148,6 +155,8 @@ func (uc *UseCase) UploadImage(ctx context.Context, input UploadImageInput) (Upl
 		Bucket:          stored.Bucket,
 		ObjectKey:       stored.ObjectKey,
 		PublicURL:       stored.PublicURL,
+		Width:           width,
+		Height:          height,
 		SizeBytes:       int64(len(input.FileBytes)),
 		MimeType:        mimeType,
 		AltText:         input.AltText,
@@ -225,6 +234,24 @@ func detectImageMimeType(fileBytes []byte) (mimeType string, extension string, e
 		return "image/webp", "webp", nil
 	}
 	return "", "", apperr.New(apperr.CodeInvalidArgument, "image mime type is invalid")
+}
+
+func detectImageDimensions(mimeType string, fileBytes []byte) (*int, *int, error) {
+	switch mimeType {
+	case "image/jpeg", "image/png":
+		config, _, err := image.DecodeConfig(bytes.NewReader(fileBytes))
+		if err != nil {
+			return nil, nil, apperr.New(apperr.CodeInvalidArgument, "image dimensions are invalid")
+		}
+		if config.Width <= 0 || config.Height <= 0 {
+			return nil, nil, apperr.New(apperr.CodeInvalidArgument, "image dimensions are invalid")
+		}
+		width := config.Width
+		height := config.Height
+		return &width, &height, nil
+	default:
+		return nil, nil, nil
+	}
 }
 
 func imageObjectKey(now time.Time, id mediadomain.AttachmentID, extension string) string {

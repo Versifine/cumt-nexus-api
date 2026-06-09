@@ -2,6 +2,7 @@ package mediausecase
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -103,8 +104,14 @@ func TestUploadImageStoresObjectAndCreatesAttachment(t *testing.T) {
 	if created.UploaderID() != uploaderID || created.MimeType() != "image/png" || created.Status() != mediadomain.AttachmentStatusReady {
 		t.Fatalf("unexpected created attachment: %#v", created)
 	}
+	if created.Width() == nil || *created.Width() != 1 || created.Height() == nil || *created.Height() != 1 {
+		t.Fatalf("expected decoded 1x1 dimensions, got width=%v height=%v", created.Width(), created.Height())
+	}
 	if result.Attachment.PublicURL == "" || result.Attachment.ObjectKey == "" {
 		t.Fatalf("expected public url and object key, got %#v", result.Attachment)
+	}
+	if result.Attachment.Width == nil || *result.Attachment.Width != 1 || result.Attachment.Height == nil || *result.Attachment.Height != 1 {
+		t.Fatalf("expected result dimensions, got width=%v height=%v", result.Attachment.Width, result.Attachment.Height)
 	}
 }
 
@@ -194,5 +201,9 @@ func hasAppCode(err error, code apperr.Code) bool {
 }
 
 func pngBytes() []byte {
-	return []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00}
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
