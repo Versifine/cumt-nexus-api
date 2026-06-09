@@ -180,7 +180,7 @@ Add-RoutesFromFile `
     -Path 'internal/community/delivery/communityhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers')
+    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers', 'ListCommunityManagePosts', 'ListCommunityManageComments', 'ListCommunityManageReports')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `

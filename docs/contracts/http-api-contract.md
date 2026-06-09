@@ -37,6 +37,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/communities | optional Bearer | 社区列表 |
 | GET | /api/v1/communities/:slug | optional Bearer | 社区详情 |
 | GET | /api/v1/communities/:slug/manage | Bearer | 社区管理上下文 |
+| GET | /api/v1/communities/:slug/manage/posts | Bearer | 社区管理帖子列表 |
+| GET | /api/v1/communities/:slug/manage/comments | Bearer | 社区管理评论列表 |
+| GET | /api/v1/communities/:slug/manage/reports | Bearer | 社区管理举报列表 |
 | GET | /api/v1/communities/:slug/manage/members | Bearer | 社区管理成员列表 |
 | POST | /api/v1/communities/:slug/follow | Bearer | 关注社区 |
 | DELETE | /api/v1/communities/:slug/follow | Bearer | 取消关注社区 |
@@ -89,6 +92,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/community-applications` | `status`, `limit`, `offset` | `status=pending|approved|rejected`，平台 staff 视角 |
 | `GET /api/v1/me/saved-posts` | `limit`, `offset` | 当前用户保存的公开 visible 帖子 |
 | `GET /api/v1/me/followed-communities` | `limit`, `offset` | 当前用户关注的 active public 社区 |
+| `GET /api/v1/communities/:slug/manage/posts` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=all|visible|removed|deleted|locked|hidden`，默认 `all` |
+| `GET /api/v1/communities/:slug/manage/comments` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=all|visible|removed|deleted|locked|hidden`，默认 `all` |
+| `GET /api/v1/communities/:slug/manage/reports` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=pending|resolved|dismissed`，默认 `pending` |
 | `GET /api/v1/communities/:slug/manage/members` | `limit`, `offset` | 社区 owner/moderator 视角，只返回 active 成员 |
 | `GET /api/v1/communities/:slug/posts` | `sort`, `t`, `limit`, `offset` | `sort=best|hot|new|top|rising`，`t=hour|day|week|month|year|all`，分页默认由 usecase 收口 |
 | `GET /api/v1/posts` | `source`, `sort`, `t`, `limit`, `offset` | `source=all|recommended`；`recommended` 当前为公开可解释推荐流，默认 `sort=hot`，匿名使用 `hot + new` 混排并做社区 rank 去重，登录态给关注/互动社区加权；`sort=best|hot|new|top|rising`；`t=hour|day|week|month|year|all` |

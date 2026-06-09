@@ -26,6 +26,9 @@ type CommunityReadUseCase interface {
 	ListFollowedCommunities(ctx context.Context, input communityusecase.ListFollowedCommunitiesInput) (communityusecase.ListFollowedCommunitiesResult, error)
 	GetCommunityManageContext(ctx context.Context, input communityusecase.GetCommunityManageContextInput) (communityusecase.GetCommunityManageContextResult, error)
 	ListCommunityMembers(ctx context.Context, input communityusecase.ListCommunityMembersInput) (communityusecase.ListCommunityMembersResult, error)
+	ListCommunityManagePosts(ctx context.Context, input communityusecase.ListCommunityManagePostsInput) (communityusecase.ListCommunityManagePostsResult, error)
+	ListCommunityManageComments(ctx context.Context, input communityusecase.ListCommunityManageCommentsInput) (communityusecase.ListCommunityManageCommentsResult, error)
+	ListCommunityManageReports(ctx context.Context, input communityusecase.ListCommunityManageReportsInput) (communityusecase.ListCommunityManageReportsResult, error)
 }
 
 type CommunityApplicationUseCase interface {
@@ -76,6 +79,79 @@ type communityMemberUserResponse struct {
 	AvatarURL   string   `json:"avatar_url"`
 	Headline    string   `json:"headline"`
 	Badges      []string `json:"badges"`
+}
+
+type listCommunityManagePostsResponse struct {
+	Community communityResponse             `json:"community"`
+	Posts     []communityManagePostResponse `json:"posts"`
+	Status    string                        `json:"status"`
+	Limit     int                           `json:"limit"`
+	Offset    int                           `json:"offset"`
+}
+
+type communityManagePostResponse struct {
+	ID          string    `json:"id"`
+	CommunityID string    `json:"community_id"`
+	AuthorID    string    `json:"author_id"`
+	Title       string    `json:"title"`
+	BodyExcerpt string    `json:"body_excerpt"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type listCommunityManageCommentsResponse struct {
+	Community communityResponse                `json:"community"`
+	Comments  []communityManageCommentResponse `json:"comments"`
+	Status    string                           `json:"status"`
+	Limit     int                              `json:"limit"`
+	Offset    int                              `json:"offset"`
+}
+
+type communityManageCommentResponse struct {
+	ID          string    `json:"id"`
+	PostID      string    `json:"post_id"`
+	AuthorID    string    `json:"author_id"`
+	ParentID    string    `json:"parent_id"`
+	BodyExcerpt string    `json:"body_excerpt"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type listCommunityManageReportsResponse struct {
+	Community communityResponse               `json:"community"`
+	Reports   []communityManageReportResponse `json:"reports"`
+	Status    string                          `json:"status"`
+	Limit     int                             `json:"limit"`
+	Offset    int                             `json:"offset"`
+}
+
+type communityManageReportResponse struct {
+	ID            string                                      `json:"id"`
+	TargetType    string                                      `json:"target_type"`
+	PostID        string                                      `json:"post_id"`
+	CommentID     string                                      `json:"comment_id"`
+	ReporterID    string                                      `json:"reporter_id"`
+	Reason        string                                      `json:"reason"`
+	Status        string                                      `json:"status"`
+	ReviewedBy    string                                      `json:"reviewed_by"`
+	ReviewedAt    *time.Time                                  `json:"reviewed_at"`
+	TargetPreview *communityManageReportTargetPreviewResponse `json:"target_preview"`
+	CreatedAt     time.Time                                   `json:"created_at"`
+	UpdatedAt     time.Time                                   `json:"updated_at"`
+}
+
+type communityManageReportTargetPreviewResponse struct {
+	TargetType  string    `json:"target_type"`
+	PostID      string    `json:"post_id"`
+	CommentID   string    `json:"comment_id"`
+	AuthorID    string    `json:"author_id"`
+	Status      string    `json:"status"`
+	Title       string    `json:"title"`
+	BodyExcerpt string    `json:"body_excerpt"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type submitCommunityApplicationRequest struct {
@@ -184,6 +260,9 @@ func RegisterFollowRoutes(group *gin.RouterGroup, handler *Handler) {
 
 func RegisterManageRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities/:slug/manage", handler.GetCommunityManageContext)
+	group.GET("/communities/:slug/manage/posts", handler.ListCommunityManagePosts)
+	group.GET("/communities/:slug/manage/comments", handler.ListCommunityManageComments)
+	group.GET("/communities/:slug/manage/reports", handler.ListCommunityManageReports)
 	group.GET("/communities/:slug/manage/members", handler.ListCommunityMembers)
 }
 
@@ -376,6 +455,144 @@ func (h *Handler) ListCommunityMembers(c *gin.Context) {
 		response.Members = append(response.Members, toCommunityMemberResponse(member))
 	}
 
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) ListCommunityManagePosts(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.ListCommunityManagePosts(c.Request.Context(), communityusecase.ListCommunityManagePostsInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		Status:   c.Query("status"),
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityManagePostsResponse{
+		Community: toCommunityResponse(result.Community),
+		Posts:     make([]communityManagePostResponse, 0, len(result.Posts)),
+		Status:    result.Status,
+		Limit:     result.Limit,
+		Offset:    result.Offset,
+	}
+	for _, post := range result.Posts {
+		response.Posts = append(response.Posts, toCommunityManagePostResponse(post))
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) ListCommunityManageComments(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.ListCommunityManageComments(c.Request.Context(), communityusecase.ListCommunityManageCommentsInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		Status:   c.Query("status"),
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityManageCommentsResponse{
+		Community: toCommunityResponse(result.Community),
+		Comments:  make([]communityManageCommentResponse, 0, len(result.Comments)),
+		Status:    result.Status,
+		Limit:     result.Limit,
+		Offset:    result.Offset,
+	}
+	for _, comment := range result.Comments {
+		response.Comments = append(response.Comments, toCommunityManageCommentResponse(comment))
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) ListCommunityManageReports(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.ListCommunityManageReports(c.Request.Context(), communityusecase.ListCommunityManageReportsInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		Status:   c.Query("status"),
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityManageReportsResponse{
+		Community: toCommunityResponse(result.Community),
+		Reports:   make([]communityManageReportResponse, 0, len(result.Reports)),
+		Status:    result.Status,
+		Limit:     result.Limit,
+		Offset:    result.Offset,
+	}
+	for _, report := range result.Reports {
+		response.Reports = append(response.Reports, toCommunityManageReportResponse(report))
+	}
 	c.JSON(http.StatusOK, response)
 }
 
@@ -603,5 +820,65 @@ func toCommunityMemberResponse(member communityusecase.CommunityMember) communit
 		Status:    member.Status,
 		CreatedAt: member.CreatedAt,
 		UpdatedAt: member.UpdatedAt,
+	}
+}
+
+func toCommunityManagePostResponse(post communityusecase.CommunityManagePost) communityManagePostResponse {
+	return communityManagePostResponse{
+		ID:          post.ID,
+		CommunityID: post.CommunityID,
+		AuthorID:    post.AuthorID,
+		Title:       post.Title,
+		BodyExcerpt: post.BodyExcerpt,
+		Status:      post.Status,
+		CreatedAt:   post.CreatedAt,
+		UpdatedAt:   post.UpdatedAt,
+	}
+}
+
+func toCommunityManageCommentResponse(comment communityusecase.CommunityManageComment) communityManageCommentResponse {
+	return communityManageCommentResponse{
+		ID:          comment.ID,
+		PostID:      comment.PostID,
+		AuthorID:    comment.AuthorID,
+		ParentID:    comment.ParentID,
+		BodyExcerpt: comment.BodyExcerpt,
+		Status:      comment.Status,
+		CreatedAt:   comment.CreatedAt,
+		UpdatedAt:   comment.UpdatedAt,
+	}
+}
+
+func toCommunityManageReportResponse(report communityusecase.CommunityManageReport) communityManageReportResponse {
+	return communityManageReportResponse{
+		ID:            report.ID,
+		TargetType:    report.TargetType,
+		PostID:        report.PostID,
+		CommentID:     report.CommentID,
+		ReporterID:    report.ReporterID,
+		Reason:        report.Reason,
+		Status:        report.Status,
+		ReviewedBy:    report.ReviewedBy,
+		ReviewedAt:    report.ReviewedAt,
+		TargetPreview: toCommunityManageReportTargetPreviewResponse(report.TargetPreview),
+		CreatedAt:     report.CreatedAt,
+		UpdatedAt:     report.UpdatedAt,
+	}
+}
+
+func toCommunityManageReportTargetPreviewResponse(preview *communityusecase.CommunityManageReportTargetPreview) *communityManageReportTargetPreviewResponse {
+	if preview == nil {
+		return nil
+	}
+	return &communityManageReportTargetPreviewResponse{
+		TargetType:  preview.TargetType,
+		PostID:      preview.PostID,
+		CommentID:   preview.CommentID,
+		AuthorID:    preview.AuthorID,
+		Status:      preview.Status,
+		Title:       preview.Title,
+		BodyExcerpt: preview.BodyExcerpt,
+		CreatedAt:   preview.CreatedAt,
+		UpdatedAt:   preview.UpdatedAt,
 	}
 }

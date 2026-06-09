@@ -34,6 +34,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/communities | none | `communityhttp.listCommunitiesResponse` | 200 |
 | GET | /api/v1/communities/:slug | none | `communityhttp.getCommunityResponse` | 200 |
 | GET | /api/v1/communities/:slug/manage | none | `communityhttp.getCommunityManageContextResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage/posts | query | `communityhttp.listCommunityManagePostsResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage/comments | query | `communityhttp.listCommunityManageCommentsResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage/reports | query | `communityhttp.listCommunityManageReportsResponse` | 200 |
 | GET | /api/v1/communities/:slug/manage/members | query | `communityhttp.listCommunityMembersResponse` | 200 |
 | POST | /api/v1/communities/:slug/follow | none | none | 204 |
 | DELETE | /api/v1/communities/:slug/follow | none | none | 204 |
@@ -120,6 +123,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `listCommunityMembersResponse` | `community`, `members`, `limit`, `offset` |
 | `communityhttp` | `communityMemberResponse` | `user`, `role`, `status`, `created_at`, `updated_at` |
 | `communityhttp` | `communityMemberUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
+| `communityhttp` | `listCommunityManagePostsResponse` | `community`, `posts`, `status`, `limit`, `offset` |
+| `communityhttp` | `communityManagePostResponse` | `id`, `community_id`, `author_id`, `title`, `body_excerpt`, `status`, `created_at`, `updated_at` |
+| `communityhttp` | `listCommunityManageCommentsResponse` | `community`, `comments`, `status`, `limit`, `offset` |
+| `communityhttp` | `communityManageCommentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body_excerpt`, `status`, `created_at`, `updated_at` |
+| `communityhttp` | `listCommunityManageReportsResponse` | `community`, `reports`, `status`, `limit`, `offset` |
+| `communityhttp` | `communityManageReportResponse` | `id`, `target_type`, `post_id`, `comment_id`, `reporter_id`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `target_preview`, `created_at`, `updated_at` |
+| `communityhttp` | `communityManageReportTargetPreviewResponse` | `target_type`, `post_id`, `comment_id`, `author_id`, `status`, `title`, `body_excerpt`, `created_at`, `updated_at` |
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `communityhttp` | `rejectCommunityApplicationRequest` | `reject_reason` |
 | `communityhttp` | `communityApplicationResponse` | `id`, `applicant_id`, `requested_slug`, `requested_name`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `reject_reason`, `created_at`, `updated_at` |

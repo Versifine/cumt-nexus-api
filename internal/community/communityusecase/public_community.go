@@ -7,7 +7,11 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -25,11 +29,14 @@ type PublicCommunityBootstrapUseCase struct {
 }
 
 type CommunityReadUseCase struct {
-	communities CommunityRepository
-	stats       CommunityStatsRepository
-	follows     CommunityFollowRepository
-	memberships CommunityMembershipReadRepository
-	now         func() time.Time
+	communities    CommunityRepository
+	stats          CommunityStatsRepository
+	follows        CommunityFollowRepository
+	memberships    CommunityMembershipReadRepository
+	managePosts    CommunityManagePostRepository
+	manageComments CommunityManageCommentRepository
+	manageReports  CommunityManageReportRepository
+	now            func() time.Time
 }
 
 type ListCommunitiesInput struct {
@@ -74,6 +81,30 @@ type ListCommunityMembersInput struct {
 	Offset   int
 }
 
+type ListCommunityManagePostsInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+	Status   string
+	Limit    int
+	Offset   int
+}
+
+type ListCommunityManageCommentsInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+	Status   string
+	Limit    int
+	Offset   int
+}
+
+type ListCommunityManageReportsInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+	Status   string
+	Limit    int
+	Offset   int
+}
+
 type ListCommunitiesResult struct {
 	Communities []Community
 }
@@ -107,6 +138,30 @@ type ListCommunityMembersResult struct {
 	Offset    int
 }
 
+type ListCommunityManagePostsResult struct {
+	Community Community
+	Posts     []CommunityManagePost
+	Status    string
+	Limit     int
+	Offset    int
+}
+
+type ListCommunityManageCommentsResult struct {
+	Community Community
+	Comments  []CommunityManageComment
+	Status    string
+	Limit     int
+	Offset    int
+}
+
+type ListCommunityManageReportsResult struct {
+	Community Community
+	Reports   []CommunityManageReport
+	Status    string
+	Limit     int
+	Offset    int
+}
+
 type Community struct {
 	ID                string
 	Slug              string
@@ -133,6 +188,55 @@ type CommunityMember struct {
 	Status    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type CommunityManagePost struct {
+	ID          string
+	CommunityID string
+	AuthorID    string
+	Title       string
+	BodyExcerpt string
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type CommunityManageComment struct {
+	ID          string
+	PostID      string
+	AuthorID    string
+	ParentID    string
+	BodyExcerpt string
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type CommunityManageReport struct {
+	ID            string
+	TargetType    string
+	PostID        string
+	CommentID     string
+	ReporterID    string
+	Reason        string
+	Status        string
+	ReviewedBy    string
+	ReviewedAt    *time.Time
+	TargetPreview *CommunityManageReportTargetPreview
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type CommunityManageReportTargetPreview struct {
+	TargetType  string
+	PostID      string
+	CommentID   string
+	AuthorID    string
+	Status      string
+	Title       string
+	BodyExcerpt string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type CommunityStats struct {
@@ -173,6 +277,12 @@ func NewCommunityReadUseCase(communities CommunityRepository) *CommunityReadUseC
 
 func (uc *CommunityReadUseCase) SetMembershipReader(memberships CommunityMembershipReadRepository) {
 	uc.memberships = memberships
+}
+
+func (uc *CommunityReadUseCase) SetManageContentReaders(posts CommunityManagePostRepository, comments CommunityManageCommentRepository, reports CommunityManageReportRepository) {
+	uc.managePosts = posts
+	uc.manageComments = comments
+	uc.manageReports = reports
 }
 
 func (uc *PublicCommunityBootstrapUseCase) EnsurePublicCommunity(ctx context.Context) error {
@@ -420,6 +530,129 @@ func (uc *CommunityReadUseCase) ListCommunityMembers(ctx context.Context, input 
 	}, nil
 }
 
+func (uc *CommunityReadUseCase) ListCommunityManagePosts(ctx context.Context, input ListCommunityManagePostsInput) (ListCommunityManagePostsResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ListCommunityManagePostsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.managePosts == nil {
+		return ListCommunityManagePostsResult{}, apperr.New(apperr.CodeInternal, "community manage posts are not configured")
+	}
+	status, statusLabel, err := parseManagePostStatus(input.Status)
+	if err != nil {
+		return ListCommunityManagePostsResult{}, err
+	}
+	limit, offset, err := normalizeCommunityListPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListCommunityManagePostsResult{}, err
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return ListCommunityManagePostsResult{}, err
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return ListCommunityManagePostsResult{}, err
+	}
+	posts, err := uc.managePosts.ListPostsByCommunityForManagement(ctx, community.ID(), status, limit, offset)
+	if err != nil {
+		return ListCommunityManagePostsResult{}, fmt.Errorf("list community manage posts: %w", err)
+	}
+
+	result := ListCommunityManagePostsResult{
+		Community: communityDTO,
+		Posts:     make([]CommunityManagePost, 0, len(posts)),
+		Status:    statusLabel,
+		Limit:     limit,
+		Offset:    offset,
+	}
+	for _, post := range posts {
+		result.Posts = append(result.Posts, toCommunityManagePostDTO(post))
+	}
+	return result, nil
+}
+
+func (uc *CommunityReadUseCase) ListCommunityManageComments(ctx context.Context, input ListCommunityManageCommentsInput) (ListCommunityManageCommentsResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ListCommunityManageCommentsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.manageComments == nil {
+		return ListCommunityManageCommentsResult{}, apperr.New(apperr.CodeInternal, "community manage comments are not configured")
+	}
+	status, statusLabel, err := parseManageCommentStatus(input.Status)
+	if err != nil {
+		return ListCommunityManageCommentsResult{}, err
+	}
+	limit, offset, err := normalizeCommunityListPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListCommunityManageCommentsResult{}, err
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return ListCommunityManageCommentsResult{}, err
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return ListCommunityManageCommentsResult{}, err
+	}
+	comments, err := uc.manageComments.ListCommentsByCommunityForManagement(ctx, community.ID(), status, limit, offset)
+	if err != nil {
+		return ListCommunityManageCommentsResult{}, fmt.Errorf("list community manage comments: %w", err)
+	}
+
+	result := ListCommunityManageCommentsResult{
+		Community: communityDTO,
+		Comments:  make([]CommunityManageComment, 0, len(comments)),
+		Status:    statusLabel,
+		Limit:     limit,
+		Offset:    offset,
+	}
+	for _, comment := range comments {
+		result.Comments = append(result.Comments, toCommunityManageCommentDTO(comment))
+	}
+	return result, nil
+}
+
+func (uc *CommunityReadUseCase) ListCommunityManageReports(ctx context.Context, input ListCommunityManageReportsInput) (ListCommunityManageReportsResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ListCommunityManageReportsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.manageReports == nil {
+		return ListCommunityManageReportsResult{}, apperr.New(apperr.CodeInternal, "community manage reports are not configured")
+	}
+	status, err := parseManageReportStatus(input.Status)
+	if err != nil {
+		return ListCommunityManageReportsResult{}, err
+	}
+	limit, offset, err := normalizeCommunityListPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListCommunityManageReportsResult{}, err
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return ListCommunityManageReportsResult{}, err
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return ListCommunityManageReportsResult{}, err
+	}
+	records, err := uc.manageReports.ListReportsByCommunityForManagement(ctx, community.ID(), status, limit, offset)
+	if err != nil {
+		return ListCommunityManageReportsResult{}, fmt.Errorf("list community manage reports: %w", err)
+	}
+
+	result := ListCommunityManageReportsResult{
+		Community: communityDTO,
+		Reports:   make([]CommunityManageReport, 0, len(records)),
+		Status:    status.String(),
+		Limit:     limit,
+		Offset:    offset,
+	}
+	for _, record := range records {
+		result.Reports = append(result.Reports, toCommunityManageReportDTO(record))
+	}
+	return result, nil
+}
+
 func (uc *CommunityReadUseCase) CanPostInCommunity(ctx context.Context, input CanPostInCommunityInput) (CanPostInCommunityResult, error) {
 	userID := strings.TrimSpace(input.UserID)
 	if userID == "" {
@@ -544,6 +777,18 @@ func (uc *CommunityReadUseCase) loadCommunityRoleViews(ctx context.Context, comm
 	return views, nil
 }
 
+func (uc *CommunityReadUseCase) buildCommunityDTOForViewer(ctx context.Context, community communitydomain.Community, roleView communityRoleView, viewerID userdomain.UserID) (Community, error) {
+	stats, err := uc.loadCommunityStats(ctx, []communitydomain.Community{community})
+	if err != nil {
+		return Community{}, err
+	}
+	followViews, err := uc.loadCommunityFollowViews(ctx, []communitydomain.Community{community}, viewerID)
+	if err != nil {
+		return Community{}, err
+	}
+	return toCommunityDTO(community, stats[community.ID()], followViews[community.ID()], roleView, viewerID), nil
+}
+
 func (uc *CommunityReadUseCase) findReadableCommunityBySlug(ctx context.Context, rawSlug string) (*communitydomain.Community, error) {
 	slug, err := communitydomain.NewCommunitySlug(rawSlug)
 	if err != nil {
@@ -594,6 +839,38 @@ func normalizeCommunityListPagination(limit int, offset int) (int, int, error) {
 	return limit, offset, nil
 }
 
+func parseManagePostStatus(raw string) (*postdomain.PostStatus, string, error) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	if normalized == "" || normalized == "all" {
+		return nil, "all", nil
+	}
+	status, err := postdomain.NewPostStatus(normalized)
+	if err != nil {
+		return nil, "", err
+	}
+	return &status, status.String(), nil
+}
+
+func parseManageCommentStatus(raw string) (*commentdomain.CommentStatus, string, error) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	if normalized == "" || normalized == "all" {
+		return nil, "all", nil
+	}
+	status, err := commentdomain.NewCommentStatus(normalized)
+	if err != nil {
+		return nil, "", err
+	}
+	return &status, status.String(), nil
+}
+
+func parseManageReportStatus(raw string) (moderationdomain.ReportStatus, error) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	if normalized == "" {
+		return moderationdomain.ReportStatusPending, nil
+	}
+	return moderationdomain.NewReportStatus(normalized)
+}
+
 func toCommunityDTO(community communitydomain.Community, stats CommunityStats, followView communityFollowView, roleView communityRoleView, viewerID userdomain.UserID) Community {
 	return Community{
 		ID:                community.ID().String(),
@@ -626,4 +903,99 @@ func communityViewerPermissions(community communitydomain.Community, role commun
 
 func canModerateCommunity(role communitydomain.MembershipRole) bool {
 	return role == communitydomain.MembershipRoleOwner || role == communitydomain.MembershipRoleModerator
+}
+
+func toCommunityManagePostDTO(post postdomain.Post) CommunityManagePost {
+	return CommunityManagePost{
+		ID:          post.ID().String(),
+		CommunityID: post.CommunityID().String(),
+		AuthorID:    post.AuthorID().String(),
+		Title:       post.Title().String(),
+		BodyExcerpt: communityManageExcerpt(post.Body().String()),
+		Status:      post.Status().String(),
+		CreatedAt:   post.CreatedAt(),
+		UpdatedAt:   post.UpdatedAt(),
+	}
+}
+
+func toCommunityManageCommentDTO(comment commentdomain.Comment) CommunityManageComment {
+	parentID := ""
+	if id, ok := comment.ParentID(); ok {
+		parentID = id.String()
+	}
+	return CommunityManageComment{
+		ID:          comment.ID().String(),
+		PostID:      comment.PostID().String(),
+		AuthorID:    comment.AuthorID().String(),
+		ParentID:    parentID,
+		BodyExcerpt: communityManageExcerpt(comment.Body().String()),
+		Status:      comment.Status().String(),
+		CreatedAt:   comment.CreatedAt(),
+		UpdatedAt:   comment.UpdatedAt(),
+	}
+}
+
+func toCommunityManageReportDTO(record moderationusecase.ContentReportRecord) CommunityManageReport {
+	report := record.Report
+	target := report.Target()
+	postID := ""
+	if id, ok := target.PostID(); ok {
+		postID = id.String()
+	}
+	commentID := ""
+	if id, ok := target.CommentID(); ok {
+		commentID = id.String()
+	}
+	reviewedBy := ""
+	if id, ok := report.ReviewedBy(); ok {
+		reviewedBy = id.String()
+	}
+	var reviewedAt *time.Time
+	if value, ok := report.ReviewedAt(); ok {
+		copied := value
+		reviewedAt = &copied
+	}
+
+	return CommunityManageReport{
+		ID:            report.ID().String(),
+		TargetType:    target.Type().String(),
+		PostID:        postID,
+		CommentID:     commentID,
+		ReporterID:    report.ReporterID().String(),
+		Reason:        report.Reason().String(),
+		Status:        report.Status().String(),
+		ReviewedBy:    reviewedBy,
+		ReviewedAt:    reviewedAt,
+		TargetPreview: toCommunityManageReportPreviewDTO(record.TargetPreview),
+		CreatedAt:     report.CreatedAt(),
+		UpdatedAt:     report.UpdatedAt(),
+	}
+}
+
+func toCommunityManageReportPreviewDTO(preview *moderationusecase.ReportTargetPreview) *CommunityManageReportTargetPreview {
+	if preview == nil {
+		return nil
+	}
+	return &CommunityManageReportTargetPreview{
+		TargetType:  preview.TargetType,
+		PostID:      preview.PostID,
+		CommentID:   preview.CommentID,
+		AuthorID:    preview.AuthorID,
+		Status:      preview.Status,
+		Title:       preview.Title,
+		BodyExcerpt: preview.BodyExcerpt,
+		CreatedAt:   preview.CreatedAt,
+		UpdatedAt:   preview.UpdatedAt,
+	}
+}
+
+func communityManageExcerpt(raw string) string {
+	const limit = 160
+
+	compact := strings.Join(strings.Fields(raw), " ")
+	runes := []rune(compact)
+	if len(runes) <= limit {
+		return compact
+	}
+	return string(runes[:limit]) + "..."
 }

@@ -299,6 +299,54 @@ func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx c
 	)
 }
 
+func (repo *PostgresPostRepository) ListPostsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status *postdomain.PostStatus, limit int, offset int) ([]postdomain.Post, error) {
+	whereClause := "posts.community_id = $1::uuid"
+	queryArgs := []any{communityID.String()}
+	if status != nil {
+		queryArgs = append(queryArgs, status.String())
+		whereClause = fmt.Sprintf("%s AND posts.status = $%d", whereClause, len(queryArgs))
+	}
+	limitPlaceholder := len(queryArgs) + 1
+	offsetPlaceholder := len(queryArgs) + 2
+
+	query := fmt.Sprintf(`
+		SELECT
+			posts.id::text,
+			posts.community_id::text,
+			posts.author_id::text,
+			posts.title,
+			posts.body,
+			posts.status,
+			posts.created_at,
+			posts.updated_at
+		FROM posts
+		WHERE %s
+		ORDER BY posts.created_at DESC, posts.id DESC
+		LIMIT $%d
+		OFFSET $%d
+	`, whereClause, limitPlaceholder, offsetPlaceholder)
+
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := repo.pool.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("list community posts for management: %w", err)
+	}
+	defer rows.Close()
+
+	var posts []postdomain.Post
+	for rows.Next() {
+		post, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		posts = append(posts, *post)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate community posts for management: %w", err)
+	}
+	return posts, nil
+}
+
 func (repo *PostgresPostRepository) listVisiblePosts(ctx context.Context, operation string, scopeJoin string, whereClause string, args []any, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	queryArgs := append([]any{}, args...)
 	if createdAfter != nil {

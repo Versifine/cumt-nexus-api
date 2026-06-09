@@ -130,6 +130,56 @@ func TestPostgresModerationRepositoryListReportsAndFindReportByID(t *testing.T) 
 	}
 }
 
+func TestPostgresModerationRepositoryListReportsByCommunityForManagement(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow().Add(25 * time.Hour)
+
+	reporterID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-manage-"+randomSuffix())
+	otherCommunityID := insertTestCommunity(ctx, t, pool, authorID, "mod-manage-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Managed post report")
+	commentPost := insertTestPost(ctx, t, pool, communityID, authorID, "Managed comment report parent")
+	comment := insertTestComment(ctx, t, pool, commentPost, authorID)
+	otherPost := insertTestPost(ctx, t, pool, otherCommunityID, authorID, "Other managed report")
+
+	postTarget, err := moderationdomain.NewPostTarget(post)
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	commentTarget, err := moderationdomain.NewCommentTarget(comment)
+	if err != nil {
+		t.Fatalf("NewCommentTarget returned error: %v", err)
+	}
+	otherTarget, err := moderationdomain.NewPostTarget(otherPost)
+	if err != nil {
+		t.Fatalf("NewPostTarget other returned error: %v", err)
+	}
+	reports := []*moderationdomain.ContentReport{
+		mustReport(t, postTarget, reporterID, "post report", now),
+		mustReport(t, commentTarget, reporterID, "comment report", now.Add(time.Minute)),
+		mustReport(t, otherTarget, reporterID, "other report", now.Add(2*time.Minute)),
+	}
+	for _, report := range reports {
+		if err := repo.CreateReport(ctx, *report); err != nil {
+			t.Fatalf("CreateReport returned error: %v", err)
+		}
+		cleanupReport(ctx, t, pool, report.ID())
+	}
+
+	records, err := repo.ListReportsByCommunityForManagement(ctx, communityID, moderationdomain.ReportStatusPending, 20, 0)
+	if err != nil {
+		t.Fatalf("ListReportsByCommunityForManagement returned error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected two community reports, got %#v", records)
+	}
+	if !containsReportID(records, reports[0].ID()) || !containsReportID(records, reports[1].ID()) || containsReportID(records, reports[2].ID()) {
+		t.Fatalf("unexpected community report set: %#v", records)
+	}
+}
+
 func TestPostgresModerationRepositoryFindMissingReportReturnsNotFound(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresModerationRepository(pool)

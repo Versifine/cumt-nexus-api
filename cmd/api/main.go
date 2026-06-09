@@ -108,6 +108,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
 	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
 	communityReadUC.SetMembershipReader(communityrepository.NewPostgresMembershipRepository(pool))
+	communityReadUC.SetManageContentReaders(postRepo, commentRepo, moderationRepo)
 	communityApplicationUC := communityusecase.NewCommunityApplicationUseCase(
 		communityRepo,
 		communityApplicationRepo,

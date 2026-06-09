@@ -9,6 +9,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
@@ -342,6 +343,55 @@ func (repo *PostgresCommentRepository) ListVisibleByAuthorInPublicCommunities(ct
 		return nil, fmt.Errorf("iterate visible comments by author in public communities: %w", err)
 	}
 
+	return comments, nil
+}
+
+func (repo *PostgresCommentRepository) ListCommentsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status *commentdomain.CommentStatus, limit int, offset int) ([]commentdomain.Comment, error) {
+	whereClause := "posts.community_id = $1::uuid"
+	queryArgs := []any{communityID.String()}
+	if status != nil {
+		queryArgs = append(queryArgs, status.String())
+		whereClause = fmt.Sprintf("%s AND comments.status = $%d", whereClause, len(queryArgs))
+	}
+	limitPlaceholder := len(queryArgs) + 1
+	offsetPlaceholder := len(queryArgs) + 2
+
+	query := fmt.Sprintf(`
+		SELECT
+			comments.id::text,
+			comments.post_id::text,
+			comments.author_id::text,
+			comments.parent_id::text,
+			comments.body,
+			comments.status,
+			comments.created_at,
+			comments.updated_at
+		FROM comments
+		INNER JOIN posts ON posts.id = comments.post_id
+		WHERE %s
+		ORDER BY comments.created_at DESC, comments.id DESC
+		LIMIT $%d
+		OFFSET $%d
+	`, whereClause, limitPlaceholder, offsetPlaceholder)
+
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := repo.pool.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("list community comments for management: %w", err)
+	}
+	defer rows.Close()
+
+	var comments []commentdomain.Comment
+	for rows.Next() {
+		comment, err := scanComment(rows)
+		if err != nil {
+			return nil, err
+		}
+		comments = append(comments, *comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate community comments for management: %w", err)
+	}
 	return comments, nil
 }
 

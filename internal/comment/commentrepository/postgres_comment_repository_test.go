@@ -99,6 +99,45 @@ func TestPostgresCommentRepositoryMapsForeignKeyFailure(t *testing.T) {
 	}
 }
 
+func TestPostgresCommentRepositoryListCommentsByCommunityForManagement(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommentRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "manage-comment-"+randomSuffix())
+	otherCommunityID := insertTestCommunity(ctx, t, pool, authorID, "manage-comment-"+randomSuffix())
+	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Manage Comment Post")
+	otherPostID := insertTestPost(ctx, t, pool, otherCommunityID, authorID, "Other Manage Comment Post")
+
+	visibleComment := mustComment(t, postID, authorID, nil, "Visible manage comment", now)
+	removedComment := mustCommentWithStatus(t, postID, authorID, nil, "Removed manage comment", commentdomain.CommentStatusRemoved, now.Add(time.Minute))
+	otherComment := mustCommentWithStatus(t, otherPostID, authorID, nil, "Other removed manage comment", commentdomain.CommentStatusRemoved, now.Add(2*time.Minute))
+	for _, comment := range []*commentdomain.Comment{visibleComment, removedComment, otherComment} {
+		if err := repo.Create(ctx, *comment); err != nil {
+			t.Fatalf("Create comment %q returned error: %v", comment.Body().String(), err)
+		}
+		cleanupComment(ctx, t, pool, comment.ID())
+	}
+
+	status := commentdomain.CommentStatusRemoved
+	comments, err := repo.ListCommentsByCommunityForManagement(ctx, communityID, &status, 20, 0)
+	if err != nil {
+		t.Fatalf("ListCommentsByCommunityForManagement returned error: %v", err)
+	}
+	if len(comments) != 1 || comments[0].ID() != removedComment.ID() {
+		t.Fatalf("expected only removed comment, got %#v", comments)
+	}
+
+	allComments, err := repo.ListCommentsByCommunityForManagement(ctx, communityID, nil, 20, 0)
+	if err != nil {
+		t.Fatalf("ListCommentsByCommunityForManagement all returned error: %v", err)
+	}
+	if len(allComments) != 2 || allComments[0].ID() != removedComment.ID() || allComments[1].ID() != visibleComment.ID() {
+		t.Fatalf("expected newest-first comments in community, got %#v", allComments)
+	}
+}
+
 func TestPostgresCommentRepositoryUpdateContentAndMarkDeleted(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresCommentRepository(pool)
@@ -417,6 +456,20 @@ func mustComment(t *testing.T, postID postdomain.PostID, authorID userdomain.Use
 	comment, err := commentdomain.NewComment(commentdomain.NewGeneratedCommentID(), postID, authorID, parentID, commentBody, now)
 	if err != nil {
 		t.Fatalf("NewComment returned error: %v", err)
+	}
+	return comment
+}
+
+func mustCommentWithStatus(t *testing.T, postID postdomain.PostID, authorID userdomain.UserID, parentID *commentdomain.CommentID, body string, status commentdomain.CommentStatus, now time.Time) *commentdomain.Comment {
+	t.Helper()
+
+	commentBody, err := commentdomain.NewCommentBody(body)
+	if err != nil {
+		t.Fatalf("NewCommentBody returned error: %v", err)
+	}
+	comment, err := commentdomain.RehydrateComment(commentdomain.NewGeneratedCommentID(), postID, authorID, parentID, commentBody, status, now, now)
+	if err != nil {
+		t.Fatalf("RehydrateComment returned error: %v", err)
 	}
 	return comment
 }

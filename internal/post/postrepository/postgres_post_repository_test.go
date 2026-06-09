@@ -70,6 +70,43 @@ func TestPostgresPostRepositoryCreateFindListAndNotFound(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryListPostsByCommunityForManagement(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "manage-post-"+randomSuffix())
+	otherCommunityID := insertTestCommunity(ctx, t, pool, authorID, "manage-post-"+randomSuffix())
+
+	visiblePost := mustPost(t, communityID, authorID, "Visible manage post", now)
+	removedPost := mustPostWithStatus(t, communityID, authorID, "Removed manage post", postdomain.PostStatusRemoved, now.Add(time.Minute))
+	otherPost := mustPostWithStatus(t, otherCommunityID, authorID, "Other removed manage post", postdomain.PostStatusRemoved, now.Add(2*time.Minute))
+	for _, post := range []*postdomain.Post{visiblePost, removedPost, otherPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+
+	status := postdomain.PostStatusRemoved
+	posts, err := repo.ListPostsByCommunityForManagement(ctx, communityID, &status, 20, 0)
+	if err != nil {
+		t.Fatalf("ListPostsByCommunityForManagement returned error: %v", err)
+	}
+	if len(posts) != 1 || posts[0].ID() != removedPost.ID() {
+		t.Fatalf("expected only removed post, got %#v", posts)
+	}
+
+	allPosts, err := repo.ListPostsByCommunityForManagement(ctx, communityID, nil, 20, 0)
+	if err != nil {
+		t.Fatalf("ListPostsByCommunityForManagement all returned error: %v", err)
+	}
+	if len(allPosts) != 2 || allPosts[0].ID() != removedPost.ID() || allPosts[1].ID() != visiblePost.ID() {
+		t.Fatalf("expected newest-first posts in community, got %#v", allPosts)
+	}
+}
+
 func TestPostgresPostRepositoryListVisibleInPublicCommunities(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)
@@ -216,7 +253,7 @@ func TestPostgresPostRepositoryListVisibleByCommunityHotSort(t *testing.T) {
 	insertTestPostVote(ctx, t, pool, simplePost.ID(), insertTestUser(ctx, t, pool), 1)
 	insertTestPostVote(ctx, t, pool, balancedPost.ID(), insertTestUser(ctx, t, pool), 1)
 	insertTestPostVote(ctx, t, pool, balancedPost.ID(), insertTestUser(ctx, t, pool), 1)
-	insertTestPostVote(ctx, t, pool, balancedPost.ID(), insertTestUser(ctx, t, pool), -1)
+	insertTestPostVote(ctx, t, pool, balancedPost.ID(), insertTestUser(ctx, t, pool), 1)
 
 	posts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortHot, nil, 20, 0)
 	if err != nil {

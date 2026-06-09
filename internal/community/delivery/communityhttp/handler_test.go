@@ -268,6 +268,57 @@ func TestListCommunityMembersReturnsMembers(t *testing.T) {
 	}
 }
 
+func TestListCommunityManagePostsReturnsPosts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 9, 13, 0, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		listManagePostsResult: communityusecase.ListCommunityManagePostsResult{
+			Community: newCommunityResult("campus", now),
+			Posts: []communityusecase.CommunityManagePost{
+				{
+					ID:          "post-1",
+					CommunityID: "community-1",
+					AuthorID:    "author-1",
+					Title:       "Pinned topic",
+					BodyExcerpt: "body preview",
+					Status:      "visible",
+					CreatedAt:   now,
+					UpdatedAt:   now,
+				},
+			},
+			Status: "visible",
+			Limit:  20,
+			Offset: 5,
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage/posts?status=visible&limit=20&offset=5", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.listManagePostsCalled {
+		t.Fatal("expected ListCommunityManagePosts to be called")
+	}
+	if communities.listManagePostsInput.Slug != "campus" || communities.listManagePostsInput.ViewerID != userID || communities.listManagePostsInput.Status != "visible" || communities.listManagePostsInput.Limit != 20 || communities.listManagePostsInput.Offset != 5 {
+		t.Fatalf("unexpected list manage posts input: %#v", communities.listManagePostsInput)
+	}
+	var response listCommunityManagePostsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Status != "visible" || len(response.Posts) != 1 || response.Posts[0].Title != "Pinned topic" {
+		t.Fatalf("unexpected manage posts response: %#v", response)
+	}
+}
+
 func TestCommunityManageRoutesRequireAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -325,7 +376,7 @@ func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	}
 	assertCommunityErrorCode(t, recorder, apperr.CodeUnauthenticated)
-	if communities.listCalled || communities.getCalled || communities.manageCalled || communities.listMembersCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
+	if communities.listCalled || communities.getCalled || communities.manageCalled || communities.listMembersCalled || communities.listManagePostsCalled || communities.listManageCommentsCalled || communities.listManageReportsCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
 		t.Fatal("community usecase should not be called for invalid auth")
 	}
 }
@@ -643,34 +694,46 @@ func TestRejectCommunityApplicationReturnsRejectedApplication(t *testing.T) {
 }
 
 type fakeCommunityReadUseCase struct {
-	listCalled         bool
-	getCalled          bool
-	followCalled       bool
-	deleteFollowCalled bool
-	listFollowedCalled bool
-	manageCalled       bool
-	listMembersCalled  bool
-	listInput          communityusecase.ListCommunitiesInput
-	getInput           communityusecase.GetCommunityInput
-	followInput        communityusecase.FollowCommunityInput
-	deleteFollowInput  communityusecase.DeleteCommunityFollowInput
-	listFollowedInput  communityusecase.ListFollowedCommunitiesInput
-	manageInput        communityusecase.GetCommunityManageContextInput
-	listMembersInput   communityusecase.ListCommunityMembersInput
-	listResult         communityusecase.ListCommunitiesResult
-	getResult          communityusecase.GetCommunityResult
-	followResult       communityusecase.FollowCommunityResult
-	deleteFollowResult communityusecase.DeleteCommunityFollowResult
-	listFollowedResult communityusecase.ListFollowedCommunitiesResult
-	manageResult       communityusecase.GetCommunityManageContextResult
-	listMembersResult  communityusecase.ListCommunityMembersResult
-	listErr            error
-	getErr             error
-	followErr          error
-	deleteFollowErr    error
-	listFollowedErr    error
-	manageErr          error
-	listMembersErr     error
+	listCalled               bool
+	getCalled                bool
+	followCalled             bool
+	deleteFollowCalled       bool
+	listFollowedCalled       bool
+	manageCalled             bool
+	listMembersCalled        bool
+	listManagePostsCalled    bool
+	listManageCommentsCalled bool
+	listManageReportsCalled  bool
+	listInput                communityusecase.ListCommunitiesInput
+	getInput                 communityusecase.GetCommunityInput
+	followInput              communityusecase.FollowCommunityInput
+	deleteFollowInput        communityusecase.DeleteCommunityFollowInput
+	listFollowedInput        communityusecase.ListFollowedCommunitiesInput
+	manageInput              communityusecase.GetCommunityManageContextInput
+	listMembersInput         communityusecase.ListCommunityMembersInput
+	listManagePostsInput     communityusecase.ListCommunityManagePostsInput
+	listManageCommentsInput  communityusecase.ListCommunityManageCommentsInput
+	listManageReportsInput   communityusecase.ListCommunityManageReportsInput
+	listResult               communityusecase.ListCommunitiesResult
+	getResult                communityusecase.GetCommunityResult
+	followResult             communityusecase.FollowCommunityResult
+	deleteFollowResult       communityusecase.DeleteCommunityFollowResult
+	listFollowedResult       communityusecase.ListFollowedCommunitiesResult
+	manageResult             communityusecase.GetCommunityManageContextResult
+	listMembersResult        communityusecase.ListCommunityMembersResult
+	listManagePostsResult    communityusecase.ListCommunityManagePostsResult
+	listManageCommentsResult communityusecase.ListCommunityManageCommentsResult
+	listManageReportsResult  communityusecase.ListCommunityManageReportsResult
+	listErr                  error
+	getErr                   error
+	followErr                error
+	deleteFollowErr          error
+	listFollowedErr          error
+	manageErr                error
+	listMembersErr           error
+	listManagePostsErr       error
+	listManageCommentsErr    error
+	listManageReportsErr     error
 }
 
 func (f *fakeCommunityReadUseCase) ListCommunities(ctx context.Context, input communityusecase.ListCommunitiesInput) (communityusecase.ListCommunitiesResult, error) {
@@ -713,6 +776,24 @@ func (f *fakeCommunityReadUseCase) ListCommunityMembers(ctx context.Context, inp
 	f.listMembersCalled = true
 	f.listMembersInput = input
 	return f.listMembersResult, f.listMembersErr
+}
+
+func (f *fakeCommunityReadUseCase) ListCommunityManagePosts(ctx context.Context, input communityusecase.ListCommunityManagePostsInput) (communityusecase.ListCommunityManagePostsResult, error) {
+	f.listManagePostsCalled = true
+	f.listManagePostsInput = input
+	return f.listManagePostsResult, f.listManagePostsErr
+}
+
+func (f *fakeCommunityReadUseCase) ListCommunityManageComments(ctx context.Context, input communityusecase.ListCommunityManageCommentsInput) (communityusecase.ListCommunityManageCommentsResult, error) {
+	f.listManageCommentsCalled = true
+	f.listManageCommentsInput = input
+	return f.listManageCommentsResult, f.listManageCommentsErr
+}
+
+func (f *fakeCommunityReadUseCase) ListCommunityManageReports(ctx context.Context, input communityusecase.ListCommunityManageReportsInput) (communityusecase.ListCommunityManageReportsResult, error) {
+	f.listManageReportsCalled = true
+	f.listManageReportsInput = input
+	return f.listManageReportsResult, f.listManageReportsErr
 }
 
 type fakeCommunityApplicationUseCase struct {

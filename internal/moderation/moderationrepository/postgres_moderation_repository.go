@@ -9,6 +9,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
@@ -131,6 +132,67 @@ func (repo *PostgresModerationRepository) ListReports(ctx context.Context, statu
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate content reports: %w", err)
+	}
+	return records, nil
+}
+
+func (repo *PostgresModerationRepository) ListReportsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationusecase.ContentReportRecord, error) {
+	const query = `
+		SELECT
+			content_reports.id::text,
+			content_reports.reporter_id::text,
+			content_reports.post_id::text,
+			content_reports.comment_id::text,
+			content_reports.reason,
+			content_reports.status,
+			content_reports.reviewed_by::text,
+			content_reports.reviewed_at,
+			content_reports.created_at,
+			content_reports.updated_at,
+			posts.id::text,
+			posts.author_id::text,
+			posts.status,
+			posts.title,
+			posts.body,
+			posts.created_at,
+			posts.updated_at,
+			comments.id::text,
+			comments.post_id::text,
+			comments.author_id::text,
+			comments.status,
+			comments.body,
+			comments.created_at,
+			comments.updated_at
+		FROM content_reports
+		LEFT JOIN posts ON posts.id = content_reports.post_id
+		LEFT JOIN comments ON comments.id = content_reports.comment_id
+		LEFT JOIN posts AS comment_posts ON comment_posts.id = comments.post_id
+		WHERE content_reports.status = $2
+			AND (
+				posts.community_id = $1::uuid
+				OR comment_posts.community_id = $1::uuid
+			)
+		ORDER BY content_reports.created_at DESC, content_reports.id DESC
+		LIMIT $3
+		OFFSET $4
+	`
+
+	rows, err := repo.pool.Query(ctx, query, communityID.String(), status.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list community reports for management: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]moderationusecase.ContentReportRecord, 0)
+	for rows.Next() {
+		record, err := scanContentReportRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, *record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate community reports for management: %w", err)
 	}
 	return records, nil
 }

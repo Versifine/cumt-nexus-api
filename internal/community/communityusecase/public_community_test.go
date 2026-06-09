@@ -7,7 +7,11 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -370,6 +374,65 @@ func TestListCommunityMembersReturnsMembersForModerator(t *testing.T) {
 	}
 }
 
+func TestListCommunityManagePostsReturnsPostsForModerator(t *testing.T) {
+	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	authorID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	post := mustPost(t, community.ID(), authorID, "Manage me", postdomain.PostStatusRemoved, now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+		managePosts: []postdomain.Post{*post},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+	uc.SetManageContentReaders(repo, repo, repo)
+
+	result, err := uc.ListCommunityManagePosts(context.Background(), ListCommunityManagePostsInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+		Status:   "removed",
+		Limit:    20,
+		Offset:   5,
+	})
+	if err != nil {
+		t.Fatalf("ListCommunityManagePosts returned error: %v", err)
+	}
+	if result.Status != postdomain.PostStatusRemoved.String() || len(result.Posts) != 1 || result.Posts[0].Title != "Manage me" {
+		t.Fatalf("unexpected posts result: %#v", result)
+	}
+	if repo.managePostsCommunityID != community.ID() || repo.managePostsStatus == nil || *repo.managePostsStatus != postdomain.PostStatusRemoved || repo.managePostsLimit != 20 || repo.managePostsOffset != 5 {
+		t.Fatalf("unexpected manage posts args: community=%q status=%v limit=%d offset=%d", repo.managePostsCommunityID.String(), repo.managePostsStatus, repo.managePostsLimit, repo.managePostsOffset)
+	}
+}
+
+func TestListCommunityManagePostsRequiresModeratorRole(t *testing.T) {
+	now := time.Date(2026, 6, 9, 12, 30, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+	uc.SetManageContentReaders(repo, repo, repo)
+
+	_, err := uc.ListCommunityManagePosts(context.Background(), ListCommunityManagePostsInput{Slug: "campus", ViewerID: viewerID})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden for non-moderator, got %v", err)
+	}
+	if repo.managePostsCalled {
+		t.Fatal("manage posts repository should not be called for non-moderator")
+	}
+}
+
 func TestCanPostInCommunityAllowsActivePublicCommunity(t *testing.T) {
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 	community := mustSystemCommunity(t, "campus", now)
@@ -459,6 +522,24 @@ type fakeCommunityRepository struct {
 	listActiveMembersLimit         int
 	listActiveMembersOffset        int
 	activeMembers                  []CommunityMember
+	managePostsCalled              bool
+	managePostsCommunityID         communitydomain.CommunityID
+	managePostsStatus              *postdomain.PostStatus
+	managePostsLimit               int
+	managePostsOffset              int
+	managePosts                    []postdomain.Post
+	manageCommentsCalled           bool
+	manageCommentsCommunityID      communitydomain.CommunityID
+	manageCommentsStatus           *commentdomain.CommentStatus
+	manageCommentsLimit            int
+	manageCommentsOffset           int
+	manageComments                 []commentdomain.Comment
+	manageReportsCalled            bool
+	manageReportsCommunityID       communitydomain.CommunityID
+	manageReportsStatus            moderationdomain.ReportStatus
+	manageReportsLimit             int
+	manageReportsOffset            int
+	manageReports                  []moderationusecase.ContentReportRecord
 }
 
 func (f *fakeCommunityRepository) Create(ctx context.Context, community communitydomain.Community) error {
@@ -537,6 +618,33 @@ func (f *fakeCommunityRepository) ListActiveMembers(ctx context.Context, communi
 	return f.activeMembers, nil
 }
 
+func (f *fakeCommunityRepository) ListPostsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status *postdomain.PostStatus, limit int, offset int) ([]postdomain.Post, error) {
+	f.managePostsCalled = true
+	f.managePostsCommunityID = communityID
+	f.managePostsStatus = status
+	f.managePostsLimit = limit
+	f.managePostsOffset = offset
+	return f.managePosts, nil
+}
+
+func (f *fakeCommunityRepository) ListCommentsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status *commentdomain.CommentStatus, limit int, offset int) ([]commentdomain.Comment, error) {
+	f.manageCommentsCalled = true
+	f.manageCommentsCommunityID = communityID
+	f.manageCommentsStatus = status
+	f.manageCommentsLimit = limit
+	f.manageCommentsOffset = offset
+	return f.manageComments, nil
+}
+
+func (f *fakeCommunityRepository) ListReportsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationusecase.ContentReportRecord, error) {
+	f.manageReportsCalled = true
+	f.manageReportsCommunityID = communityID
+	f.manageReportsStatus = status
+	f.manageReportsLimit = limit
+	f.manageReportsOffset = offset
+	return f.manageReports, nil
+}
+
 func mustSystemCommunity(t *testing.T, rawSlug string, now time.Time) *communitydomain.Community {
 	t.Helper()
 
@@ -592,6 +700,24 @@ func mustCommunityName(t *testing.T, raw string) communitydomain.CommunityName {
 		t.Fatalf("NewCommunityName(%q) returned error: %v", raw, err)
 	}
 	return name
+}
+
+func mustPost(t *testing.T, communityID communitydomain.CommunityID, authorID userdomain.UserID, rawTitle string, status postdomain.PostStatus, now time.Time) *postdomain.Post {
+	t.Helper()
+
+	title, err := postdomain.NewPostTitle(rawTitle)
+	if err != nil {
+		t.Fatalf("NewPostTitle returned error: %v", err)
+	}
+	body, err := postdomain.NewPostBody("body for " + rawTitle)
+	if err != nil {
+		t.Fatalf("NewPostBody returned error: %v", err)
+	}
+	post, err := postdomain.RehydratePost(postdomain.NewGeneratedPostID(), communityID, authorID, title, body, status, now, now)
+	if err != nil {
+		t.Fatalf("RehydratePost returned error: %v", err)
+	}
+	return post
 }
 
 func hasAppCode(err error, code apperr.Code) bool {

@@ -144,6 +144,9 @@ GET  /api/v1/users/:username/comments   # public, optional Bearer
 GET  /api/v1/communities                # public, optional Bearer
 GET  /api/v1/communities/:slug          # public, optional Bearer
 GET  /api/v1/communities/:slug/manage
+GET  /api/v1/communities/:slug/manage/posts
+GET  /api/v1/communities/:slug/manage/comments
+GET  /api/v1/communities/:slug/manage/reports
 GET  /api/v1/communities/:slug/manage/members
 POST /api/v1/communities/:slug/follow
 DELETE /api/v1/communities/:slug/follow

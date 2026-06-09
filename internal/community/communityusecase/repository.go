@@ -4,7 +4,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -33,6 +37,18 @@ type CommunityMembershipRepository interface {
 type CommunityMembershipReadRepository interface {
 	FindActiveRolesByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]communitydomain.MembershipRole, error)
 	ListActiveMembers(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]CommunityMember, error)
+}
+
+type CommunityManagePostRepository interface {
+	ListPostsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status *postdomain.PostStatus, limit int, offset int) ([]postdomain.Post, error)
+}
+
+type CommunityManageCommentRepository interface {
+	ListCommentsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status *commentdomain.CommentStatus, limit int, offset int) ([]commentdomain.Comment, error)
+}
+
+type CommunityManageReportRepository interface {
+	ListReportsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationusecase.ContentReportRecord, error)
 }
 
 type CommunityApplicationRepository interface {
