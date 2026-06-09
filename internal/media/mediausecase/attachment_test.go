@@ -157,15 +157,19 @@ func validInput(uploaderID userdomain.UserID) SaveImageAttachmentInput {
 }
 
 type fakeAttachmentRepository struct {
-	createFunc   func(ctx context.Context, attachment mediadomain.Attachment) error
-	findByIDFunc func(ctx context.Context, id mediadomain.AttachmentID) (*mediadomain.Attachment, error)
+	createFunc                func(ctx context.Context, attachment mediadomain.Attachment) error
+	findByIDFunc              func(ctx context.Context, id mediadomain.AttachmentID) (*mediadomain.Attachment, error)
+	listCleanupCandidatesFunc func(ctx context.Context, unboundReadyBefore time.Time, failedOrBlockedBefore time.Time, limit int) ([]mediadomain.Attachment, error)
+	takeCleanupCandidatesFunc func(ctx context.Context, unboundReadyBefore time.Time, failedOrBlockedBefore time.Time, limit int) ([]mediadomain.Attachment, error)
 }
 
 type fakeObjectStorage struct {
-	putCalled bool
-	input     PutObjectInput
-	result    PutObjectResult
-	err       error
+	putCalled         bool
+	input             PutObjectInput
+	result            PutObjectResult
+	err               error
+	deletedObjectKeys []string
+	deleteErrByKey    map[string]error
 }
 
 func (f *fakeObjectStorage) PutObject(ctx context.Context, input PutObjectInput) (PutObjectResult, error) {
@@ -181,6 +185,16 @@ func (f *fakeObjectStorage) PutObject(ctx context.Context, input PutObjectInput)
 	return result, nil
 }
 
+func (f *fakeObjectStorage) DeleteObject(ctx context.Context, objectKey string) error {
+	f.deletedObjectKeys = append(f.deletedObjectKeys, objectKey)
+	if f.deleteErrByKey != nil {
+		if err, ok := f.deleteErrByKey[objectKey]; ok {
+			return err
+		}
+	}
+	return nil
+}
+
 func (f *fakeAttachmentRepository) Create(ctx context.Context, attachment mediadomain.Attachment) error {
 	if f.createFunc != nil {
 		return f.createFunc(ctx, attachment)
@@ -193,6 +207,20 @@ func (f *fakeAttachmentRepository) FindByID(ctx context.Context, id mediadomain.
 		return f.findByIDFunc(ctx, id)
 	}
 	return nil, apperr.New(apperr.CodeNotFound, "attachment not found")
+}
+
+func (f *fakeAttachmentRepository) ListCleanupCandidates(ctx context.Context, unboundReadyBefore time.Time, failedOrBlockedBefore time.Time, limit int) ([]mediadomain.Attachment, error) {
+	if f.listCleanupCandidatesFunc != nil {
+		return f.listCleanupCandidatesFunc(ctx, unboundReadyBefore, failedOrBlockedBefore, limit)
+	}
+	return nil, nil
+}
+
+func (f *fakeAttachmentRepository) TakeCleanupCandidates(ctx context.Context, unboundReadyBefore time.Time, failedOrBlockedBefore time.Time, limit int) ([]mediadomain.Attachment, error) {
+	if f.takeCleanupCandidatesFunc != nil {
+		return f.takeCleanupCandidatesFunc(ctx, unboundReadyBefore, failedOrBlockedBefore, limit)
+	}
+	return nil, nil
 }
 
 func hasAppCode(err error, code apperr.Code) bool {

@@ -53,3 +53,39 @@ func TestLocalObjectStorageRejectsUnsafeObjectKey(t *testing.T) {
 		t.Fatal("expected unsafe object key error")
 	}
 }
+
+func TestLocalObjectStorageDeleteObject(t *testing.T) {
+	root := t.TempDir()
+	storage := NewLocalObjectStorage(config.ObjectStorageConfig{
+		LocalRoot:     root,
+		PublicBaseURL: "http://localhost:8080/uploads",
+	})
+	objectKey := "images/2026/06/image.png"
+	if _, err := storage.PutObject(context.Background(), mediausecase.PutObjectInput{
+		ObjectKey: objectKey,
+		Body:      bytes.NewReader([]byte("png")),
+	}); err != nil {
+		t.Fatalf("PutObject returned error: %v", err)
+	}
+
+	if err := storage.DeleteObject(context.Background(), objectKey); err != nil {
+		t.Fatalf("DeleteObject returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "images", "2026", "06", "image.png")); !os.IsNotExist(err) {
+		t.Fatalf("expected local object to be deleted, stat err=%v", err)
+	}
+	if err := storage.DeleteObject(context.Background(), objectKey); err != nil {
+		t.Fatalf("DeleteObject should ignore missing object, got %v", err)
+	}
+}
+
+func TestLocalObjectStorageDeleteObjectRejectsUnsafeObjectKey(t *testing.T) {
+	storage := NewLocalObjectStorage(config.ObjectStorageConfig{
+		LocalRoot:     t.TempDir(),
+		PublicBaseURL: "http://localhost:8080/uploads",
+	})
+
+	if err := storage.DeleteObject(context.Background(), "../escape.png"); err == nil {
+		t.Fatal("expected unsafe object key error")
+	}
+}

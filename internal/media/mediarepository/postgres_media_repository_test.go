@@ -246,6 +246,48 @@ func TestPostgresMediaRepositoryBindRejectsOtherUploader(t *testing.T) {
 	}
 }
 
+func TestPostgresMediaRepositoryCleanupCandidates(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresMediaRepository(pool)
+	now := testNow()
+
+	uploaderID := insertTestUser(ctx, t, pool)
+	oldReady := mustAttachmentWithStatus(t, uploaderID, "images/"+randomSuffix()+"-old.png", mediadomain.OwnerTypeNone, "", mediadomain.AttachmentStatusReady, now.Add(-48*time.Hour), now.Add(-48*time.Hour))
+	youngReady := mustAttachmentWithStatus(t, uploaderID, "images/"+randomSuffix()+"-young.png", mediadomain.OwnerTypeNone, "", mediadomain.AttachmentStatusReady, now, now)
+	boundReady := mustAttachmentWithStatus(t, uploaderID, "images/"+randomSuffix()+"-bound.png", mediadomain.OwnerTypePost, postdomain.NewGeneratedPostID().String(), mediadomain.AttachmentStatusReady, now.Add(-48*time.Hour), now.Add(-48*time.Hour))
+	oldFailed := mustAttachmentWithStatus(t, uploaderID, "images/"+randomSuffix()+"-failed.png", mediadomain.OwnerTypeNone, "", mediadomain.AttachmentStatusFailed, now.Add(-48*time.Hour), now.Add(-48*time.Hour))
+	oldBlocked := mustAttachmentWithStatus(t, uploaderID, "images/"+randomSuffix()+"-blocked.png", mediadomain.OwnerTypeNone, "", mediadomain.AttachmentStatusBlocked, now.Add(-48*time.Hour), now.Add(-48*time.Hour))
+	for _, attachment := range []*mediadomain.Attachment{oldReady, youngReady, boundReady, oldFailed, oldBlocked} {
+		if err := repo.Create(ctx, *attachment); err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+		cleanupAttachment(ctx, t, pool, attachment.ID())
+	}
+
+	listed, err := repo.ListCleanupCandidates(ctx, now.Add(-24*time.Hour), now.Add(-24*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("ListCleanupCandidates returned error: %v", err)
+	}
+	assertAttachmentIDs(t, listed, []mediadomain.AttachmentID{oldReady.ID(), oldFailed.ID(), oldBlocked.ID()})
+
+	taken, err := repo.TakeCleanupCandidates(ctx, now.Add(-24*time.Hour), now.Add(-24*time.Hour), 10)
+	if err != nil {
+		t.Fatalf("TakeCleanupCandidates returned error: %v", err)
+	}
+	assertAttachmentIDs(t, taken, []mediadomain.AttachmentID{oldReady.ID(), oldFailed.ID(), oldBlocked.ID()})
+
+	for _, id := range []mediadomain.AttachmentID{oldReady.ID(), oldFailed.ID(), oldBlocked.ID()} {
+		if _, err := repo.FindByID(ctx, id); !hasAppCode(err, apperr.CodeNotFound) {
+			t.Fatalf("expected cleaned attachment %s to be deleted, got %v", id.String(), err)
+		}
+	}
+	for _, id := range []mediadomain.AttachmentID{youngReady.ID(), boundReady.ID()} {
+		if _, err := repo.FindByID(ctx, id); err != nil {
+			t.Fatalf("expected retained attachment %s to remain, got %v", id.String(), err)
+		}
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -362,6 +404,23 @@ func cleanupAttachment(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id
 	})
 }
 
+func assertAttachmentIDs(t *testing.T, got []mediadomain.Attachment, want []mediadomain.AttachmentID) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d attachments, got %#v", len(want), got)
+	}
+	gotIDs := make(map[mediadomain.AttachmentID]bool, len(got))
+	for _, attachment := range got {
+		gotIDs[attachment.ID()] = true
+	}
+	for _, id := range want {
+		if !gotIDs[id] {
+			t.Fatalf("expected attachment %s in %#v", id.String(), got)
+		}
+	}
+}
+
 func mustAttachment(t *testing.T, uploaderID userdomain.UserID, now time.Time) *mediadomain.Attachment {
 	t.Helper()
 
@@ -386,6 +445,41 @@ func mustAttachmentWithObjectKey(t *testing.T, uploaderID userdomain.UserID, obj
 	})
 	if err != nil {
 		t.Fatalf("NewReadyImageAttachment returned error: %v", err)
+	}
+	return attachment
+}
+
+func mustAttachmentWithStatus(
+	t *testing.T,
+	uploaderID userdomain.UserID,
+	objectKey string,
+	ownerType mediadomain.OwnerType,
+	ownerID string,
+	status mediadomain.AttachmentStatus,
+	createdAt time.Time,
+	updatedAt time.Time,
+) *mediadomain.Attachment {
+	t.Helper()
+
+	attachment, err := mediadomain.RehydrateAttachment(mediadomain.NewAttachmentParams{
+		ID:              mediadomain.NewGeneratedAttachmentID(),
+		OwnerType:       ownerType,
+		OwnerID:         ownerID,
+		UploaderID:      uploaderID,
+		Kind:            mediadomain.AttachmentKindImage,
+		StorageProvider: mediadomain.StorageProviderLocal,
+		Bucket:          "local",
+		ObjectKey:       objectKey,
+		PublicURL:       "http://localhost:8080/uploads/" + objectKey,
+		SizeBytes:       100,
+		MimeType:        "image/png",
+		AltText:         "Campus",
+		Status:          status,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+	})
+	if err != nil {
+		t.Fatalf("RehydrateAttachment returned error: %v", err)
 	}
 	return attachment
 }

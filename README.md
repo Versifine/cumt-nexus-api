@@ -204,6 +204,15 @@ POST /api/v1/embeds/resolve
 ```
 
 上传使用 `multipart/form-data`，字段为 `file` 和可选 `alt_text`；PNG/JPEG 上传成功后会返回解析出的图片 `width` 和 `height`。附件响应包含 `thumbnail_url`，当前未生成独立缩略图对象时回退为原图 `url`。
+未绑定和异常附件通过后台清理命令回收：
+
+```bash
+go run ./cmd/media-cleanup -dry-run
+go run ./cmd/media-cleanup -unbound-ttl=24h -failed-ttl=24h -limit=100
+```
+
+清理候选只包含 `owner_type=none` 的附件：`ready` 状态按未绑定 TTL 回收，`failed` / `blocked` 状态按异常 TTL 回收；TTL 从当前状态的 `updated_at` 计算。实际清理会先领取并删除附件元数据，再删除原图和缩略图对象。生产环境应由 cron、systemd timer 或 Windows Task Scheduler 周期性运行该命令。
+
 链接预览和嵌入解析使用 JSON `{"url":"https://..."}`，会校验公开 HTTP(S) URL、拦截本机/私网地址，并只对首批白名单 provider 返回嵌入结果。
 
 完整接口合同见 [docs/contracts/http-api-contract.md](docs/contracts/http-api-contract.md)，请求/响应字段合同见 [docs/contracts/http-api-schema.md](docs/contracts/http-api-schema.md)。

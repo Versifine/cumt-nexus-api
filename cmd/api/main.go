@@ -95,7 +95,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	notificationRepo := notificationrepository.NewPostgresNotificationRepository(pool)
 	mediaRepo := mediarepository.NewPostgresMediaRepository(pool)
 	effectRepo := effectrepository.NewPostgresEffectRepository(pool)
-	objectStorage, err := newObjectStorage(ctx, cfg.Storage)
+	objectStorage, err := storage.NewObjectStorage(ctx, cfg.Storage)
 	if err != nil {
 		return err
 	}
@@ -177,21 +177,6 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)
-}
-
-func newObjectStorage(ctx context.Context, cfg config.ObjectStorageConfig) (mediausecase.ObjectStorage, error) {
-	switch cfg.Provider {
-	case "local":
-		return storage.NewLocalObjectStorage(cfg), nil
-	case "r2":
-		client, err := storage.NewR2ObjectStorage(ctx, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("create r2 object storage: %w", err)
-		}
-		return client, nil
-	default:
-		return nil, fmt.Errorf("unsupported object storage provider %q", cfg.Provider)
-	}
 }
 
 func openDB(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.Pool, error) {

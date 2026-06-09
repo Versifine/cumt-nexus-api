@@ -119,6 +119,99 @@ func (repo *PostgresMediaRepository) FindByID(ctx context.Context, id mediadomai
 	return attachment, nil
 }
 
+func (repo *PostgresMediaRepository) ListCleanupCandidates(ctx context.Context, unboundReadyBefore time.Time, failedOrBlockedBefore time.Time, limit int) ([]mediadomain.Attachment, error) {
+	if limit <= 0 {
+		return []mediadomain.Attachment{}, nil
+	}
+
+	const query = `
+		SELECT
+			id::text,
+			owner_type,
+			owner_id::text,
+			uploader_id::text,
+			kind,
+			storage_provider,
+			bucket,
+			object_key,
+			public_url,
+			thumbnail_object_key,
+			width,
+			height,
+			size_bytes,
+			mime_type,
+			alt_text,
+			status,
+			created_at,
+			updated_at
+		FROM media_attachments
+		WHERE owner_type = 'none'
+			AND (
+				(status = 'ready' AND updated_at < $1)
+				OR (status IN ('failed', 'blocked') AND updated_at < $2)
+			)
+		ORDER BY updated_at ASC, created_at ASC, id ASC
+		LIMIT $3
+	`
+	rows, err := repo.pool.Query(ctx, query, unboundReadyBefore, failedOrBlockedBefore, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list media cleanup candidates: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAttachments(rows, "media cleanup candidates")
+}
+
+func (repo *PostgresMediaRepository) TakeCleanupCandidates(ctx context.Context, unboundReadyBefore time.Time, failedOrBlockedBefore time.Time, limit int) ([]mediadomain.Attachment, error) {
+	if limit <= 0 {
+		return []mediadomain.Attachment{}, nil
+	}
+
+	const query = `
+		WITH candidates AS (
+			SELECT id
+			FROM media_attachments
+			WHERE owner_type = 'none'
+				AND (
+					(status = 'ready' AND updated_at < $1)
+					OR (status IN ('failed', 'blocked') AND updated_at < $2)
+				)
+			ORDER BY updated_at ASC, created_at ASC, id ASC
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM media_attachments AS attachment
+		USING candidates
+		WHERE attachment.id = candidates.id
+		RETURNING
+			attachment.id::text,
+			attachment.owner_type,
+			attachment.owner_id::text,
+			attachment.uploader_id::text,
+			attachment.kind,
+			attachment.storage_provider,
+			attachment.bucket,
+			attachment.object_key,
+			attachment.public_url,
+			attachment.thumbnail_object_key,
+			attachment.width,
+			attachment.height,
+			attachment.size_bytes,
+			attachment.mime_type,
+			attachment.alt_text,
+			attachment.status,
+			attachment.created_at,
+			attachment.updated_at
+	`
+	rows, err := repo.pool.Query(ctx, query, unboundReadyBefore, failedOrBlockedBefore, limit)
+	if err != nil {
+		return nil, fmt.Errorf("take media cleanup candidates: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAttachments(rows, "taken media cleanup candidates")
+}
+
 func (repo *PostgresMediaRepository) BindReadyImagesToPost(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, now time.Time) ([]mediadomain.Attachment, error) {
 	if len(attachmentIDs) == 0 {
 		return []mediadomain.Attachment{}, nil
@@ -686,6 +779,21 @@ func lockAttachmentsByIDs(ctx context.Context, tx txScanner, attachmentIDs []med
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate locked media attachments: %w", err)
+	}
+	return attachments, nil
+}
+
+func scanAttachments(rows pgx.Rows, operation string) ([]mediadomain.Attachment, error) {
+	var attachments []mediadomain.Attachment
+	for rows.Next() {
+		attachment, err := scanAttachment(rows)
+		if err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, *attachment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s: %w", operation, err)
 	}
 	return attachments, nil
 }

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -59,6 +60,26 @@ func (storage *LocalObjectStorage) PutObject(ctx context.Context, input mediause
 		ObjectKey:       input.ObjectKey,
 		PublicURL:       storage.publicURL(input.ObjectKey),
 	}, nil
+}
+
+func (storage *LocalObjectStorage) DeleteObject(ctx context.Context, objectKey string) error {
+	if err := validateObjectKey(objectKey); err != nil {
+		return err
+	}
+	target, err := storage.targetPath(objectKey)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("delete local object: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (storage *LocalObjectStorage) targetPath(objectKey string) (string, error) {

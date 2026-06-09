@@ -67,6 +67,21 @@ func (storage *R2ObjectStorage) PutObject(ctx context.Context, input mediausecas
 	}, nil
 }
 
+func (storage *R2ObjectStorage) DeleteObject(ctx context.Context, objectKey string) error {
+	if err := validateObjectKey(objectKey); err != nil {
+		return err
+	}
+
+	_, err := storage.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(storage.bucket),
+		Key:    aws.String(objectKey),
+	})
+	if err != nil {
+		return fmt.Errorf("delete r2 object: %w", err)
+	}
+	return nil
+}
+
 func (storage *R2ObjectStorage) publicURL(objectKey string) string {
 	return storage.publicBaseURL + "/" + strings.TrimLeft(objectKey, "/")
 }

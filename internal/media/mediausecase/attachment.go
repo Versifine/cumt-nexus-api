@@ -25,6 +25,7 @@ type UseCase struct {
 
 type ObjectStorage interface {
 	PutObject(ctx context.Context, input PutObjectInput) (PutObjectResult, error)
+	DeleteObject(ctx context.Context, objectKey string) error
 }
 
 type PutObjectInput struct {
@@ -43,6 +44,25 @@ type PutObjectResult struct {
 
 type UploadLimits struct {
 	ImageMaxBytes int
+}
+
+type CleanupExpiredAttachmentsInput struct {
+	UnboundTTL time.Duration
+	FailedTTL  time.Duration
+	Limit      int
+	DryRun     bool
+}
+
+type CleanupExpiredAttachmentsResult struct {
+	DryRun                bool      `json:"dry_run"`
+	Candidates            int       `json:"candidates"`
+	AttachmentsDeleted    int       `json:"attachments_deleted"`
+	ObjectsDeleted        int       `json:"objects_deleted"`
+	Failures              int       `json:"failures"`
+	UnboundReadyBefore    time.Time `json:"unbound_ready_before"`
+	FailedOrBlockedBefore time.Time `json:"failed_or_blocked_before"`
+	UnboundTTL            string    `json:"unbound_ttl"`
+	FailedTTL             string    `json:"failed_ttl"`
 }
 
 type Attachment struct {
