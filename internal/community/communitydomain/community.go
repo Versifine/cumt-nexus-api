@@ -261,6 +261,20 @@ func (community *Community) UpdatedAt() time.Time {
 	return community.updatedAt
 }
 
+func (community *Community) UpdateDetails(name CommunityName, description CommunityDescription, now time.Time) error {
+	if now.IsZero() {
+		return apperr.New(apperr.CodeInvalidArgument, "community updated time can't be zero")
+	}
+	if now.Before(community.createdAt) {
+		return apperr.New(apperr.CodeInvalidArgument, "community updated time can't be before created time")
+	}
+
+	community.name = name
+	community.description = description
+	community.updatedAt = now
+	return nil
+}
+
 func validateCreatedUpdated(entity string, createdAt time.Time, updatedAt time.Time) error {
 	if createdAt.IsZero() {
 		return apperr.New(apperr.CodeInvalidArgument, entity+" created time can't be zero")

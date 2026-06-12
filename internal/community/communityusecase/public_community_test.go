@@ -433,6 +433,275 @@ func TestListCommunityManagePostsRequiresModeratorRole(t *testing.T) {
 	}
 }
 
+func TestGetCommunityManageSettingsReturnsSettingsForModerator(t *testing.T) {
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	result, err := uc.GetCommunityManageSettings(context.Background(), GetCommunityManageSettingsInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+	})
+	if err != nil {
+		t.Fatalf("GetCommunityManageSettings returned error: %v", err)
+	}
+	if result.Settings.Name != community.Name().String() || result.Settings.Description != community.Description().String() {
+		t.Fatalf("unexpected settings: %#v", result.Settings)
+	}
+	if result.Community.ViewerRole != communitydomain.MembershipRoleModerator.String() || !result.Community.ViewerPermissions.CanModerate {
+		t.Fatalf("unexpected community view: %#v", result.Community)
+	}
+}
+
+func TestUpdateCommunityManageSettingsPersistsForOwner(t *testing.T) {
+	createdAt := time.Date(2026, 6, 10, 9, 30, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Hour)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", createdAt)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleOwner,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+	uc.now = func() time.Time { return updatedAt }
+
+	result, err := uc.UpdateCommunityManageSettings(context.Background(), UpdateCommunityManageSettingsInput{
+		Slug:        "campus",
+		ViewerID:    viewerID,
+		Name:        "Campus Hub",
+		Description: "Rules and updates",
+	})
+	if err != nil {
+		t.Fatalf("UpdateCommunityManageSettings returned error: %v", err)
+	}
+	if !repo.updateDetailsCalled {
+		t.Fatal("expected UpdateDetails to be called")
+	}
+	if repo.updatedCommunity.ID() != community.ID() || repo.updatedCommunity.Name().String() != "Campus Hub" || repo.updatedCommunity.Description().String() != "Rules and updates" || !repo.updatedCommunity.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("unexpected updated community: id=%q name=%q description=%q updated=%s", repo.updatedCommunity.ID().String(), repo.updatedCommunity.Name().String(), repo.updatedCommunity.Description().String(), repo.updatedCommunity.UpdatedAt())
+	}
+	if result.Settings.Name != "Campus Hub" || result.Settings.Description != "Rules and updates" || !result.Settings.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("unexpected settings result: %#v", result.Settings)
+	}
+}
+
+func TestUpdateCommunityManageSettingsRequiresOwner(t *testing.T) {
+	now := time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	_, err := uc.UpdateCommunityManageSettings(context.Background(), UpdateCommunityManageSettingsInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+		Name:     "Campus Hub",
+	})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden for moderator settings update, got %v", err)
+	}
+	if repo.updateDetailsCalled {
+		t.Fatal("settings repository should not be called for moderator")
+	}
+}
+
+func TestListCommunityRulesReturnsRulesForModerator(t *testing.T) {
+	now := time.Date(2026, 6, 10, 10, 30, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	rule := mustCommunityRule(t, community.ID(), viewerID, "Be kind", "Keep discussions constructive.", 1, now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+		rules: []communitydomain.CommunityRule{*rule},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	result, err := uc.ListCommunityRules(context.Background(), ListCommunityRulesInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+	})
+	if err != nil {
+		t.Fatalf("ListCommunityRules returned error: %v", err)
+	}
+	if repo.listRulesCommunityID != community.ID() {
+		t.Fatalf("expected list rules community %q, got %q", community.ID().String(), repo.listRulesCommunityID.String())
+	}
+	if len(result.Rules) != 1 || result.Rules[0].Title != "Be kind" || result.Rules[0].Position != 1 {
+		t.Fatalf("unexpected rules result: %#v", result.Rules)
+	}
+}
+
+func TestCreateCommunityRuleAllowsModerator(t *testing.T) {
+	now := time.Date(2026, 6, 10, 11, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+	uc.now = func() time.Time { return now }
+
+	result, err := uc.CreateCommunityRule(context.Background(), CreateCommunityRuleInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+		Title:    "Stay on topic",
+		Body:     "Posts should match the community.",
+		Position: 2,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommunityRule returned error: %v", err)
+	}
+	if !repo.createRuleCalled {
+		t.Fatal("expected CreateRule to be called")
+	}
+	if repo.createdRule.CommunityID() != community.ID() || repo.createdRule.Title().String() != "Stay on topic" || repo.createdRule.Body().String() != "Posts should match the community." || repo.createdRule.Position().Int() != 2 || repo.createdRule.CreatedBy() != viewerID || repo.createdRule.UpdatedBy() != viewerID {
+		t.Fatalf("unexpected created rule: %#v", repo.createdRule)
+	}
+	if result.Rule.ID == "" || result.Rule.Title != "Stay on topic" || result.Rule.Position != 2 {
+		t.Fatalf("unexpected rule result: %#v", result.Rule)
+	}
+}
+
+func TestUpdateCommunityRuleRejectsRuleFromAnotherCommunity(t *testing.T) {
+	now := time.Date(2026, 6, 10, 11, 30, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	otherCommunity := mustSystemCommunity(t, "other-campus", now)
+	rule := mustCommunityRule(t, otherCommunity.ID(), viewerID, "Other", "Other community rule.", 1, now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+		ruleByID: rule,
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	_, err := uc.UpdateCommunityRule(context.Background(), UpdateCommunityRuleInput{
+		Slug:     "campus",
+		RuleID:   rule.ID().String(),
+		ViewerID: viewerID,
+		Title:    "Updated",
+		Position: 1,
+	})
+	if !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found for cross-community rule, got %v", err)
+	}
+	if repo.updateRuleCalled {
+		t.Fatal("rule repository update should not be called for cross-community rule")
+	}
+}
+
+func TestUpdateCommunityRulePersistsForModerator(t *testing.T) {
+	createdAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(time.Hour)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", createdAt)
+	rule := mustCommunityRule(t, community.ID(), userdomain.NewGeneratedUserID(), "Old", "Old body.", 1, createdAt)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+		ruleByID: rule,
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+	uc.now = func() time.Time { return updatedAt }
+
+	result, err := uc.UpdateCommunityRule(context.Background(), UpdateCommunityRuleInput{
+		Slug:     "campus",
+		RuleID:   rule.ID().String(),
+		ViewerID: viewerID,
+		Title:    "Updated",
+		Body:     "Updated body.",
+		Position: 3,
+	})
+	if err != nil {
+		t.Fatalf("UpdateCommunityRule returned error: %v", err)
+	}
+	if !repo.updateRuleCalled {
+		t.Fatal("expected UpdateRule to be called")
+	}
+	if repo.updatedRule.ID() != rule.ID() || repo.updatedRule.Title().String() != "Updated" || repo.updatedRule.Body().String() != "Updated body." || repo.updatedRule.Position().Int() != 3 || repo.updatedRule.UpdatedBy() != viewerID || !repo.updatedRule.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("unexpected updated rule: %#v", repo.updatedRule)
+	}
+	if result.Rule.Title != "Updated" || result.Rule.Position != 3 {
+		t.Fatalf("unexpected rule result: %#v", result.Rule)
+	}
+}
+
+func TestDeleteCommunityRuleScopesDeleteToManagedCommunity(t *testing.T) {
+	now := time.Date(2026, 6, 10, 13, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	ruleID := communitydomain.NewGeneratedCommunityRuleID()
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleModerator,
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipReader(repo)
+
+	if _, err := uc.DeleteCommunityRule(context.Background(), DeleteCommunityRuleInput{
+		Slug:     "campus",
+		RuleID:   ruleID.String(),
+		ViewerID: viewerID,
+	}); err != nil {
+		t.Fatalf("DeleteCommunityRule returned error: %v", err)
+	}
+	if !repo.deleteRuleCalled {
+		t.Fatal("expected DeleteRule to be called")
+	}
+	if repo.deletedRuleID != ruleID || repo.deletedRuleCommunityID != community.ID() {
+		t.Fatalf("unexpected delete args: rule=%q community=%q", repo.deletedRuleID.String(), repo.deletedRuleCommunityID.String())
+	}
+}
+
 func TestCanPostInCommunityAllowsActivePublicCommunity(t *testing.T) {
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 	community := mustSystemCommunity(t, "campus", now)
@@ -540,6 +809,18 @@ type fakeCommunityRepository struct {
 	manageReportsLimit             int
 	manageReportsOffset            int
 	manageReports                  []moderationusecase.ContentReportRecord
+	updateDetailsCalled            bool
+	updatedCommunity               communitydomain.Community
+	listRulesCommunityID           communitydomain.CommunityID
+	rules                          []communitydomain.CommunityRule
+	ruleByID                       *communitydomain.CommunityRule
+	createRuleCalled               bool
+	createdRule                    communitydomain.CommunityRule
+	updateRuleCalled               bool
+	updatedRule                    communitydomain.CommunityRule
+	deleteRuleCalled               bool
+	deletedRuleID                  communitydomain.CommunityRuleID
+	deletedRuleCommunityID         communitydomain.CommunityID
 }
 
 func (f *fakeCommunityRepository) Create(ctx context.Context, community communitydomain.Community) error {
@@ -568,6 +849,12 @@ func (f *fakeCommunityRepository) ListActivePublic(ctx context.Context) ([]commu
 		return f.listActivePublicFunc(ctx)
 	}
 	return nil, nil
+}
+
+func (f *fakeCommunityRepository) UpdateDetails(ctx context.Context, community communitydomain.Community) error {
+	f.updateDetailsCalled = true
+	f.updatedCommunity = community
+	return nil
 }
 
 func (f *fakeCommunityRepository) FollowCommunity(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, now time.Time) error {
@@ -645,6 +932,40 @@ func (f *fakeCommunityRepository) ListReportsByCommunityForManagement(ctx contex
 	return f.manageReports, nil
 }
 
+func (f *fakeCommunityRepository) ListRules(ctx context.Context, communityID communitydomain.CommunityID) ([]communitydomain.CommunityRule, error) {
+	f.listRulesCommunityID = communityID
+	return f.rules, nil
+}
+
+func (f *fakeCommunityRepository) FindRuleByID(ctx context.Context, id communitydomain.CommunityRuleID) (*communitydomain.CommunityRule, error) {
+	if f.ruleByID == nil {
+		return nil, apperr.New(apperr.CodeNotFound, "community rule not found")
+	}
+	if f.ruleByID.ID() != id {
+		return nil, apperr.New(apperr.CodeNotFound, "community rule not found")
+	}
+	return f.ruleByID, nil
+}
+
+func (f *fakeCommunityRepository) CreateRule(ctx context.Context, rule communitydomain.CommunityRule) error {
+	f.createRuleCalled = true
+	f.createdRule = rule
+	return nil
+}
+
+func (f *fakeCommunityRepository) UpdateRule(ctx context.Context, rule communitydomain.CommunityRule) error {
+	f.updateRuleCalled = true
+	f.updatedRule = rule
+	return nil
+}
+
+func (f *fakeCommunityRepository) DeleteRule(ctx context.Context, id communitydomain.CommunityRuleID, communityID communitydomain.CommunityID) error {
+	f.deleteRuleCalled = true
+	f.deletedRuleID = id
+	f.deletedRuleCommunityID = communityID
+	return nil
+}
+
 func mustSystemCommunity(t *testing.T, rawSlug string, now time.Time) *communitydomain.Community {
 	t.Helper()
 
@@ -718,6 +1039,32 @@ func mustPost(t *testing.T, communityID communitydomain.CommunityID, authorID us
 		t.Fatalf("RehydratePost returned error: %v", err)
 	}
 	return post
+}
+
+func mustCommunityRule(t *testing.T, communityID communitydomain.CommunityID, actorID userdomain.UserID, rawTitle string, rawBody string, position int, now time.Time) *communitydomain.CommunityRule {
+	t.Helper()
+
+	title, err := communitydomain.NewCommunityRuleTitle(rawTitle)
+	if err != nil {
+		t.Fatalf("NewCommunityRuleTitle returned error: %v", err)
+	}
+	rulePosition, err := communitydomain.NewCommunityRulePosition(position)
+	if err != nil {
+		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
+	}
+	rule, err := communitydomain.NewCommunityRule(
+		communitydomain.NewGeneratedCommunityRuleID(),
+		communityID,
+		title,
+		communitydomain.NewCommunityRuleBody(rawBody),
+		rulePosition,
+		actorID,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("NewCommunityRule returned error: %v", err)
+	}
+	return rule
 }
 
 func hasAppCode(err error, code apperr.Code) bool {

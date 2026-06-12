@@ -29,6 +29,12 @@ type CommunityReadUseCase interface {
 	ListCommunityManagePosts(ctx context.Context, input communityusecase.ListCommunityManagePostsInput) (communityusecase.ListCommunityManagePostsResult, error)
 	ListCommunityManageComments(ctx context.Context, input communityusecase.ListCommunityManageCommentsInput) (communityusecase.ListCommunityManageCommentsResult, error)
 	ListCommunityManageReports(ctx context.Context, input communityusecase.ListCommunityManageReportsInput) (communityusecase.ListCommunityManageReportsResult, error)
+	GetCommunityManageSettings(ctx context.Context, input communityusecase.GetCommunityManageSettingsInput) (communityusecase.GetCommunityManageSettingsResult, error)
+	UpdateCommunityManageSettings(ctx context.Context, input communityusecase.UpdateCommunityManageSettingsInput) (communityusecase.UpdateCommunityManageSettingsResult, error)
+	ListCommunityRules(ctx context.Context, input communityusecase.ListCommunityRulesInput) (communityusecase.ListCommunityRulesResult, error)
+	CreateCommunityRule(ctx context.Context, input communityusecase.CreateCommunityRuleInput) (communityusecase.CreateCommunityRuleResult, error)
+	UpdateCommunityRule(ctx context.Context, input communityusecase.UpdateCommunityRuleInput) (communityusecase.UpdateCommunityRuleResult, error)
+	DeleteCommunityRule(ctx context.Context, input communityusecase.DeleteCommunityRuleInput) (communityusecase.DeleteCommunityRuleResult, error)
 }
 
 type CommunityApplicationUseCase interface {
@@ -49,6 +55,16 @@ type getCommunityResponse struct {
 
 type getCommunityManageContextResponse struct {
 	Community communityResponse `json:"community"`
+}
+
+type getCommunityManageSettingsResponse struct {
+	Community communityResponse         `json:"community"`
+	Settings  communitySettingsResponse `json:"settings"`
+}
+
+type updateCommunityManageSettingsResponse struct {
+	Community communityResponse         `json:"community"`
+	Settings  communitySettingsResponse `json:"settings"`
 }
 
 type listFollowedCommunitiesResponse struct {
@@ -152,6 +168,52 @@ type communityManageReportTargetPreviewResponse struct {
 	BodyExcerpt string    `json:"body_excerpt"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type listCommunityRulesResponse struct {
+	Community communityResponse       `json:"community"`
+	Rules     []communityRuleResponse `json:"rules"`
+}
+
+type createCommunityRuleResponse struct {
+	Community communityResponse     `json:"community"`
+	Rule      communityRuleResponse `json:"rule"`
+}
+
+type updateCommunityRuleResponse struct {
+	Community communityResponse     `json:"community"`
+	Rule      communityRuleResponse `json:"rule"`
+}
+
+type communitySettingsResponse struct {
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	AvatarURL   string    `json:"avatar_url"`
+	BannerURL   string    `json:"banner_url"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type communityRuleResponse struct {
+	ID          string    `json:"id"`
+	CommunityID string    `json:"community_id"`
+	Title       string    `json:"title"`
+	Body        string    `json:"body"`
+	Position    int       `json:"position"`
+	CreatedBy   string    `json:"created_by"`
+	UpdatedBy   string    `json:"updated_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type updateCommunityManageSettingsRequest struct {
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+}
+
+type writeCommunityRuleRequest struct {
+	Title    string `json:"title" binding:"required"`
+	Body     string `json:"body"`
+	Position int    `json:"position"`
 }
 
 type submitCommunityApplicationRequest struct {
@@ -264,6 +326,12 @@ func RegisterManageRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities/:slug/manage/comments", handler.ListCommunityManageComments)
 	group.GET("/communities/:slug/manage/reports", handler.ListCommunityManageReports)
 	group.GET("/communities/:slug/manage/members", handler.ListCommunityMembers)
+	group.GET("/communities/:slug/manage/settings", handler.GetCommunityManageSettings)
+	group.PATCH("/communities/:slug/manage/settings", handler.UpdateCommunityManageSettings)
+	group.GET("/communities/:slug/manage/rules", handler.ListCommunityRules)
+	group.POST("/communities/:slug/manage/rules", handler.CreateCommunityRule)
+	group.PATCH("/communities/:slug/manage/rules/:rule_id", handler.UpdateCommunityRule)
+	group.DELETE("/communities/:slug/manage/rules/:rule_id", handler.DeleteCommunityRule)
 }
 
 func (h *Handler) ListCommunities(c *gin.Context) {
@@ -596,6 +664,182 @@ func (h *Handler) ListCommunityManageReports(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+func (h *Handler) GetCommunityManageSettings(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.GetCommunityManageSettings(c.Request.Context(), communityusecase.GetCommunityManageSettingsInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, getCommunityManageSettingsResponse{
+		Community: toCommunityResponse(result.Community),
+		Settings:  toCommunitySettingsResponse(result.Settings),
+	})
+}
+
+func (h *Handler) UpdateCommunityManageSettings(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req updateCommunityManageSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid community settings request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.UpdateCommunityManageSettings(c.Request.Context(), communityusecase.UpdateCommunityManageSettingsInput{
+		Slug:        c.Param("slug"),
+		ViewerID:    userID,
+		Name:        req.Name,
+		Description: req.Description,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, updateCommunityManageSettingsResponse{
+		Community: toCommunityResponse(result.Community),
+		Settings:  toCommunitySettingsResponse(result.Settings),
+	})
+}
+
+func (h *Handler) ListCommunityRules(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.ListCommunityRules(c.Request.Context(), communityusecase.ListCommunityRulesInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityRulesResponse{
+		Community: toCommunityResponse(result.Community),
+		Rules:     make([]communityRuleResponse, 0, len(result.Rules)),
+	}
+	for _, rule := range result.Rules {
+		response.Rules = append(response.Rules, toCommunityRuleResponse(rule))
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) CreateCommunityRule(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req writeCommunityRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid community rule request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.CreateCommunityRule(c.Request.Context(), communityusecase.CreateCommunityRuleInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		Title:    req.Title,
+		Body:     req.Body,
+		Position: req.Position,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusCreated, createCommunityRuleResponse{
+		Community: toCommunityResponse(result.Community),
+		Rule:      toCommunityRuleResponse(result.Rule),
+	})
+}
+
+func (h *Handler) UpdateCommunityRule(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req writeCommunityRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid community rule request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.UpdateCommunityRule(c.Request.Context(), communityusecase.UpdateCommunityRuleInput{
+		Slug:     c.Param("slug"),
+		RuleID:   c.Param("rule_id"),
+		ViewerID: userID,
+		Title:    req.Title,
+		Body:     req.Body,
+		Position: req.Position,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, updateCommunityRuleResponse{
+		Community: toCommunityResponse(result.Community),
+		Rule:      toCommunityRuleResponse(result.Rule),
+	})
+}
+
+func (h *Handler) DeleteCommunityRule(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	if _, err := h.communities.DeleteCommunityRule(c.Request.Context(), communityusecase.DeleteCommunityRuleInput{
+		Slug:     c.Param("slug"),
+		RuleID:   c.Param("rule_id"),
+		ViewerID: userID,
+	}); err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
 func (h *Handler) SubmitCommunityApplication(c *gin.Context) {
 	userID, ok := authcontext.CurrentUserID(c.Request.Context())
 	if !ok {
@@ -808,12 +1052,42 @@ func toCommunityApplicationResponse(application communityusecase.CommunityApplic
 	return response
 }
 
+func toCommunitySettingsResponse(settings communityusecase.CommunitySettings) communitySettingsResponse {
+	return communitySettingsResponse{
+		Name:        settings.Name,
+		Description: settings.Description,
+		AvatarURL:   settings.AvatarURL,
+		BannerURL:   settings.BannerURL,
+		UpdatedAt:   settings.UpdatedAt,
+	}
+}
+
+func toCommunityRuleResponse(rule communityusecase.CommunityRule) communityRuleResponse {
+	return communityRuleResponse{
+		ID:          rule.ID,
+		CommunityID: rule.CommunityID,
+		Title:       rule.Title,
+		Body:        rule.Body,
+		Position:    rule.Position,
+		CreatedBy:   rule.CreatedBy,
+		UpdatedBy:   rule.UpdatedBy,
+		CreatedAt:   rule.CreatedAt,
+		UpdatedAt:   rule.UpdatedAt,
+	}
+}
+
 func toCommunityMemberResponse(member communityusecase.CommunityMember) communityMemberResponse {
+	displayName := member.DisplayName
+	if displayName == "" {
+		displayName = member.Username
+	}
 	return communityMemberResponse{
 		User: communityMemberUserResponse{
 			ID:          member.UserID,
 			Username:    member.Username,
-			DisplayName: member.Username,
+			DisplayName: displayName,
+			AvatarURL:   member.AvatarURL,
+			Headline:    member.Headline,
 			Badges:      []string{},
 		},
 		Role:      member.Role,

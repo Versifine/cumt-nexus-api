@@ -126,6 +126,77 @@ func TestCommunityCreationInvariants(t *testing.T) {
 	if _, err := RehydrateCommunity(mustCommunityID(t), mustCommunitySlug(t, "public"), mustCommunityName(t, "Public"), NewCommunityDescription(""), CommunityKindSystem, CommunityStatusActive, CommunityVisibilityPublic, nil, now, now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for updated_at before created_at, got %v", err)
 	}
+
+	updatedAt := now.Add(time.Minute)
+	if err := systemCommunity.UpdateDetails(mustCommunityName(t, "Public Square"), NewCommunityDescription("general discussion"), updatedAt); err != nil {
+		t.Fatalf("UpdateDetails returned error: %v", err)
+	}
+	if systemCommunity.Name().String() != "Public Square" || systemCommunity.Description().String() != "general discussion" || !systemCommunity.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("unexpected updated community details: name=%q description=%q updated=%s", systemCommunity.Name().String(), systemCommunity.Description().String(), systemCommunity.UpdatedAt())
+	}
+	if err := systemCommunity.UpdateDetails(mustCommunityName(t, "Invalid"), NewCommunityDescription(""), now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for update before created time, got %v", err)
+	}
+}
+
+func TestCommunityRuleValuesAndLifecycle(t *testing.T) {
+	if _, err := NewCommunityRuleID(uuid.NewString()); err != nil {
+		t.Fatalf("NewCommunityRuleID returned error: %v", err)
+	}
+	if _, err := NewCommunityRuleID("not-a-uuid"); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for invalid rule id, got %v", err)
+	}
+
+	title, err := NewCommunityRuleTitle(" Be kind ")
+	if err != nil {
+		t.Fatalf("NewCommunityRuleTitle returned error: %v", err)
+	}
+	if title.String() != "Be kind" {
+		t.Fatalf("expected trimmed title, got %q", title.String())
+	}
+	if _, err := NewCommunityRuleTitle(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for blank title, got %v", err)
+	}
+	if body := NewCommunityRuleBody(" body "); body.String() != "body" {
+		t.Fatalf("expected trimmed body, got %q", body.String())
+	}
+	if _, err := NewCommunityRulePosition(-1); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for negative position, got %v", err)
+	}
+
+	now := time.Now().UTC()
+	actorID := mustUserID(t)
+	position, err := NewCommunityRulePosition(1)
+	if err != nil {
+		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
+	}
+	rule, err := NewCommunityRule(mustCommunityRuleID(t), mustCommunityID(t), title, NewCommunityRuleBody("Initial body"), position, actorID, now)
+	if err != nil {
+		t.Fatalf("NewCommunityRule returned error: %v", err)
+	}
+	if rule.CreatedBy() != actorID || rule.UpdatedBy() != actorID {
+		t.Fatalf("expected actor to be creator/updater")
+	}
+
+	updaterID := mustUserID(t)
+	updatedAt := now.Add(time.Minute)
+	updatedTitle, err := NewCommunityRuleTitle("Stay on topic")
+	if err != nil {
+		t.Fatalf("NewCommunityRuleTitle returned error: %v", err)
+	}
+	updatedPosition, err := NewCommunityRulePosition(2)
+	if err != nil {
+		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
+	}
+	if err := rule.Update(updatedTitle, NewCommunityRuleBody("Updated body"), updatedPosition, updaterID, updatedAt); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if rule.Title().String() != "Stay on topic" || rule.Body().String() != "Updated body" || rule.Position().Int() != 2 || rule.UpdatedBy() != updaterID || !rule.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("unexpected updated rule: title=%q body=%q position=%d updater=%q updated=%s", rule.Title().String(), rule.Body().String(), rule.Position().Int(), rule.UpdatedBy().String(), rule.UpdatedAt())
+	}
+	if err := rule.Update(updatedTitle, NewCommunityRuleBody(""), updatedPosition, updaterID, now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for update before created time, got %v", err)
+	}
 }
 
 func TestMembershipValuesAndCreation(t *testing.T) {
@@ -312,6 +383,16 @@ func mustCommunityApplicationID(t *testing.T) CommunityApplicationID {
 	id, err := NewCommunityApplicationID(uuid.NewString())
 	if err != nil {
 		t.Fatalf("NewCommunityApplicationID returned error: %v", err)
+	}
+	return id
+}
+
+func mustCommunityRuleID(t *testing.T) CommunityRuleID {
+	t.Helper()
+
+	id, err := NewCommunityRuleID(uuid.NewString())
+	if err != nil {
+		t.Fatalf("NewCommunityRuleID returned error: %v", err)
 	}
 	return id
 }

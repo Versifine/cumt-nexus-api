@@ -30,12 +30,14 @@ type PublicCommunityBootstrapUseCase struct {
 
 type CommunityReadUseCase struct {
 	communities    CommunityRepository
+	settings       CommunitySettingsRepository
 	stats          CommunityStatsRepository
 	follows        CommunityFollowRepository
 	memberships    CommunityMembershipReadRepository
 	managePosts    CommunityManagePostRepository
 	manageComments CommunityManageCommentRepository
 	manageReports  CommunityManageReportRepository
+	rules          CommunityRuleRepository
 	now            func() time.Time
 }
 
@@ -105,6 +107,46 @@ type ListCommunityManageReportsInput struct {
 	Offset   int
 }
 
+type GetCommunityManageSettingsInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+}
+
+type UpdateCommunityManageSettingsInput struct {
+	Slug        string
+	ViewerID    userdomain.UserID
+	Name        string
+	Description string
+}
+
+type ListCommunityRulesInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+}
+
+type CreateCommunityRuleInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+	Title    string
+	Body     string
+	Position int
+}
+
+type UpdateCommunityRuleInput struct {
+	Slug     string
+	RuleID   string
+	ViewerID userdomain.UserID
+	Title    string
+	Body     string
+	Position int
+}
+
+type DeleteCommunityRuleInput struct {
+	Slug     string
+	RuleID   string
+	ViewerID userdomain.UserID
+}
+
 type ListCommunitiesResult struct {
 	Communities []Community
 }
@@ -162,6 +204,33 @@ type ListCommunityManageReportsResult struct {
 	Offset    int
 }
 
+type GetCommunityManageSettingsResult struct {
+	Community Community
+	Settings  CommunitySettings
+}
+
+type UpdateCommunityManageSettingsResult struct {
+	Community Community
+	Settings  CommunitySettings
+}
+
+type ListCommunityRulesResult struct {
+	Community Community
+	Rules     []CommunityRule
+}
+
+type CreateCommunityRuleResult struct {
+	Community Community
+	Rule      CommunityRule
+}
+
+type UpdateCommunityRuleResult struct {
+	Community Community
+	Rule      CommunityRule
+}
+
+type DeleteCommunityRuleResult struct{}
+
 type Community struct {
 	ID                string
 	Slug              string
@@ -181,13 +250,36 @@ type Community struct {
 	UpdatedAt         time.Time
 }
 
+type CommunitySettings struct {
+	Name        string
+	Description string
+	AvatarURL   string
+	BannerURL   string
+	UpdatedAt   time.Time
+}
+
+type CommunityRule struct {
+	ID          string
+	CommunityID string
+	Title       string
+	Body        string
+	Position    int
+	CreatedBy   string
+	UpdatedBy   string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type CommunityMember struct {
-	UserID    string
-	Username  string
-	Role      string
-	Status    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	UserID      string
+	Username    string
+	DisplayName string
+	AvatarURL   string
+	Headline    string
+	Role        string
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type CommunityManagePost struct {
@@ -272,6 +364,12 @@ func NewCommunityReadUseCase(communities CommunityRepository) *CommunityReadUseC
 	if repo, ok := communities.(CommunityFollowRepository); ok {
 		uc.follows = repo
 	}
+	if repo, ok := communities.(CommunitySettingsRepository); ok {
+		uc.settings = repo
+	}
+	if repo, ok := communities.(CommunityRuleRepository); ok {
+		uc.rules = repo
+	}
 	return uc
 }
 
@@ -283,6 +381,14 @@ func (uc *CommunityReadUseCase) SetManageContentReaders(posts CommunityManagePos
 	uc.managePosts = posts
 	uc.manageComments = comments
 	uc.manageReports = reports
+}
+
+func (uc *CommunityReadUseCase) SetRuleRepository(rules CommunityRuleRepository) {
+	uc.rules = rules
+}
+
+func (uc *CommunityReadUseCase) SetSettingsRepository(settings CommunitySettingsRepository) {
+	uc.settings = settings
 }
 
 func (uc *PublicCommunityBootstrapUseCase) EnsurePublicCommunity(ctx context.Context) error {
@@ -653,6 +759,192 @@ func (uc *CommunityReadUseCase) ListCommunityManageReports(ctx context.Context, 
 	return result, nil
 }
 
+func (uc *CommunityReadUseCase) GetCommunityManageSettings(ctx context.Context, input GetCommunityManageSettingsInput) (GetCommunityManageSettingsResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return GetCommunityManageSettingsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return GetCommunityManageSettingsResult{}, err
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return GetCommunityManageSettingsResult{}, err
+	}
+	return GetCommunityManageSettingsResult{
+		Community: communityDTO,
+		Settings:  toCommunitySettingsDTO(*community),
+	}, nil
+}
+
+func (uc *CommunityReadUseCase) UpdateCommunityManageSettings(ctx context.Context, input UpdateCommunityManageSettingsInput) (UpdateCommunityManageSettingsResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return UpdateCommunityManageSettingsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return UpdateCommunityManageSettingsResult{}, err
+	}
+	if roleView.role != communitydomain.MembershipRoleOwner {
+		return UpdateCommunityManageSettingsResult{}, apperr.New(apperr.CodeForbidden, "community owner required")
+	}
+	if uc.settings == nil {
+		return UpdateCommunityManageSettingsResult{}, apperr.New(apperr.CodeInternal, "community settings are not configured")
+	}
+	name, err := communitydomain.NewCommunityName(input.Name)
+	if err != nil {
+		return UpdateCommunityManageSettingsResult{}, err
+	}
+	description := communitydomain.NewCommunityDescription(input.Description)
+	if err := community.UpdateDetails(name, description, uc.now().UTC()); err != nil {
+		return UpdateCommunityManageSettingsResult{}, err
+	}
+	if err := uc.settings.UpdateDetails(ctx, *community); err != nil {
+		return UpdateCommunityManageSettingsResult{}, fmt.Errorf("update community settings: %w", err)
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return UpdateCommunityManageSettingsResult{}, err
+	}
+	return UpdateCommunityManageSettingsResult{
+		Community: communityDTO,
+		Settings:  toCommunitySettingsDTO(*community),
+	}, nil
+}
+
+func (uc *CommunityReadUseCase) ListCommunityRules(ctx context.Context, input ListCommunityRulesInput) (ListCommunityRulesResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ListCommunityRulesResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.rules == nil {
+		return ListCommunityRulesResult{}, apperr.New(apperr.CodeInternal, "community rules are not configured")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return ListCommunityRulesResult{}, err
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return ListCommunityRulesResult{}, err
+	}
+	rules, err := uc.rules.ListRules(ctx, community.ID())
+	if err != nil {
+		return ListCommunityRulesResult{}, fmt.Errorf("list community rules: %w", err)
+	}
+	result := ListCommunityRulesResult{
+		Community: communityDTO,
+		Rules:     make([]CommunityRule, 0, len(rules)),
+	}
+	for _, rule := range rules {
+		result.Rules = append(result.Rules, toCommunityRuleDTO(rule))
+	}
+	return result, nil
+}
+
+func (uc *CommunityReadUseCase) CreateCommunityRule(ctx context.Context, input CreateCommunityRuleInput) (CreateCommunityRuleResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return CreateCommunityRuleResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.rules == nil {
+		return CreateCommunityRuleResult{}, apperr.New(apperr.CodeInternal, "community rules are not configured")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return CreateCommunityRuleResult{}, err
+	}
+	title, err := communitydomain.NewCommunityRuleTitle(input.Title)
+	if err != nil {
+		return CreateCommunityRuleResult{}, err
+	}
+	position, err := communitydomain.NewCommunityRulePosition(input.Position)
+	if err != nil {
+		return CreateCommunityRuleResult{}, err
+	}
+	now := uc.now().UTC()
+	rule, err := communitydomain.NewCommunityRule(communitydomain.NewGeneratedCommunityRuleID(), community.ID(), title, communitydomain.NewCommunityRuleBody(input.Body), position, input.ViewerID, now)
+	if err != nil {
+		return CreateCommunityRuleResult{}, err
+	}
+	if err := uc.rules.CreateRule(ctx, *rule); err != nil {
+		return CreateCommunityRuleResult{}, fmt.Errorf("create community rule: %w", err)
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return CreateCommunityRuleResult{}, err
+	}
+	return CreateCommunityRuleResult{
+		Community: communityDTO,
+		Rule:      toCommunityRuleDTO(*rule),
+	}, nil
+}
+
+func (uc *CommunityReadUseCase) UpdateCommunityRule(ctx context.Context, input UpdateCommunityRuleInput) (UpdateCommunityRuleResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return UpdateCommunityRuleResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.rules == nil {
+		return UpdateCommunityRuleResult{}, apperr.New(apperr.CodeInternal, "community rules are not configured")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return UpdateCommunityRuleResult{}, err
+	}
+	ruleID, err := communitydomain.NewCommunityRuleID(input.RuleID)
+	if err != nil {
+		return UpdateCommunityRuleResult{}, err
+	}
+	rule, err := uc.rules.FindRuleByID(ctx, ruleID)
+	if err != nil {
+		return UpdateCommunityRuleResult{}, fmt.Errorf("find community rule: %w", err)
+	}
+	if rule.CommunityID() != community.ID() {
+		return UpdateCommunityRuleResult{}, apperr.New(apperr.CodeNotFound, "community rule not found")
+	}
+	title, err := communitydomain.NewCommunityRuleTitle(input.Title)
+	if err != nil {
+		return UpdateCommunityRuleResult{}, err
+	}
+	position, err := communitydomain.NewCommunityRulePosition(input.Position)
+	if err != nil {
+		return UpdateCommunityRuleResult{}, err
+	}
+	if err := rule.Update(title, communitydomain.NewCommunityRuleBody(input.Body), position, input.ViewerID, uc.now().UTC()); err != nil {
+		return UpdateCommunityRuleResult{}, err
+	}
+	if err := uc.rules.UpdateRule(ctx, *rule); err != nil {
+		return UpdateCommunityRuleResult{}, fmt.Errorf("update community rule: %w", err)
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return UpdateCommunityRuleResult{}, err
+	}
+	return UpdateCommunityRuleResult{
+		Community: communityDTO,
+		Rule:      toCommunityRuleDTO(*rule),
+	}, nil
+}
+
+func (uc *CommunityReadUseCase) DeleteCommunityRule(ctx context.Context, input DeleteCommunityRuleInput) (DeleteCommunityRuleResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return DeleteCommunityRuleResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if uc.rules == nil {
+		return DeleteCommunityRuleResult{}, apperr.New(apperr.CodeInternal, "community rules are not configured")
+	}
+	community, _, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return DeleteCommunityRuleResult{}, err
+	}
+	ruleID, err := communitydomain.NewCommunityRuleID(input.RuleID)
+	if err != nil {
+		return DeleteCommunityRuleResult{}, err
+	}
+	if err := uc.rules.DeleteRule(ctx, ruleID, community.ID()); err != nil {
+		return DeleteCommunityRuleResult{}, fmt.Errorf("delete community rule: %w", err)
+	}
+	return DeleteCommunityRuleResult{}, nil
+}
+
 func (uc *CommunityReadUseCase) CanPostInCommunity(ctx context.Context, input CanPostInCommunityInput) (CanPostInCommunityResult, error) {
 	userID := strings.TrimSpace(input.UserID)
 	if userID == "" {
@@ -887,6 +1179,28 @@ func toCommunityDTO(community communitydomain.Community, stats CommunityStats, f
 		ViewerPermissions: communityViewerPermissions(community, roleView.role, viewerID),
 		CreatedAt:         community.CreatedAt(),
 		UpdatedAt:         community.UpdatedAt(),
+	}
+}
+
+func toCommunitySettingsDTO(community communitydomain.Community) CommunitySettings {
+	return CommunitySettings{
+		Name:        community.Name().String(),
+		Description: community.Description().String(),
+		UpdatedAt:   community.UpdatedAt(),
+	}
+}
+
+func toCommunityRuleDTO(rule communitydomain.CommunityRule) CommunityRule {
+	return CommunityRule{
+		ID:          rule.ID().String(),
+		CommunityID: rule.CommunityID().String(),
+		Title:       rule.Title().String(),
+		Body:        rule.Body().String(),
+		Position:    rule.Position().Int(),
+		CreatedBy:   rule.CreatedBy().String(),
+		UpdatedBy:   rule.UpdatedBy().String(),
+		CreatedAt:   rule.CreatedAt(),
+		UpdatedAt:   rule.UpdatedAt(),
 	}
 }
 

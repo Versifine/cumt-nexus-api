@@ -154,6 +154,7 @@ func TestPostgresMembershipRepositoryListActiveMembers(t *testing.T) {
 	moderatorID := insertTestUser(ctx, t, pool, false)
 	memberID := insertTestUser(ctx, t, pool, false)
 	leftID := insertTestUser(ctx, t, pool, false)
+	updateTestUserProfile(ctx, t, pool, ownerID, "Owner Alice", "https://example.com/owner.jpg", "Owner headline")
 
 	community := mustUserCreatedCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), ownerID, now)
 	if err := communityRepo.Create(ctx, *community); err != nil {
@@ -203,6 +204,128 @@ func TestPostgresMembershipRepositoryListActiveMembers(t *testing.T) {
 		if strings.TrimSpace(members[index].Username) == "" {
 			t.Fatalf("member %d username is empty", index)
 		}
+	}
+	if members[0].DisplayName != "Owner Alice" || members[0].AvatarURL != "https://example.com/owner.jpg" || members[0].Headline != "Owner headline" {
+		t.Fatalf("expected owner profile fields, got %#v", members[0])
+	}
+}
+
+func TestPostgresCommunityRepositoryUpdateDetails(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommunityRepository(pool)
+	now := testNow()
+
+	community := mustSystemCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), now)
+	if err := repo.Create(ctx, *community); err != nil {
+		t.Fatalf("Create community returned error: %v", err)
+	}
+	cleanupCommunity(ctx, t, pool, community.ID())
+
+	updatedAt := now.Add(time.Hour)
+	if err := community.UpdateDetails(mustCommunityName(t, "Updated Community"), communitydomain.NewCommunityDescription("updated description"), updatedAt); err != nil {
+		t.Fatalf("UpdateDetails domain returned error: %v", err)
+	}
+	if err := repo.UpdateDetails(ctx, *community); err != nil {
+		t.Fatalf("UpdateDetails returned error: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, community.ID())
+	if err != nil {
+		t.Fatalf("FindByID after update returned error: %v", err)
+	}
+	if got.Name().String() != "Updated Community" || got.Description().String() != "updated description" || !got.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("unexpected updated community: name=%q description=%q updated=%s", got.Name().String(), got.Description().String(), got.UpdatedAt())
+	}
+
+	missing := mustSystemCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), now)
+	if err := repo.UpdateDetails(ctx, *missing); !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found for missing community update, got %v", err)
+	}
+}
+
+func TestPostgresCommunityRepositoryRuleCRUD(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommunityRepository(pool)
+	now := testNow()
+
+	ownerID := insertTestUser(ctx, t, pool, false)
+	updaterID := insertTestUser(ctx, t, pool, false)
+	community := mustUserCreatedCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), ownerID, now)
+	if err := repo.Create(ctx, *community); err != nil {
+		t.Fatalf("Create community returned error: %v", err)
+	}
+	cleanupCommunity(ctx, t, pool, community.ID())
+
+	firstRule := mustCommunityRule(t, community.ID(), ownerID, "Second rule", "created later but sorted second", 2, now.Add(time.Minute))
+	secondRule := mustCommunityRule(t, community.ID(), ownerID, "First rule", "created earlier but sorted first", 1, now)
+	for _, rule := range []*communitydomain.CommunityRule{firstRule, secondRule} {
+		if err := repo.CreateRule(ctx, *rule); err != nil {
+			t.Fatalf("CreateRule returned error: %v", err)
+		}
+		cleanupRule(ctx, t, pool, rule.ID())
+	}
+
+	rules, err := repo.ListRules(ctx, community.ID())
+	if err != nil {
+		t.Fatalf("ListRules returned error: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("expected two rules, got %d", len(rules))
+	}
+	if rules[0].ID() != secondRule.ID() || rules[1].ID() != firstRule.ID() {
+		t.Fatalf("rules not sorted by position: got [%q, %q]", rules[0].Title().String(), rules[1].Title().String())
+	}
+
+	got, err := repo.FindRuleByID(ctx, firstRule.ID())
+	if err != nil {
+		t.Fatalf("FindRuleByID returned error: %v", err)
+	}
+	if got.ID() != firstRule.ID() || got.Title().String() != "Second rule" {
+		t.Fatalf("unexpected rule lookup result: id=%q title=%q", got.ID().String(), got.Title().String())
+	}
+
+	updatedTitle, err := communitydomain.NewCommunityRuleTitle("Updated rule")
+	if err != nil {
+		t.Fatalf("NewCommunityRuleTitle returned error: %v", err)
+	}
+	updatedPosition, err := communitydomain.NewCommunityRulePosition(0)
+	if err != nil {
+		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
+	}
+	updatedAt := now.Add(2 * time.Hour)
+	if err := firstRule.Update(updatedTitle, communitydomain.NewCommunityRuleBody("updated body"), updatedPosition, updaterID, updatedAt); err != nil {
+		t.Fatalf("Update domain returned error: %v", err)
+	}
+	if err := repo.UpdateRule(ctx, *firstRule); err != nil {
+		t.Fatalf("UpdateRule returned error: %v", err)
+	}
+
+	updated, err := repo.FindRuleByID(ctx, firstRule.ID())
+	if err != nil {
+		t.Fatalf("FindRuleByID updated returned error: %v", err)
+	}
+	if updated.Title().String() != "Updated rule" || updated.Body().String() != "updated body" || updated.Position().Int() != 0 || updated.UpdatedBy() != updaterID || !updated.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("unexpected updated rule: title=%q body=%q position=%d updater=%q updated=%s", updated.Title().String(), updated.Body().String(), updated.Position().Int(), updated.UpdatedBy().String(), updated.UpdatedAt())
+	}
+
+	otherCommunity := mustUserCreatedCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), ownerID, now)
+	if err := repo.Create(ctx, *otherCommunity); err != nil {
+		t.Fatalf("Create other community returned error: %v", err)
+	}
+	cleanupCommunity(ctx, t, pool, otherCommunity.ID())
+	if err := repo.DeleteRule(ctx, firstRule.ID(), otherCommunity.ID()); !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found for cross-community delete, got %v", err)
+	}
+
+	if err := repo.DeleteRule(ctx, firstRule.ID(), community.ID()); err != nil {
+		t.Fatalf("DeleteRule returned error: %v", err)
+	}
+	if _, err := repo.FindRuleByID(ctx, firstRule.ID()); !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found after delete, got %v", err)
+	}
+
+	if err := repo.CreateRule(ctx, *secondRule); !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict for duplicate rule id, got %v", err)
 	}
 }
 
@@ -475,7 +598,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireCommunitySchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "community_memberships", "community_applications"} {
+	for _, table := range []string{"users", "communities", "community_memberships", "community_applications", "community_rules"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -574,6 +697,18 @@ func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool, isPla
 	return id
 }
 
+func updateTestUserProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID userdomain.UserID, displayName string, avatarURL string, headline string) {
+	t.Helper()
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE users
+		SET display_name = $2, avatar_url = $3, headline = $4
+		WHERE id = $1::uuid
+	`, userID.String(), displayName, avatarURL, headline); err != nil {
+		t.Fatalf("update test user profile: %v", err)
+	}
+}
+
 func cleanupCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id communitydomain.CommunityID) {
 	t.Helper()
 
@@ -604,6 +739,16 @@ func cleanupApplication(ctx context.Context, t *testing.T, pool *pgxpool.Pool, i
 	t.Cleanup(func() {
 		if _, err := pool.Exec(ctx, `DELETE FROM community_applications WHERE id = $1::uuid`, id.String()); err != nil {
 			t.Fatalf("cleanup application %q: %v", id.String(), err)
+		}
+	})
+}
+
+func cleanupRule(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id communitydomain.CommunityRuleID) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM community_rules WHERE id = $1::uuid`, id.String()); err != nil {
+			t.Fatalf("cleanup community rule %q: %v", id.String(), err)
 		}
 	})
 }
@@ -746,6 +891,32 @@ func mustApplication(t *testing.T, applicantID userdomain.UserID, slug community
 		t.Fatalf("NewCommunityApplication returned error: %v", err)
 	}
 	return application
+}
+
+func mustCommunityRule(t *testing.T, communityID communitydomain.CommunityID, actorID userdomain.UserID, rawTitle string, rawBody string, position int, now time.Time) *communitydomain.CommunityRule {
+	t.Helper()
+
+	title, err := communitydomain.NewCommunityRuleTitle(rawTitle)
+	if err != nil {
+		t.Fatalf("NewCommunityRuleTitle returned error: %v", err)
+	}
+	rulePosition, err := communitydomain.NewCommunityRulePosition(position)
+	if err != nil {
+		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
+	}
+	rule, err := communitydomain.NewCommunityRule(
+		communitydomain.NewGeneratedCommunityRuleID(),
+		communityID,
+		title,
+		communitydomain.NewCommunityRuleBody(rawBody),
+		rulePosition,
+		actorID,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("NewCommunityRule returned error: %v", err)
+	}
+	return rule
 }
 
 func assertSameCommunity(t *testing.T, got *communitydomain.Community, want *communitydomain.Community) {

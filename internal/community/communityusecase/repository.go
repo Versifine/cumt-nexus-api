@@ -19,6 +19,10 @@ type CommunityRepository interface {
 	ListActivePublic(ctx context.Context) ([]communitydomain.Community, error)
 }
 
+type CommunitySettingsRepository interface {
+	UpdateDetails(ctx context.Context, community communitydomain.Community) error
+}
+
 type CommunityStatsRepository interface {
 	LoadPublicStatsByCommunityIDs(ctx context.Context, communityIDs []communitydomain.CommunityID) (map[communitydomain.CommunityID]CommunityStats, error)
 }
@@ -49,6 +53,14 @@ type CommunityManageCommentRepository interface {
 
 type CommunityManageReportRepository interface {
 	ListReportsByCommunityForManagement(ctx context.Context, communityID communitydomain.CommunityID, status moderationdomain.ReportStatus, limit int, offset int) ([]moderationusecase.ContentReportRecord, error)
+}
+
+type CommunityRuleRepository interface {
+	ListRules(ctx context.Context, communityID communitydomain.CommunityID) ([]communitydomain.CommunityRule, error)
+	FindRuleByID(ctx context.Context, id communitydomain.CommunityRuleID) (*communitydomain.CommunityRule, error)
+	CreateRule(ctx context.Context, rule communitydomain.CommunityRule) error
+	UpdateRule(ctx context.Context, rule communitydomain.CommunityRule) error
+	DeleteRule(ctx context.Context, id communitydomain.CommunityRuleID, communityID communitydomain.CommunityID) error
 }
 
 type CommunityApplicationRepository interface {

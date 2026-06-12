@@ -17,8 +17,10 @@ import (
 )
 
 var _ communityusecase.CommunityRepository = (*PostgresCommunityRepository)(nil)
+var _ communityusecase.CommunitySettingsRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityStatsRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityFollowRepository = (*PostgresCommunityRepository)(nil)
+var _ communityusecase.CommunityRuleRepository = (*PostgresCommunityRepository)(nil)
 var _ communityusecase.CommunityMembershipRepository = (*PostgresMembershipRepository)(nil)
 var _ communityusecase.CommunityMembershipReadRepository = (*PostgresMembershipRepository)(nil)
 var _ communityusecase.CommunityApplicationRepository = (*PostgresApplicationRepository)(nil)
@@ -178,6 +180,186 @@ func (repo *PostgresCommunityRepository) ListActivePublic(ctx context.Context) (
 	}
 
 	return communities, nil
+}
+
+func (repo *PostgresCommunityRepository) UpdateDetails(ctx context.Context, community communitydomain.Community) error {
+	const query = `
+		UPDATE communities
+		SET name = $2,
+			description = $3,
+			updated_at = $4
+		WHERE id = $1::uuid
+	`
+
+	tag, err := repo.db.Exec(
+		ctx,
+		query,
+		community.ID().String(),
+		community.Name().String(),
+		community.Description().String(),
+		community.UpdatedAt(),
+	)
+	if err != nil {
+		return mapPostgresWriteError("update community details", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "community not found")
+	}
+
+	return nil
+}
+
+func (repo *PostgresCommunityRepository) ListRules(ctx context.Context, communityID communitydomain.CommunityID) ([]communitydomain.CommunityRule, error) {
+	const query = `
+		SELECT
+			id::text,
+			community_id::text,
+			title,
+			body,
+			position,
+			created_by::text,
+			updated_by::text,
+			created_at,
+			updated_at
+		FROM community_rules
+		WHERE community_id = $1::uuid
+		ORDER BY position ASC, created_at ASC, id ASC
+	`
+
+	rows, err := repo.db.Query(ctx, query, communityID.String())
+	if err != nil {
+		return nil, fmt.Errorf("list community rules: %w", err)
+	}
+	defer rows.Close()
+
+	rules := make([]communitydomain.CommunityRule, 0)
+	for rows.Next() {
+		rule, err := scanCommunityRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, *rule)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate community rules: %w", err)
+	}
+
+	return rules, nil
+}
+
+func (repo *PostgresCommunityRepository) FindRuleByID(ctx context.Context, id communitydomain.CommunityRuleID) (*communitydomain.CommunityRule, error) {
+	const query = `
+		SELECT
+			id::text,
+			community_id::text,
+			title,
+			body,
+			position,
+			created_by::text,
+			updated_by::text,
+			created_at,
+			updated_at
+		FROM community_rules
+		WHERE id = $1::uuid
+		LIMIT 1
+	`
+
+	row := repo.db.QueryRow(ctx, query, id.String())
+	rule, err := scanCommunityRule(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.New(apperr.CodeNotFound, "community rule not found")
+		}
+		return nil, err
+	}
+
+	return rule, nil
+}
+
+func (repo *PostgresCommunityRepository) CreateRule(ctx context.Context, rule communitydomain.CommunityRule) error {
+	const query = `
+		INSERT INTO community_rules (
+			id,
+			community_id,
+			title,
+			body,
+			position,
+			created_by,
+			updated_by,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7::uuid, $8, $9)
+	`
+
+	if _, err := repo.db.Exec(
+		ctx,
+		query,
+		rule.ID().String(),
+		rule.CommunityID().String(),
+		rule.Title().String(),
+		rule.Body().String(),
+		rule.Position().Int(),
+		rule.CreatedBy().String(),
+		rule.UpdatedBy().String(),
+		rule.CreatedAt(),
+		rule.UpdatedAt(),
+	); err != nil {
+		return mapPostgresWriteError("create community rule", err)
+	}
+
+	return nil
+}
+
+func (repo *PostgresCommunityRepository) UpdateRule(ctx context.Context, rule communitydomain.CommunityRule) error {
+	const query = `
+		UPDATE community_rules
+		SET title = $3,
+			body = $4,
+			position = $5,
+			updated_by = $6::uuid,
+			updated_at = $7
+		WHERE id = $1::uuid
+			AND community_id = $2::uuid
+	`
+
+	tag, err := repo.db.Exec(
+		ctx,
+		query,
+		rule.ID().String(),
+		rule.CommunityID().String(),
+		rule.Title().String(),
+		rule.Body().String(),
+		rule.Position().Int(),
+		rule.UpdatedBy().String(),
+		rule.UpdatedAt(),
+	)
+	if err != nil {
+		return mapPostgresWriteError("update community rule", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "community rule not found")
+	}
+
+	return nil
+}
+
+func (repo *PostgresCommunityRepository) DeleteRule(ctx context.Context, id communitydomain.CommunityRuleID, communityID communitydomain.CommunityID) error {
+	const query = `
+		DELETE FROM community_rules
+		WHERE id = $1::uuid
+			AND community_id = $2::uuid
+	`
+
+	tag, err := repo.db.Exec(ctx, query, id.String(), communityID.String())
+	if err != nil {
+		return mapPostgresWriteError("delete community rule", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "community rule not found")
+	}
+
+	return nil
 }
 
 func (repo *PostgresCommunityRepository) LoadPublicStatsByCommunityIDs(ctx context.Context, communityIDs []communitydomain.CommunityID) (map[communitydomain.CommunityID]communityusecase.CommunityStats, error) {
@@ -442,6 +624,9 @@ func (repo *PostgresMembershipRepository) ListActiveMembers(ctx context.Context,
 		SELECT
 			users.id::text,
 			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline,
 			community_memberships.role,
 			community_memberships.status,
 			community_memberships.created_at,
@@ -473,6 +658,9 @@ func (repo *PostgresMembershipRepository) ListActiveMembers(ctx context.Context,
 		if err := rows.Scan(
 			&member.UserID,
 			&member.Username,
+			&member.DisplayName,
+			&member.AvatarURL,
+			&member.Headline,
 			&member.Role,
 			&member.Status,
 			&member.CreatedAt,
@@ -859,6 +1047,77 @@ func scanCommunity(row rowScanner) (*communitydomain.Community, error) {
 	return community, nil
 }
 
+func scanCommunityRule(row rowScanner) (*communitydomain.CommunityRule, error) {
+	var rawID string
+	var rawCommunityID string
+	var rawTitle string
+	var rawBody string
+	var rawPosition int
+	var rawCreatedBy string
+	var rawUpdatedBy string
+	var createdAt pgtype.Timestamptz
+	var updatedAt pgtype.Timestamptz
+
+	if err := row.Scan(
+		&rawID,
+		&rawCommunityID,
+		&rawTitle,
+		&rawBody,
+		&rawPosition,
+		&rawCreatedBy,
+		&rawUpdatedBy,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	id, err := communitydomain.NewCommunityRuleID(rawID)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate community rule id: %v", err)
+	}
+	communityID, err := communitydomain.NewCommunityID(rawCommunityID)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate community rule community id: %v", err)
+	}
+	title, err := communitydomain.NewCommunityRuleTitle(rawTitle)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate community rule title: %v", err)
+	}
+	position, err := communitydomain.NewCommunityRulePosition(rawPosition)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate community rule position: %v", err)
+	}
+	createdBy, err := userdomain.NewUserID(rawCreatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate community rule creator: %v", err)
+	}
+	updatedBy, err := userdomain.NewUserID(rawUpdatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate community rule updater: %v", err)
+	}
+	if !createdAt.Valid || !updatedAt.Valid {
+		return nil, fmt.Errorf("rehydrate community rule timestamps: missing timestamp")
+	}
+
+	rule, err := communitydomain.RehydrateCommunityRule(
+		id,
+		communityID,
+		title,
+		communitydomain.NewCommunityRuleBody(rawBody),
+		position,
+		createdBy,
+		updatedBy,
+		createdAt.Time,
+		updatedAt.Time,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate community rule: %v", err)
+	}
+
+	return rule, nil
+}
+
 func scanCommunityApplication(row rowScanner) (*communitydomain.CommunityApplication, error) {
 	var rawID string
 	var rawApplicantID string
@@ -993,6 +1252,8 @@ func mapPostgresWriteError(operation string, err error) error {
 			switch pgErr.ConstraintName {
 			case "communities_slug_uq":
 				return apperr.New(apperr.CodeConflict, "community slug already exists")
+			case "community_rules_pkey":
+				return apperr.New(apperr.CodeConflict, "community rule already exists")
 			case "community_memberships_pk":
 				return apperr.New(apperr.CodeConflict, "community membership already exists")
 			case "community_applications_pending_slug_uq":

@@ -319,6 +319,274 @@ func TestListCommunityManagePostsReturnsPosts(t *testing.T) {
 	}
 }
 
+func TestGetCommunityManageSettingsReturnsSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		getSettingsResult: communityusecase.GetCommunityManageSettingsResult{
+			Community: newCommunityResult("campus", now),
+			Settings: communityusecase.CommunitySettings{
+				Name:        "Campus",
+				Description: "Updated community",
+				UpdatedAt:   now,
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage/settings", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.getSettingsCalled {
+		t.Fatal("expected GetCommunityManageSettings to be called")
+	}
+	if communities.getSettingsInput.Slug != "campus" || communities.getSettingsInput.ViewerID != userID {
+		t.Fatalf("unexpected get settings input: %#v", communities.getSettingsInput)
+	}
+	var response getCommunityManageSettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Settings.Name != "Campus" || response.Settings.Description != "Updated community" {
+		t.Fatalf("unexpected settings response: %#v", response.Settings)
+	}
+}
+
+func TestUpdateCommunityManageSettingsParsesBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 10, 9, 30, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		updateSettingsResult: communityusecase.UpdateCommunityManageSettingsResult{
+			Community: newCommunityResult("campus", now),
+			Settings: communityusecase.CommunitySettings{
+				Name:        "Campus Hub",
+				Description: "Rules and updates",
+				UpdatedAt:   now,
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/communities/campus/manage/settings", bytes.NewBufferString(`{
+		"name": "Campus Hub",
+		"description": "Rules and updates"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.updateSettingsCalled {
+		t.Fatal("expected UpdateCommunityManageSettings to be called")
+	}
+	if communities.updateSettingsInput.Slug != "campus" || communities.updateSettingsInput.ViewerID != userID || communities.updateSettingsInput.Name != "Campus Hub" || communities.updateSettingsInput.Description != "Rules and updates" {
+		t.Fatalf("unexpected update settings input: %#v", communities.updateSettingsInput)
+	}
+	var response updateCommunityManageSettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Settings.Name != "Campus Hub" {
+		t.Fatalf("unexpected settings response: %#v", response.Settings)
+	}
+}
+
+func TestListCommunityRulesReturnsRules(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID().String()
+	now := time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		listRulesResult: communityusecase.ListCommunityRulesResult{
+			Community: newCommunityResult("campus", now),
+			Rules: []communityusecase.CommunityRule{
+				{
+					ID:          "8f92e975-5323-4a58-bac1-1336b668183c",
+					CommunityID: "community-1",
+					Title:       "Be kind",
+					Body:        "Keep discussions constructive.",
+					Position:    1,
+					CreatedBy:   actorID,
+					UpdatedBy:   actorID,
+					CreatedAt:   now,
+					UpdatedAt:   now,
+				},
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage/rules", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.listRulesCalled {
+		t.Fatal("expected ListCommunityRules to be called")
+	}
+	if communities.listRulesInput.Slug != "campus" || communities.listRulesInput.ViewerID != userID {
+		t.Fatalf("unexpected list rules input: %#v", communities.listRulesInput)
+	}
+	var response listCommunityRulesResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Rules) != 1 || response.Rules[0].Title != "Be kind" || response.Rules[0].Position != 1 {
+		t.Fatalf("unexpected rules response: %#v", response)
+	}
+}
+
+func TestCreateCommunityRuleParsesBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID().String()
+	now := time.Date(2026, 6, 10, 10, 30, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		createRuleResult: communityusecase.CreateCommunityRuleResult{
+			Community: newCommunityResult("campus", now),
+			Rule: communityusecase.CommunityRule{
+				ID:          "8f92e975-5323-4a58-bac1-1336b668183c",
+				CommunityID: "community-1",
+				Title:       "Stay on topic",
+				Body:        "Posts should match the community.",
+				Position:    2,
+				CreatedBy:   actorID,
+				UpdatedBy:   actorID,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/manage/rules", bytes.NewBufferString(`{
+		"title": "Stay on topic",
+		"body": "Posts should match the community.",
+		"position": 2
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, recorder.Code, recorder.Body.String())
+	}
+	if !communities.createRuleCalled {
+		t.Fatal("expected CreateCommunityRule to be called")
+	}
+	if communities.createRuleInput.Slug != "campus" || communities.createRuleInput.ViewerID != userID || communities.createRuleInput.Title != "Stay on topic" || communities.createRuleInput.Body != "Posts should match the community." || communities.createRuleInput.Position != 2 {
+		t.Fatalf("unexpected create rule input: %#v", communities.createRuleInput)
+	}
+	var response createCommunityRuleResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Rule.Title != "Stay on topic" || response.Rule.Position != 2 {
+		t.Fatalf("unexpected rule response: %#v", response.Rule)
+	}
+}
+
+func TestUpdateCommunityRuleParsesBodyAndRuleID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID().String()
+	ruleID := "8f92e975-5323-4a58-bac1-1336b668183c"
+	now := time.Date(2026, 6, 10, 11, 0, 0, 0, time.UTC)
+	communities := &fakeCommunityReadUseCase{
+		updateRuleResult: communityusecase.UpdateCommunityRuleResult{
+			Community: newCommunityResult("campus", now),
+			Rule: communityusecase.CommunityRule{
+				ID:          ruleID,
+				CommunityID: "community-1",
+				Title:       "Updated title",
+				Body:        "Updated body.",
+				Position:    3,
+				CreatedBy:   actorID,
+				UpdatedBy:   actorID,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/communities/campus/manage/rules/"+ruleID, bytes.NewBufferString(`{
+		"title": "Updated title",
+		"body": "Updated body.",
+		"position": 3
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.updateRuleCalled {
+		t.Fatal("expected UpdateCommunityRule to be called")
+	}
+	if communities.updateRuleInput.Slug != "campus" || communities.updateRuleInput.RuleID != ruleID || communities.updateRuleInput.ViewerID != userID || communities.updateRuleInput.Title != "Updated title" || communities.updateRuleInput.Body != "Updated body." || communities.updateRuleInput.Position != 3 {
+		t.Fatalf("unexpected update rule input: %#v", communities.updateRuleInput)
+	}
+	var response updateCommunityRuleResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Rule.ID != ruleID || response.Rule.Title != "Updated title" {
+		t.Fatalf("unexpected rule response: %#v", response.Rule)
+	}
+}
+
+func TestDeleteCommunityRuleReturnsNoContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	ruleID := "8f92e975-5323-4a58-bac1-1336b668183c"
+	communities := &fakeCommunityReadUseCase{}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/communities/campus/manage/rules/"+ruleID, nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, recorder.Code, recorder.Body.String())
+	}
+	if !communities.deleteRuleCalled {
+		t.Fatal("expected DeleteCommunityRule to be called")
+	}
+	if communities.deleteRuleInput.Slug != "campus" || communities.deleteRuleInput.RuleID != ruleID || communities.deleteRuleInput.ViewerID != userID {
+		t.Fatalf("unexpected delete rule input: %#v", communities.deleteRuleInput)
+	}
+}
+
 func TestCommunityManageRoutesRequireAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -376,7 +644,7 @@ func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	}
 	assertCommunityErrorCode(t, recorder, apperr.CodeUnauthenticated)
-	if communities.listCalled || communities.getCalled || communities.manageCalled || communities.listMembersCalled || communities.listManagePostsCalled || communities.listManageCommentsCalled || communities.listManageReportsCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
+	if communities.listCalled || communities.getCalled || communities.manageCalled || communities.listMembersCalled || communities.listManagePostsCalled || communities.listManageCommentsCalled || communities.listManageReportsCalled || communities.getSettingsCalled || communities.updateSettingsCalled || communities.listRulesCalled || communities.createRuleCalled || communities.updateRuleCalled || communities.deleteRuleCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
 		t.Fatal("community usecase should not be called for invalid auth")
 	}
 }
@@ -704,6 +972,12 @@ type fakeCommunityReadUseCase struct {
 	listManagePostsCalled    bool
 	listManageCommentsCalled bool
 	listManageReportsCalled  bool
+	getSettingsCalled        bool
+	updateSettingsCalled     bool
+	listRulesCalled          bool
+	createRuleCalled         bool
+	updateRuleCalled         bool
+	deleteRuleCalled         bool
 	listInput                communityusecase.ListCommunitiesInput
 	getInput                 communityusecase.GetCommunityInput
 	followInput              communityusecase.FollowCommunityInput
@@ -714,6 +988,12 @@ type fakeCommunityReadUseCase struct {
 	listManagePostsInput     communityusecase.ListCommunityManagePostsInput
 	listManageCommentsInput  communityusecase.ListCommunityManageCommentsInput
 	listManageReportsInput   communityusecase.ListCommunityManageReportsInput
+	getSettingsInput         communityusecase.GetCommunityManageSettingsInput
+	updateSettingsInput      communityusecase.UpdateCommunityManageSettingsInput
+	listRulesInput           communityusecase.ListCommunityRulesInput
+	createRuleInput          communityusecase.CreateCommunityRuleInput
+	updateRuleInput          communityusecase.UpdateCommunityRuleInput
+	deleteRuleInput          communityusecase.DeleteCommunityRuleInput
 	listResult               communityusecase.ListCommunitiesResult
 	getResult                communityusecase.GetCommunityResult
 	followResult             communityusecase.FollowCommunityResult
@@ -724,6 +1004,12 @@ type fakeCommunityReadUseCase struct {
 	listManagePostsResult    communityusecase.ListCommunityManagePostsResult
 	listManageCommentsResult communityusecase.ListCommunityManageCommentsResult
 	listManageReportsResult  communityusecase.ListCommunityManageReportsResult
+	getSettingsResult        communityusecase.GetCommunityManageSettingsResult
+	updateSettingsResult     communityusecase.UpdateCommunityManageSettingsResult
+	listRulesResult          communityusecase.ListCommunityRulesResult
+	createRuleResult         communityusecase.CreateCommunityRuleResult
+	updateRuleResult         communityusecase.UpdateCommunityRuleResult
+	deleteRuleResult         communityusecase.DeleteCommunityRuleResult
 	listErr                  error
 	getErr                   error
 	followErr                error
@@ -734,6 +1020,12 @@ type fakeCommunityReadUseCase struct {
 	listManagePostsErr       error
 	listManageCommentsErr    error
 	listManageReportsErr     error
+	getSettingsErr           error
+	updateSettingsErr        error
+	listRulesErr             error
+	createRuleErr            error
+	updateRuleErr            error
+	deleteRuleErr            error
 }
 
 func (f *fakeCommunityReadUseCase) ListCommunities(ctx context.Context, input communityusecase.ListCommunitiesInput) (communityusecase.ListCommunitiesResult, error) {
@@ -794,6 +1086,42 @@ func (f *fakeCommunityReadUseCase) ListCommunityManageReports(ctx context.Contex
 	f.listManageReportsCalled = true
 	f.listManageReportsInput = input
 	return f.listManageReportsResult, f.listManageReportsErr
+}
+
+func (f *fakeCommunityReadUseCase) GetCommunityManageSettings(ctx context.Context, input communityusecase.GetCommunityManageSettingsInput) (communityusecase.GetCommunityManageSettingsResult, error) {
+	f.getSettingsCalled = true
+	f.getSettingsInput = input
+	return f.getSettingsResult, f.getSettingsErr
+}
+
+func (f *fakeCommunityReadUseCase) UpdateCommunityManageSettings(ctx context.Context, input communityusecase.UpdateCommunityManageSettingsInput) (communityusecase.UpdateCommunityManageSettingsResult, error) {
+	f.updateSettingsCalled = true
+	f.updateSettingsInput = input
+	return f.updateSettingsResult, f.updateSettingsErr
+}
+
+func (f *fakeCommunityReadUseCase) ListCommunityRules(ctx context.Context, input communityusecase.ListCommunityRulesInput) (communityusecase.ListCommunityRulesResult, error) {
+	f.listRulesCalled = true
+	f.listRulesInput = input
+	return f.listRulesResult, f.listRulesErr
+}
+
+func (f *fakeCommunityReadUseCase) CreateCommunityRule(ctx context.Context, input communityusecase.CreateCommunityRuleInput) (communityusecase.CreateCommunityRuleResult, error) {
+	f.createRuleCalled = true
+	f.createRuleInput = input
+	return f.createRuleResult, f.createRuleErr
+}
+
+func (f *fakeCommunityReadUseCase) UpdateCommunityRule(ctx context.Context, input communityusecase.UpdateCommunityRuleInput) (communityusecase.UpdateCommunityRuleResult, error) {
+	f.updateRuleCalled = true
+	f.updateRuleInput = input
+	return f.updateRuleResult, f.updateRuleErr
+}
+
+func (f *fakeCommunityReadUseCase) DeleteCommunityRule(ctx context.Context, input communityusecase.DeleteCommunityRuleInput) (communityusecase.DeleteCommunityRuleResult, error) {
+	f.deleteRuleCalled = true
+	f.deleteRuleInput = input
+	return f.deleteRuleResult, f.deleteRuleErr
 }
 
 type fakeCommunityApplicationUseCase struct {
