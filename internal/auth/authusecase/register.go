@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	platformsettings "github.com/Versifine/cumt-nexus-api/internal/platform/settings"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -21,6 +23,7 @@ type RegisterUseCase struct {
 	userCreator    UserCreator
 	passwordHasher PasswordHasher
 	tokenIssuer    AccessTokenIssuer
+	settingsReader platformsettings.Reader
 	now            func() time.Time
 }
 type RegisterInput struct {
@@ -53,8 +56,15 @@ func NewRegisterUserCase(userCreator UserCreator, passwordHasher PasswordHasher,
 	}
 }
 
+func (uc *RegisterUseCase) SetSettingsReader(settingsReader platformsettings.Reader) {
+	uc.settingsReader = settingsReader
+}
+
 func (uc *RegisterUseCase) Register(ctx context.Context, input RegisterInput) (RegisterResult, error) {
 	now := uc.now().UTC()
+	if err := uc.ensureRegistrationEnabled(ctx); err != nil {
+		return RegisterResult{}, err
+	}
 
 	username, err := userdomain.NewUsername(input.Username)
 	if err != nil {
@@ -96,4 +106,18 @@ func (uc *RegisterUseCase) Register(ctx context.Context, input RegisterInput) (R
 			CreatedAt: user.CreatedAt(),
 		},
 	}, nil
+}
+
+func (uc *RegisterUseCase) ensureRegistrationEnabled(ctx context.Context) error {
+	if uc.settingsReader == nil {
+		return nil
+	}
+	enabled, err := uc.settingsReader.IsEnabled(ctx, platformsettings.RegistrationEnabled)
+	if err != nil {
+		return fmt.Errorf("read registration setting: %w", err)
+	}
+	if !enabled {
+		return apperr.New(apperr.CodeForbidden, "registration is disabled")
+	}
+	return nil
 }
