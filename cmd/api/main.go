@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Versifine/cumt-nexus-api/internal/admin/adminrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/admin/adminusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/admin/delivery/adminhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authpassword"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authtoken"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authusecase"
@@ -95,6 +98,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	notificationRepo := notificationrepository.NewPostgresNotificationRepository(pool)
 	mediaRepo := mediarepository.NewPostgresMediaRepository(pool)
 	effectRepo := effectrepository.NewPostgresEffectRepository(pool)
+	adminRepo := adminrepository.NewPostgresAdminRepository(pool)
 	objectStorage, err := storage.NewObjectStorage(ctx, cfg.Storage)
 	if err != nil {
 		return err
@@ -105,6 +109,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	loginUC := authusecase.NewLoginUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
 	currentUserUC := userusecase.NewCurrentUserUseCase(userRepo, platformStaffRepo)
 	publicUserUC := userusecase.NewPublicUserUseCase(userRepo)
+	updateProfileUC := userusecase.NewUpdateProfileUseCase(userRepo, time.Now)
 	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
 	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
 	communityReadUC.SetMembershipReader(communityrepository.NewPostgresMembershipRepository(pool))
@@ -127,17 +132,24 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	searchUC := searchusecase.NewUseCase(searchRepo)
 	notificationUC := notificationusecase.NewUseCase(notificationRepo, time.Now)
 	commentUC.SetNotificationPublisher(notificationUC)
+	postUC.SetNotificationPublisher(notificationUC)
 	voteUC.SetNotificationPublisher(notificationUC)
+	registerUC.SetSettingsReader(adminRepo)
+	postUC.SetSettingsReader(adminRepo)
+	commentUC.SetSettingsReader(adminRepo)
 	mediaUC := mediausecase.NewUseCase(mediaRepo, objectStorage, mediausecase.UploadLimits{
 		ImageMaxBytes: cfg.Upload.ImageMaxBytes,
 	}, time.Now)
+	mediaUC.SetSettingsReader(adminRepo)
 	contentRefUC := contentrefusecase.NewUseCase()
 	effectUC := effectusecase.NewUseCase(effectRepo, commentRepo, time.Now)
+	adminUC := adminusecase.NewUseCase(adminRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
 	authHandler := authhttp.NewHandler(registerUC, loginUC)
 	userHandler := userhttp.NewHandler(currentUserUC, publicUserUC)
+	userHandler.SetProfileUpdater(updateProfileUC)
 	communityHandler := communityhttp.NewHandler(communityReadUC, communityApplicationUC)
 	postHandler := posthttp.NewHandler(postUC)
 	commentHandler := commenthttp.NewHandler(commentUC)
@@ -148,6 +160,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	mediaHandler := mediahttp.NewHandler(mediaUC)
 	contentRefHandler := contentrefhttp.NewHandler(contentRefUC)
 	effectHandler := effecthttp.NewHandler(effectUC)
+	adminHandler := adminhttp.NewHandler(adminUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	if cfg.Storage.Provider == "local" {
@@ -177,6 +190,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	mediahttp.RegisterRoutes(protectedV1, mediaHandler)
 	contentrefhttp.RegisterRoutes(protectedV1, contentRefHandler)
 	effecthttp.RegisterRoutes(protectedV1, effectHandler)
+	adminhttp.RegisterRoutes(protectedV1, adminHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)

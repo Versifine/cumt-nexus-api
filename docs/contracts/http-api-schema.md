@@ -27,6 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/auth/register | `authhttp.registerRequest` | `authhttp.registerResponse` | 201 |
 | POST | /api/v1/auth/login | `authhttp.loginRequest` | `authhttp.loginResponse` | 200 |
 | GET | /api/v1/me | none | `userhttp.currentUserResponse` | 200 |
+| PATCH | /api/v1/me/profile | `userhttp.updateProfileRequest` | `userhttp.updateProfileResponse` | 200 |
 | GET | /api/v1/me/saved-posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/me/followed-communities | query | `communityhttp.listFollowedCommunitiesResponse` | 200 |
 | GET | /api/v1/me/points | none | `effecthttp.getMyPointsResponse` | 200 |
@@ -38,6 +39,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/communities/:slug/manage/comments | query | `communityhttp.listCommunityManageCommentsResponse` | 200 |
 | GET | /api/v1/communities/:slug/manage/reports | query | `communityhttp.listCommunityManageReportsResponse` | 200 |
 | GET | /api/v1/communities/:slug/manage/members | query | `communityhttp.listCommunityMembersResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage/settings | none | `communityhttp.getCommunityManageSettingsResponse` | 200 |
+| PATCH | /api/v1/communities/:slug/manage/settings | `communityhttp.updateCommunityManageSettingsRequest` | `communityhttp.updateCommunityManageSettingsResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage/rules | none | `communityhttp.listCommunityRulesResponse` | 200 |
+| POST | /api/v1/communities/:slug/manage/rules | `communityhttp.writeCommunityRuleRequest` | `communityhttp.createCommunityRuleResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/manage/rules/:rule_id | `communityhttp.writeCommunityRuleRequest` | `communityhttp.updateCommunityRuleResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/manage/rules/:rule_id | none | none | 204 |
 | POST | /api/v1/communities/:slug/follow | none | none | 204 |
 | DELETE | /api/v1/communities/:slug/follow | none | none | 204 |
 | POST | /api/v1/community-applications | `communityhttp.submitCommunityApplicationRequest` | `communityhttp.submitCommunityApplicationResponse` | 201 |
@@ -45,6 +52,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/community-applications/:id | none | `communityhttp.getCommunityApplicationResponse` | 200 |
 | POST | /api/v1/community-applications/:id/approve | none | `communityhttp.approveCommunityApplicationResponse` | 200 |
 | POST | /api/v1/community-applications/:id/reject | `communityhttp.rejectCommunityApplicationRequest` | `communityhttp.rejectCommunityApplicationResponse` | 200 |
+| GET | /api/v1/admin/users | query | `adminhttp.listAdminUsersResponse` | 200 |
+| PATCH | /api/v1/admin/users/:id | `adminhttp.updateAdminUserRequest` | `adminhttp.updateAdminUserResponse` | 200 |
+| GET | /api/v1/admin/communities | query | `adminhttp.listAdminCommunitiesResponse` | 200 |
+| PATCH | /api/v1/admin/communities/:id | `adminhttp.updateAdminCommunityStatusRequest` | `adminhttp.updateAdminCommunityStatusResponse` | 200 |
+| GET | /api/v1/admin/effects | query | `adminhttp.listAdminEffectsResponse` | 200 |
+| PATCH | /api/v1/admin/effects/:id | `adminhttp.updateAdminEffectRequest` | `adminhttp.updateAdminEffectResponse` | 200 |
+| GET | /api/v1/admin/settings | none | `adminhttp.listAdminSettingsResponse` | 200 |
+| PATCH | /api/v1/admin/settings/:key | `adminhttp.updateAdminSettingRequest` | `adminhttp.updateAdminSettingResponse` | 200 |
+| GET | /api/v1/admin/audit-logs | query | `adminhttp.listAdminAuditLogsResponse` | 200 |
 | POST | /api/v1/communities/:slug/posts | `posthttp.publishPostRequest` | `posthttp.publishPostResponse` | 201 |
 | GET | /api/v1/communities/:slug/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
@@ -90,10 +106,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 |---|---|
 | `authhttp.loginRequest` | `username`, `password` |
 | `authhttp.registerRequest` | `username`, `password` |
+| `adminhttp.updateAdminCommunityStatusRequest` | `status` |
+| `adminhttp.updateAdminEffectRequest` | `is_active` |
+| `adminhttp.updateAdminSettingRequest` | `enabled` |
 | `commenthttp.publishCommentRequest` | `body` |
 | `commenthttp.setCommentVoteRequest` | `value` |
 | `commenthttp.updateCommentRequest` | `body` |
 | `communityhttp.rejectCommunityApplicationRequest` | `reject_reason` |
+| `communityhttp.updateCommunityManageSettingsRequest` | `name` |
+| `communityhttp.writeCommunityRuleRequest` | `title` |
 | `contentrefhttp.resolveEmbedRequest` | `url` |
 | `contentrefhttp.resolveLinkPreviewRequest` | `url` |
 | `effecthttp.applyCommentEffectRequest` | `effect_id` |
@@ -113,12 +134,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `authhttp` | `loginRequest` | `username`, `password` |
 | `authhttp` | `loginResponse` | `access_token`, `token_type`, `expires_in`, `user` |
 | `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at` |
-| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `created_at` |
+| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `created_at` |
 | `userhttp` | `publicUserStatsResponse` | `post_count`, `comment_count` |
 | `userhttp` | `getPublicUserResponse` | `user` |
+| `userhttp` | `updateProfileRequest` | `display_name`, `avatar_url`, `banner_url`, `headline`, `bio` |
+| `userhttp` | `updateProfileResponse` | `user` |
 | `communityhttp` | `listCommunitiesResponse` | `communities` |
 | `communityhttp` | `getCommunityResponse` | `community` |
 | `communityhttp` | `getCommunityManageContextResponse` | `community` |
+| `communityhttp` | `getCommunityManageSettingsResponse` | `community`, `settings` |
+| `communityhttp` | `updateCommunityManageSettingsResponse` | `community`, `settings` |
 | `communityhttp` | `listFollowedCommunitiesResponse` | `communities`, `limit`, `offset` |
 | `communityhttp` | `listCommunityMembersResponse` | `community`, `members`, `limit`, `offset` |
 | `communityhttp` | `communityMemberResponse` | `user`, `role`, `status`, `created_at`, `updated_at` |
@@ -130,6 +155,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `listCommunityManageReportsResponse` | `community`, `reports`, `status`, `limit`, `offset` |
 | `communityhttp` | `communityManageReportResponse` | `id`, `target_type`, `post_id`, `comment_id`, `reporter_id`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `target_preview`, `created_at`, `updated_at` |
 | `communityhttp` | `communityManageReportTargetPreviewResponse` | `target_type`, `post_id`, `comment_id`, `author_id`, `status`, `title`, `body_excerpt`, `created_at`, `updated_at` |
+| `communityhttp` | `listCommunityRulesResponse` | `community`, `rules` |
+| `communityhttp` | `createCommunityRuleResponse` | `community`, `rule` |
+| `communityhttp` | `updateCommunityRuleResponse` | `community`, `rule` |
+| `communityhttp` | `communitySettingsResponse` | `name`, `description`, `avatar_url`, `banner_url`, `updated_at` |
+| `communityhttp` | `communityRuleResponse` | `id`, `community_id`, `title`, `body`, `position`, `created_by`, `updated_by`, `created_at`, `updated_at` |
+| `communityhttp` | `updateCommunityManageSettingsRequest` | `name`, `description` |
+| `communityhttp` | `writeCommunityRuleRequest` | `title`, `body`, `position` |
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `communityhttp` | `rejectCommunityApplicationRequest` | `reject_reason` |
 | `communityhttp` | `communityApplicationResponse` | `id`, `applicant_id`, `requested_slug`, `requested_name`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `reject_reason`, `created_at`, `updated_at` |
@@ -140,10 +172,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `rejectCommunityApplicationResponse` | `application` |
 | `communityhttp` | `communityResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `kind`, `status`, `visibility`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions`, `created_at`, `updated_at` |
 | `communityhttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate` |
-| `posthttp` | `publishPostRequest` | `title`, `body`, `attachment_ids` |
-| `posthttp` | `updatePostRequest` | `title`, `body`, `attachment_ids` |
+| `adminhttp` | `adminUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at`, `updated_at` |
+| `adminhttp` | `listAdminUsersResponse` | `users`, `status`, `limit`, `offset` |
+| `adminhttp` | `updateAdminUserRequest` | `status`, `is_platform_staff` |
+| `adminhttp` | `updateAdminUserResponse` | `user` |
+| `adminhttp` | `adminCommunityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_by`, `created_at`, `updated_at` |
+| `adminhttp` | `listAdminCommunitiesResponse` | `communities`, `status`, `limit`, `offset` |
+| `adminhttp` | `updateAdminCommunityStatusRequest` | `status` |
+| `adminhttp` | `updateAdminCommunityStatusResponse` | `community` |
+| `adminhttp` | `adminEffectResponse` | `id`, `name`, `description`, `cost_points`, `asset_url`, `animation_key`, `is_active`, `created_at`, `updated_at` |
+| `adminhttp` | `listAdminEffectsResponse` | `effects`, `active`, `limit`, `offset` |
+| `adminhttp` | `updateAdminEffectRequest` | `is_active` |
+| `adminhttp` | `updateAdminEffectResponse` | `effect` |
+| `adminhttp` | `adminSettingResponse` | `key`, `enabled`, `updated_by`, `updated_at` |
+| `adminhttp` | `listAdminSettingsResponse` | `settings` |
+| `adminhttp` | `updateAdminSettingRequest` | `enabled` |
+| `adminhttp` | `updateAdminSettingResponse` | `setting` |
+| `adminhttp` | `adminAuditLogResponse` | `id`, `actor_id`, `action`, `target_type`, `target_id`, `before`, `after`, `created_at` |
+| `adminhttp` | `listAdminAuditLogsResponse` | `audit_logs`, `limit`, `offset` |
+| `posthttp` | `publishPostRequest` | `title`, `body`, `attachment_ids`, `content_refs` |
+| `posthttp` | `updatePostRequest` | `title`, `body`, `attachment_ids`, `content_refs` |
 | `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments` |
 | `posthttp` | `contentRefResponse` | `kind`, `ref_id` |
+| `posthttp` | `contentRefRequest` | `kind`, `ref_id` |
 | `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `posthttp` | `communitySummaryResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions` |
 | `posthttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate` |
@@ -154,11 +205,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `posthttp` | `publishPostResponse` | `post` |
 | `posthttp` | `listCommunityPostsResponse` | `posts`, `limit`, `offset` |
 | `posthttp` | `getPostResponse` | `post` |
-| `commenthttp` | `publishCommentRequest` | `body`, `parent_id`, `attachment_ids` |
-| `commenthttp` | `updateCommentRequest` | `body`, `attachment_ids` |
+| `commenthttp` | `publishCommentRequest` | `body`, `parent_id`, `attachment_ids`, `content_refs` |
+| `commenthttp` | `updateCommentRequest` | `body`, `attachment_ids`, `content_refs` |
 | `commenthttp` | `setCommentVoteRequest` | `value` |
 | `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `format`, `content_refs`, `author`, `status`, `depth`, `reply_count`, `has_more_replies`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `viewer_permissions`, `children`, `created_at`, `updated_at`, `attachments` |
 | `commenthttp` | `contentRefResponse` | `kind`, `ref_id` |
+| `commenthttp` | `contentRefRequest` | `kind`, `ref_id` |
 | `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `commenthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
 | `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |

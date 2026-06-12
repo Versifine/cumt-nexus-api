@@ -45,6 +45,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000011 | create_effects_points | 创建评论效果目录、用户积分账户、评论效果记录和积分流水 |
 | 000012 | add_notification_aggregation | 为通知增加点赞聚合键、聚合计数和最近 actor 字段 |
 | 000013 | add_search_full_text_indexes | 为公开社区和 visible 帖子搜索增加 PostgreSQL full-text 表达式索引 |
+| 000014 | create_community_rules | 创建社区规则表和按社区排序查询索引 |
+| 000015 | create_content_refs | 创建帖子和评论结构化内容引用表 |
+| 000016 | create_admin_management | 创建平台管理设置表和平台管理审计日志表 |
+| 000017 | add_user_profile_fields | 为 `users` 表增加公开资料字段和基础长度/URL 约束 |
+| 000018 | add_user_banner_url | 为 `users` 表增加公开主页背景图 URL 字段和 URL 约束 |
 
 ## 阶段 19 边界
 

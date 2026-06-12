@@ -30,6 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/auth/register | public | 注册并签发 access token |
 | POST | /api/v1/auth/login | public | 登录并签发 access token |
 | GET | /api/v1/me | Bearer | 当前用户 |
+| PATCH | /api/v1/me/profile | Bearer | 当前用户更新公开资料 |
 | GET | /api/v1/me/saved-posts | Bearer | 当前用户保存的公开帖子 |
 | GET | /api/v1/me/followed-communities | Bearer | 当前用户关注的公开社区 |
 | GET | /api/v1/me/points | Bearer | 当前用户积分账户 |
@@ -41,6 +42,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/communities/:slug/manage/comments | Bearer | 社区管理评论列表 |
 | GET | /api/v1/communities/:slug/manage/reports | Bearer | 社区管理举报列表 |
 | GET | /api/v1/communities/:slug/manage/members | Bearer | 社区管理成员列表 |
+| GET | /api/v1/communities/:slug/manage/settings | Bearer | 社区管理设置读取 |
+| PATCH | /api/v1/communities/:slug/manage/settings | Bearer | 社区 owner 更新基础设置 |
+| GET | /api/v1/communities/:slug/manage/rules | Bearer | 社区规则列表 |
+| POST | /api/v1/communities/:slug/manage/rules | Bearer | 社区 owner/moderator 创建规则 |
+| PATCH | /api/v1/communities/:slug/manage/rules/:rule_id | Bearer | 社区 owner/moderator 更新规则 |
+| DELETE | /api/v1/communities/:slug/manage/rules/:rule_id | Bearer | 社区 owner/moderator 删除规则 |
 | POST | /api/v1/communities/:slug/follow | Bearer | 关注社区 |
 | DELETE | /api/v1/communities/:slug/follow | Bearer | 取消关注社区 |
 | POST | /api/v1/community-applications | Bearer | 提交社区申请 |
@@ -48,6 +55,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/community-applications/:id | Bearer | 平台 staff 查看社区申请详情 |
 | POST | /api/v1/community-applications/:id/approve | Bearer | 平台 staff 审批通过社区申请 |
 | POST | /api/v1/community-applications/:id/reject | Bearer | 平台 staff 拒绝社区申请 |
+| GET | /api/v1/admin/users | Bearer | 平台 staff 用户管理列表 |
+| PATCH | /api/v1/admin/users/:id | Bearer | 平台 staff 更新用户状态或平台 staff 标记 |
+| GET | /api/v1/admin/communities | Bearer | 平台 staff 社区管理列表 |
+| PATCH | /api/v1/admin/communities/:id | Bearer | 平台 staff 更新社区状态 |
+| GET | /api/v1/admin/effects | Bearer | 平台 staff 评论效果管理列表 |
+| PATCH | /api/v1/admin/effects/:id | Bearer | 平台 staff 启用或停用评论效果 |
+| GET | /api/v1/admin/settings | Bearer | 平台 staff 读取平台运行开关 |
+| PATCH | /api/v1/admin/settings/:key | Bearer | 平台 staff 更新平台运行开关 |
+| GET | /api/v1/admin/audit-logs | Bearer | 平台 staff 查看平台管理审计日志 |
 | GET | /api/v1/communities/:slug/posts | optional Bearer | 社区帖子列表 |
 | GET | /api/v1/posts | optional Bearer | 全站帖子流 |
 | GET | /api/v1/posts/:id | optional Bearer | 帖子详情 |
@@ -96,6 +112,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/communities/:slug/manage/comments` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=all|visible|removed|deleted|locked|hidden`，默认 `all` |
 | `GET /api/v1/communities/:slug/manage/reports` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=pending|resolved|dismissed`，默认 `pending` |
 | `GET /api/v1/communities/:slug/manage/members` | `limit`, `offset` | 社区 owner/moderator 视角，只返回 active 成员 |
+| `GET /api/v1/admin/users` | `status`, `limit`, `offset` | 平台 staff 视角；`status=all|active|disabled`，默认 `all` |
+| `GET /api/v1/admin/communities` | `status`, `limit`, `offset` | 平台 staff 视角；`status=all|active|suspended|archived`，默认 `all` |
+| `GET /api/v1/admin/effects` | `active`, `limit`, `offset` | 平台 staff 视角；`active=all|true|false`，默认 `all` |
+| `GET /api/v1/admin/audit-logs` | `target_type`, `target_id`, `limit`, `offset` | 平台 staff 视角；可按目标类型和目标 ID 过滤 |
 | `GET /api/v1/communities/:slug/posts` | `sort`, `t`, `limit`, `offset` | `sort=best|hot|new|top|rising`，`t=hour|day|week|month|year|all`，分页默认由 usecase 收口 |
 | `GET /api/v1/posts` | `source`, `sort`, `t`, `limit`, `offset` | `source=all|recommended`；`recommended` 当前为公开可解释推荐流，默认 `sort=hot`，匿名使用 `hot + new` 混排并做社区 rank 去重，登录态给关注/互动社区加权；`sort=best|hot|new|top|rising`；`t=hour|day|week|month|year|all` |
 | `GET /api/v1/posts/:id/comments` | `view`, `sort`, `limit`, `offset`, `max_depth` | `view=flat|tree`，`sort=best|top|new|old|controversial`，tree view 返回前序遍历扁平数组 |
@@ -105,7 +125,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/search` | `q`, `scope`, `limit`, `offset` | `scope=all|communities|posts`；PostgreSQL full-text search 使用 `ts_rank_cd` 排序，帖子字段权重为标题 > 社区名/slug > 正文 |
 | `GET /api/v1/notifications` | `category`, `status`, `limit`, `offset` | `category=all|replies|mentions|likes|system`，`status=all|unread|read` |
 
-评论、回复、帖子点赞和评论点赞会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，并在通知响应中返回 `aggregate_count` 与 `last_actor_id`。
+评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，并在通知响应中返回 `aggregate_count` 与 `last_actor_id`。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，`source_type` 为 `post` 或 `comment`。
+
+社区管理设置和规则接口均需要 Bearer。设置读取允许 owner/moderator 进入管理上下文，设置更新仅允许 owner 修改 `name` 和 `description`；`avatar_url` 和 `banner_url` 当前只随响应返回，不在本轮开放写入。规则列表和 CRUD 允许 owner/moderator 使用，规则按 `position ASC, created_at ASC, id ASC` 返回。
+
+平台管理接口均需要 Bearer，且 usecase 会从数据库确认当前用户是 active 平台 staff。`/api/v1/admin/*` 写操作会写入 `admin_audit_logs`，记录 actor、action、target、before 和 after。平台运行开关目前包括 `registration_enabled`、`posting_enabled` 和 `upload_enabled`：关闭后分别阻止注册、发帖/发评论和图片上传；缺失设置行时运行时读取默认按 enabled 处理，避免 migration 未就绪时误关站。
+
+`PATCH /api/v1/me/profile` 需要 Bearer，允许当前用户更新公开资料字段 `display_name`、`avatar_url`、`banner_url`、`headline` 和 `bio`。五个字段都支持显式传空字符串清空；请求至少要包含一个字段；`display_name` 最多 40 字，`headline` 最多 80 字，`bio` 最多 300 字，`avatar_url` 和 `banner_url` 非空时必须是 `http/https` 绝对 URL。成功响应返回当前用户更新后的公开资料和实时公开计数。
+
+发帖、编辑帖子、发评论和编辑评论均支持可选 `content_refs` 请求字段，元素结构为 `{ "kind": "...", "ref_id": "..." }`，允许 `kind=image|link_preview|embed`，最多 50 条，并按请求顺序持久化和返回。`image` 引用必须指向同一次请求中已绑定或内容当前已绑定的图片附件 ID；`link_preview` 和 `embed` 的 `ref_id` 是前端通过解析接口或客户端生成的稳定引用字符串，当前不新增独立实体表。编辑请求省略 `content_refs` 时保留原引用，显式传空数组时清空原引用。
+
+图片上传响应中的 `thumbnail_url` 是前端列表页缩略图读取字段。大于 512px 边长的 PNG/JPEG 上传会同步生成最大边 512px、质量 82 的独立 JPEG 缩略图并写入 `thumbnail_object_key`；小图、WebP 或缩略图生成 / 上传失败时，`thumbnail_url` 回退为原图 `url`。该回退不影响原图上传成功。
 
 ## 错误边界
 

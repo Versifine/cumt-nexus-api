@@ -4,12 +4,13 @@
 
 ## 功能概览
 
-- 用户注册、登录、Bearer JWT 认证和当前用户读取
-- 社区列表、社区详情、社区创建申请、申请审核读取和平台 staff 审批
+- 用户注册、登录、Bearer JWT 认证、当前用户读取和公开资料更新
+- 社区列表、社区详情、社区创建申请、申请审核读取、平台 staff 审批、社区基础设置和社区规则管理
+- 平台 staff 用户 / 社区 / 评论效果管理、运行开关和审计日志
 - 帖子发布、列表、详情、编辑、软删除
 - 评论发布、列表、树状读取、编辑、软删除
 - 帖子 upvote/downvote/cancel、保存、评论投票、社区关注和 `best` / `hot` / `new` / `top` / `rising` 排序
-- 图片上传、帖子/评论图片附件绑定，支持本地存储和 Cloudflare R2
+- 图片上传、帖子/评论图片附件绑定、结构化 `content_refs` 引用持久化，支持本地存储和 Cloudflare R2
 - 内容举报、平台 staff 移除内容、举报列表和举报处理
 - PostgreSQL 基础搜索，支持匿名读取公开内容
 - 站内通知读取、分类筛选、未读摘要和标记已读
@@ -131,6 +132,7 @@ Authorization: Bearer <access_token>
 POST /api/v1/auth/register
 POST /api/v1/auth/login
 GET  /api/v1/me
+PATCH /api/v1/me/profile
 GET  /api/v1/me/saved-posts
 GET  /api/v1/me/followed-communities
 GET  /api/v1/users/:username            # public, optional Bearer
@@ -148,6 +150,12 @@ GET  /api/v1/communities/:slug/manage/posts
 GET  /api/v1/communities/:slug/manage/comments
 GET  /api/v1/communities/:slug/manage/reports
 GET  /api/v1/communities/:slug/manage/members
+GET  /api/v1/communities/:slug/manage/settings
+PATCH /api/v1/communities/:slug/manage/settings
+GET  /api/v1/communities/:slug/manage/rules
+POST /api/v1/communities/:slug/manage/rules
+PATCH /api/v1/communities/:slug/manage/rules/:rule_id
+DELETE /api/v1/communities/:slug/manage/rules/:rule_id
 POST /api/v1/communities/:slug/follow
 DELETE /api/v1/communities/:slug/follow
 POST /api/v1/community-applications
@@ -156,6 +164,24 @@ GET  /api/v1/community-applications/:id
 POST /api/v1/community-applications/:id/approve
 POST /api/v1/community-applications/:id/reject
 ```
+
+社区管理设置读取允许 owner/moderator 进入管理上下文；设置更新仅允许 owner 修改 `name` 和 `description`。社区规则列表和 CRUD 允许 owner/moderator 使用，按 `position`、创建时间和 ID 稳定排序。
+
+### Admin
+
+```text
+GET  /api/v1/admin/users
+PATCH /api/v1/admin/users/:id
+GET  /api/v1/admin/communities
+PATCH /api/v1/admin/communities/:id
+GET  /api/v1/admin/effects
+PATCH /api/v1/admin/effects/:id
+GET  /api/v1/admin/settings
+PATCH /api/v1/admin/settings/:key
+GET  /api/v1/admin/audit-logs
+```
+
+平台管理接口都需要 Bearer，并要求当前用户是 active 平台 staff。写操作会记录平台管理审计日志。运行开关包括 `registration_enabled`、`posting_enabled` 和 `upload_enabled`，分别控制注册、发帖 / 发评论和图片上传。
 
 ### Posts
 
@@ -182,6 +208,8 @@ GET /api/v1/posts?source=recommended&sort=hot&t=day&limit=20&offset=0
 
 `source=recommended` 当前是后端公开可解释推荐流，默认 `sort=hot`，匿名读取使用 `hot + new` 混排并做社区 rank 去重；携带有效 Bearer 时会给关注社区和互动过的社区加权。显式传 `sort=best|hot|new|top|rising` 时，该排序语义作为推荐基线；它不是机器学习推荐，也不是预计算时间线。`t` 支持 `hour|day|week|month|year|all`。
 
+发帖和编辑帖子支持可选 `content_refs` 请求字段，元素结构为 `{ "kind": "image|link_preview|embed", "ref_id": "..." }`。`image` 引用必须指向同一次请求绑定或帖子当前已绑定的图片附件 ID；编辑时省略 `content_refs` 保留原引用，传空数组清空原引用。
+
 ### Comments
 
 ```text
@@ -200,6 +228,8 @@ DELETE /api/v1/comments/:id/vote
 GET /api/v1/posts/:id/comments?view=tree&sort=new&limit=20&offset=0&max_depth=6
 ```
 
+发评论和编辑评论同样支持可选 `content_refs`，语义与帖子一致：按请求顺序返回，`image` 引用必须匹配评论已绑定图片附件，省略保留、空数组清空。
+
 ### Media
 
 ```text
@@ -208,7 +238,7 @@ POST /api/v1/link-previews/resolve
 POST /api/v1/embeds/resolve
 ```
 
-上传使用 `multipart/form-data`，字段为 `file` 和可选 `alt_text`；PNG/JPEG 上传成功后会返回解析出的图片 `width` 和 `height`。附件响应包含 `thumbnail_url`，当前未生成独立缩略图对象时回退为原图 `url`。
+上传使用 `multipart/form-data`，字段为 `file` 和可选 `alt_text`；PNG/JPEG 上传成功后会返回解析出的图片 `width` 和 `height`。大于 512px 边长的 PNG/JPEG 会同步生成最大边 512px 的独立 JPEG 缩略图，附件响应中的 `thumbnail_url` 指向该缩略图；小图、WebP 或缩略图生成 / 上传失败时，`thumbnail_url` 回退为原图 `url`。
 未绑定和异常附件通过后台清理命令回收：
 
 ```bash
@@ -257,7 +287,7 @@ POST /api/v1/notifications/read-all
 
 搜索基于 PostgreSQL full-text search 和 `ts_rank_cd` 排序；帖子搜索字段权重为标题 > 社区名/slug > 正文，并叠加轻量时间衰减。
 
-评论、回复、帖子点赞和评论点赞会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数。
+评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，并进入 `mentions` 分类。
 
 ## 响应约定
 
@@ -311,6 +341,7 @@ cmd/
   api/        HTTP API 启动入口
   migrate/    migration CLI
 internal/
+  admin/      平台管理、运行开关、审计日志
   auth/       认证、密码、token、HTTP auth
   user/       用户模型和当前用户
   community/  社区、申请、审批

@@ -143,6 +143,7 @@ if ([regex]::IsMatch($mainContent, 'router\.Static\("/uploads"')) {
 Add-RoutesFromFile -Routes $actualRoutes -Path 'internal/auth/delivery/authhttp/register.go' -Prefix '/api/v1/auth' -Auth 'public'
 
 $protectedRouteFiles = @(
+    'internal/admin/delivery/adminhttp/handler.go',
     'internal/vote/delivery/votehttp/handler.go',
     'internal/moderation/delivery/moderationhttp/handler.go',
     'internal/notification/delivery/notificationhttp/handler.go',
@@ -166,7 +167,7 @@ Add-RoutesFromFile `
     -Path 'internal/user/delivery/userhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('Me')
+    -IncludeHandlers @('Me', 'UpdateProfile')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
@@ -180,7 +181,7 @@ Add-RoutesFromFile `
     -Path 'internal/community/delivery/communityhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers', 'ListCommunityManagePosts', 'ListCommunityManageComments', 'ListCommunityManageReports')
+    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers', 'ListCommunityManagePosts', 'ListCommunityManageComments', 'ListCommunityManageReports', 'GetCommunityManageSettings', 'UpdateCommunityManageSettings', 'ListCommunityRules', 'CreateCommunityRule', 'UpdateCommunityRule', 'DeleteCommunityRule')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
