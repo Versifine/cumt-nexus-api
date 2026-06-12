@@ -1,9 +1,15 @@
 package mediausecase
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,13 +80,7 @@ func TestSaveImageAttachmentRejectsInvalidInput(t *testing.T) {
 func TestUploadImageStoresObjectAndCreatesAttachment(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	uploaderID := userdomain.NewGeneratedUserID()
-	storage := &fakeObjectStorage{
-		result: PutObjectResult{
-			StorageProvider: mediadomain.StorageProviderLocal.String(),
-			Bucket:          "local",
-			PublicURL:       "http://localhost:8080/uploads/image.png",
-		},
-	}
+	storage := &fakeObjectStorage{}
 	var created mediadomain.Attachment
 	repo := &fakeAttachmentRepository{
 		createFunc: func(ctx context.Context, attachment mediadomain.Attachment) error {
@@ -88,36 +88,117 @@ func TestUploadImageStoresObjectAndCreatesAttachment(t *testing.T) {
 			return nil
 		},
 	}
-	uc := NewUseCase(repo, storage, UploadLimits{ImageMaxBytes: 1024}, func() time.Time { return now })
+	largePNG := pngBytesWithSize(800, 600)
+	uc := NewUseCase(repo, storage, UploadLimits{ImageMaxBytes: len(largePNG) + 1024}, func() time.Time { return now })
 
 	result, err := uc.UploadImage(context.Background(), UploadImageInput{
 		UploaderID: uploaderID,
-		FileBytes:  pngBytes(),
+		FileBytes:  largePNG,
 		AltText:    "Campus",
 	})
 	if err != nil {
 		t.Fatalf("UploadImage returned error: %v", err)
 	}
-	if !storage.putCalled {
-		t.Fatal("expected storage PutObject to be called")
+	if len(storage.putInputs) != 2 {
+		t.Fatalf("expected original and thumbnail uploads, got %#v", storage.putInputs)
 	}
-	if storage.input.ContentType != "image/png" || storage.input.SizeBytes != int64(len(pngBytes())) {
-		t.Fatalf("unexpected storage input: %#v", storage.input)
+	if storage.putInputs[0].ContentType != "image/png" || storage.putInputs[0].SizeBytes != int64(len(largePNG)) {
+		t.Fatalf("unexpected original storage input: %#v", storage.putInputs[0])
+	}
+	if !strings.HasPrefix(storage.putInputs[0].ObjectKey, "images/2026/06/") || !strings.HasSuffix(storage.putInputs[0].ObjectKey, ".png") {
+		t.Fatalf("unexpected original object key: %q", storage.putInputs[0].ObjectKey)
+	}
+	if storage.putInputs[1].ContentType != "image/jpeg" || storage.putInputs[1].SizeBytes <= 0 {
+		t.Fatalf("unexpected thumbnail storage input: %#v", storage.putInputs[1])
+	}
+	if !strings.HasPrefix(storage.putInputs[1].ObjectKey, "thumbnails/2026/06/") || !strings.HasSuffix(storage.putInputs[1].ObjectKey, ".jpg") {
+		t.Fatalf("unexpected thumbnail object key: %q", storage.putInputs[1].ObjectKey)
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(storage.putBodies[1])); err != nil {
+		t.Fatalf("expected jpeg thumbnail body: %v", err)
 	}
 	if created.UploaderID() != uploaderID || created.MimeType() != "image/png" || created.Status() != mediadomain.AttachmentStatusReady {
 		t.Fatalf("unexpected created attachment: %#v", created)
 	}
-	if created.Width() == nil || *created.Width() != 1 || created.Height() == nil || *created.Height() != 1 {
-		t.Fatalf("expected decoded 1x1 dimensions, got width=%v height=%v", created.Width(), created.Height())
+	if created.ThumbnailObjectKey() != storage.putInputs[1].ObjectKey {
+		t.Fatalf("expected thumbnail object key %q, got %q", storage.putInputs[1].ObjectKey, created.ThumbnailObjectKey())
+	}
+	if created.Width() == nil || *created.Width() != 800 || created.Height() == nil || *created.Height() != 600 {
+		t.Fatalf("expected decoded dimensions, got width=%v height=%v", created.Width(), created.Height())
 	}
 	if result.Attachment.PublicURL == "" || result.Attachment.ObjectKey == "" {
 		t.Fatalf("expected public url and object key, got %#v", result.Attachment)
 	}
-	if result.Attachment.Width == nil || *result.Attachment.Width != 1 || result.Attachment.Height == nil || *result.Attachment.Height != 1 {
+	if result.Attachment.Width == nil || *result.Attachment.Width != 800 || result.Attachment.Height == nil || *result.Attachment.Height != 600 {
 		t.Fatalf("expected result dimensions, got width=%v height=%v", result.Attachment.Width, result.Attachment.Height)
 	}
-	if result.Attachment.ThumbnailURL != result.Attachment.PublicURL {
-		t.Fatalf("expected thumbnail url fallback, got %#v", result.Attachment)
+	if result.Attachment.ThumbnailURL == result.Attachment.PublicURL || !strings.Contains(result.Attachment.ThumbnailURL, "/thumbnails/2026/06/") {
+		t.Fatalf("expected independent thumbnail url, got %#v", result.Attachment)
+	}
+}
+
+func TestUploadImageFallsBackToOriginalURLWhenImageIsAlreadySmall(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	storage := &fakeObjectStorage{}
+	uc := NewUseCase(&fakeAttachmentRepository{}, storage, UploadLimits{ImageMaxBytes: 1024}, func() time.Time { return now })
+
+	result, err := uc.UploadImage(context.Background(), UploadImageInput{
+		UploaderID: userdomain.NewGeneratedUserID(),
+		FileBytes:  pngBytes(),
+	})
+	if err != nil {
+		t.Fatalf("UploadImage returned error: %v", err)
+	}
+	if len(storage.putInputs) != 1 {
+		t.Fatalf("expected only original upload for small image, got %#v", storage.putInputs)
+	}
+	if result.Attachment.ThumbnailURL != result.Attachment.PublicURL || result.Attachment.ThumbnailObjectKey != "" {
+		t.Fatalf("expected small image thumbnail fallback, got %#v", result.Attachment)
+	}
+}
+
+func TestUploadImageFallsBackToOriginalURLWhenThumbnailGenerationIsUnsupported(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	storage := &fakeObjectStorage{}
+	uc := NewUseCase(&fakeAttachmentRepository{}, storage, UploadLimits{ImageMaxBytes: 1024}, func() time.Time { return now })
+
+	result, err := uc.UploadImage(context.Background(), UploadImageInput{
+		UploaderID: userdomain.NewGeneratedUserID(),
+		FileBytes:  webpBytes(),
+	})
+	if err != nil {
+		t.Fatalf("UploadImage returned error: %v", err)
+	}
+	if len(storage.putInputs) != 1 {
+		t.Fatalf("expected only original upload for unsupported thumbnail generation, got %#v", storage.putInputs)
+	}
+	if result.Attachment.MimeType != "image/webp" || result.Attachment.ThumbnailURL != result.Attachment.PublicURL {
+		t.Fatalf("expected webp thumbnail fallback, got %#v", result.Attachment)
+	}
+}
+
+func TestUploadImageFallsBackToOriginalURLWhenThumbnailUploadFails(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	storage := &fakeObjectStorage{
+		putErrByIndex: map[int]error{
+			1: errors.New("thumbnail storage unavailable"),
+		},
+	}
+	largePNG := pngBytesWithSize(800, 600)
+	uc := NewUseCase(&fakeAttachmentRepository{}, storage, UploadLimits{ImageMaxBytes: len(largePNG) + 1024}, func() time.Time { return now })
+
+	result, err := uc.UploadImage(context.Background(), UploadImageInput{
+		UploaderID: userdomain.NewGeneratedUserID(),
+		FileBytes:  largePNG,
+	})
+	if err != nil {
+		t.Fatalf("UploadImage returned error: %v", err)
+	}
+	if len(storage.putInputs) != 2 {
+		t.Fatalf("expected original and attempted thumbnail uploads, got %#v", storage.putInputs)
+	}
+	if result.Attachment.ThumbnailURL != result.Attachment.PublicURL || result.Attachment.ThumbnailObjectKey != "" {
+		t.Fatalf("expected thumbnail fallback after thumbnail upload failure, got %#v", result.Attachment)
 	}
 }
 
@@ -164,23 +245,43 @@ type fakeAttachmentRepository struct {
 }
 
 type fakeObjectStorage struct {
-	putCalled         bool
-	input             PutObjectInput
+	putInputs         []PutObjectInput
+	putBodies         [][]byte
 	result            PutObjectResult
 	err               error
+	putErrByIndex     map[int]error
 	deletedObjectKeys []string
 	deleteErrByKey    map[string]error
 }
 
 func (f *fakeObjectStorage) PutObject(ctx context.Context, input PutObjectInput) (PutObjectResult, error) {
-	f.putCalled = true
-	f.input = input
+	body, err := io.ReadAll(input.Body)
+	if err != nil {
+		return PutObjectResult{}, err
+	}
+	f.putInputs = append(f.putInputs, input)
+	f.putBodies = append(f.putBodies, body)
 	if f.err != nil {
 		return PutObjectResult{}, f.err
 	}
+	putIndex := len(f.putInputs) - 1
+	if f.putErrByIndex != nil {
+		if err, ok := f.putErrByIndex[putIndex]; ok {
+			return PutObjectResult{}, err
+		}
+	}
 	result := f.result
+	if result.StorageProvider == "" {
+		result.StorageProvider = mediadomain.StorageProviderLocal.String()
+	}
+	if result.Bucket == "" {
+		result.Bucket = "local"
+	}
 	if result.ObjectKey == "" {
 		result.ObjectKey = input.ObjectKey
+	}
+	if result.PublicURL == "" {
+		result.PublicURL = "http://localhost:8080/uploads/" + input.ObjectKey
 	}
 	return result, nil
 }
@@ -235,9 +336,23 @@ func hasAppCode(err error, code apperr.Code) bool {
 }
 
 func pngBytes() []byte {
-	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
-	if err != nil {
+	return pngBytesWithSize(1, 1)
+}
+
+func pngBytesWithSize(width int, height int) []byte {
+	imageData := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := range height {
+		for x := range width {
+			imageData.Set(x, y, color.RGBA{R: uint8(x % 255), G: uint8(y % 255), B: 0xcc, A: 0xff})
+		}
+	}
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, imageData); err != nil {
 		panic(err)
 	}
-	return data
+	return buffer.Bytes()
+}
+
+func webpBytes() []byte {
+	return []byte("RIFF\x00\x00\x00\x00WEBPVP8 ")
 }
