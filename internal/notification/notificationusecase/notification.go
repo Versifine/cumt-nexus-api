@@ -21,6 +21,7 @@ const (
 	NotificationTypeCommentReply = "comment_reply"
 	NotificationTypePostLike     = "post_like"
 	NotificationTypeCommentLike  = "comment_like"
+	NotificationTypeMention      = "mention"
 
 	NotificationSourcePost    = "post"
 	NotificationSourceComment = "comment"
@@ -161,6 +162,26 @@ func (uc *UseCase) NotifyCommentUpvoted(ctx context.Context, recipientID userdom
 	notification := uc.newNotification(recipientID, actorID, NotificationTypeCommentLike, "新的点赞", "有人赞了你的评论", NotificationSourceComment, commentID, uc.aggregateKey(NotificationTypeCommentLike, commentID))
 	if err := uc.repository.UpsertAggregated(ctx, notification); err != nil {
 		return fmt.Errorf("upsert comment like notification: %w", err)
+	}
+	return nil
+}
+
+func (uc *UseCase) NotifyMentioned(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if shouldSkipNotification(recipientID, actorID) {
+		return nil
+	}
+	sourceType = strings.TrimSpace(sourceType)
+	switch sourceType {
+	case NotificationSourcePost, NotificationSourceComment:
+	default:
+		return apperr.New(apperr.CodeInvalidArgument, "mention notification source type is invalid")
+	}
+	if strings.TrimSpace(sourceID) == "" {
+		return apperr.New(apperr.CodeInvalidArgument, "mention notification source id is required")
+	}
+	notification := uc.newNotification(recipientID, actorID, NotificationTypeMention, "新的提及", "有人提到了你", sourceType, sourceID, "")
+	if err := uc.repository.Create(ctx, notification); err != nil {
+		return fmt.Errorf("create mention notification: %w", err)
 	}
 	return nil
 }

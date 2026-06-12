@@ -16,6 +16,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/platform/config"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/db"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,6 +97,31 @@ func TestPostgresCommentRepositoryMapsForeignKeyFailure(t *testing.T) {
 	comment := mustComment(t, postdomain.NewGeneratedPostID(), authorID, nil, "Missing post", now)
 	if err := repo.Create(ctx, *comment); !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for missing related post, got %v", err)
+	}
+}
+
+func TestPostgresCommentRepositoryLoadMetadataByCommentIDsReturnsAuthorProfile(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommentRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	updateTestUserProfile(ctx, t, pool, authorID, "Alice", "https://example.com/avatar.jpg", "Backend builder")
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "comment-meta-"+randomSuffix())
+	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Comment metadata post")
+	comment := mustComment(t, postID, authorID, nil, "Metadata comment", now)
+	if err := repo.Create(ctx, *comment); err != nil {
+		t.Fatalf("Create comment returned error: %v", err)
+	}
+	cleanupComment(ctx, t, pool, comment.ID())
+
+	metadata, err := repo.LoadMetadataByCommentIDs(ctx, []commentdomain.CommentID{comment.ID()})
+	if err != nil {
+		t.Fatalf("LoadMetadataByCommentIDs returned error: %v", err)
+	}
+	got := metadata[comment.ID()]
+	if got.Author.DisplayName != "Alice" || got.Author.AvatarURL != "https://example.com/avatar.jpg" || got.Author.Headline != "Backend builder" {
+		t.Fatalf("expected author profile fields, got %#v", got.Author)
 	}
 }
 
@@ -240,6 +266,57 @@ func TestPostgresCommentRepositoryListVisibleByPostSortsByVotes(t *testing.T) {
 	}
 }
 
+func TestPostgresCommentRepositoryReplaceAndListContentRefs(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommentRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "comment-content-refs-"+randomSuffix())
+	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Comment content refs post")
+	comment := mustComment(t, postID, authorID, nil, "Comment content refs", now)
+	if err := repo.Create(ctx, *comment); err != nil {
+		t.Fatalf("Create comment returned error: %v", err)
+	}
+	cleanupComment(ctx, t, pool, comment.ID())
+
+	refs := []postusecase.ContentRef{
+		{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/comment-one"},
+		{Kind: postusecase.ContentRefKindEmbed, RefID: "https://www.youtube.com/watch?v=comment-one"},
+	}
+	if err := repo.ReplaceCommentContentRefs(ctx, comment.ID(), refs, now); err != nil {
+		t.Fatalf("ReplaceCommentContentRefs returned error: %v", err)
+	}
+	got, err := repo.ListCommentContentRefsByCommentIDs(ctx, []commentdomain.CommentID{comment.ID(), commentdomain.NewGeneratedCommentID()})
+	if err != nil {
+		t.Fatalf("ListCommentContentRefsByCommentIDs returned error: %v", err)
+	}
+	assertCommentRepositoryContentRefs(t, got[comment.ID()], refs)
+
+	replacement := []postusecase.ContentRef{
+		{Kind: postusecase.ContentRefKindImage, RefID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+	}
+	if err := repo.ReplaceCommentContentRefs(ctx, comment.ID(), replacement, now.Add(time.Minute)); err != nil {
+		t.Fatalf("ReplaceCommentContentRefs replacement returned error: %v", err)
+	}
+	got, err = repo.ListCommentContentRefsByCommentIDs(ctx, []commentdomain.CommentID{comment.ID()})
+	if err != nil {
+		t.Fatalf("ListCommentContentRefsByCommentIDs after replace returned error: %v", err)
+	}
+	assertCommentRepositoryContentRefs(t, got[comment.ID()], replacement)
+
+	if err := repo.ReplaceCommentContentRefs(ctx, comment.ID(), nil, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("ReplaceCommentContentRefs clear returned error: %v", err)
+	}
+	got, err = repo.ListCommentContentRefsByCommentIDs(ctx, []commentdomain.CommentID{comment.ID()})
+	if err != nil {
+		t.Fatalf("ListCommentContentRefsByCommentIDs after clear returned error: %v", err)
+	}
+	if len(got[comment.ID()]) != 0 {
+		t.Fatalf("expected cleared comment content refs, got %#v", got[comment.ID()])
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -264,7 +341,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireCommentSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "comment_votes"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "comment_votes", "comment_content_refs"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -344,6 +421,18 @@ func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool) userd
 	})
 
 	return id
+}
+
+func updateTestUserProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID userdomain.UserID, displayName string, avatarURL string, headline string) {
+	t.Helper()
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE users
+		SET display_name = $2, avatar_url = $3, headline = $4
+		WHERE id = $1::uuid
+	`, userID.String(), displayName, avatarURL, headline); err != nil {
+		t.Fatalf("update test user profile: %v", err)
+	}
 }
 
 func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, createdBy userdomain.UserID, rawSlug string) communitydomain.CommunityID {
@@ -480,6 +569,19 @@ func commentIDs(comments []commentdomain.Comment) []commentdomain.CommentID {
 		ids = append(ids, comment.ID())
 	}
 	return ids
+}
+
+func assertCommentRepositoryContentRefs(t *testing.T, got []postusecase.ContentRef, want []postusecase.ContentRef) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d content refs, got %d: %#v", len(want), len(got), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("unexpected content ref at %d: got %#v want %#v", index, got[index], want[index])
+		}
+	}
 }
 
 func mustCommentBody(t *testing.T, raw string) commentdomain.CommentBody {

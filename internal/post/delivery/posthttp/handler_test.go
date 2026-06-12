@@ -34,7 +34,11 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/posts", bytes.NewBufferString(`{
 		"title": "Hello",
 		"body": "Post body",
-		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"]
+		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"],
+		"content_refs": [
+			{"kind": "image", "ref_id": "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+			{"kind": "link_preview", "ref_id": "https://example.com/campus"}
+		]
 	}`))
 	request.Header.Set("Authorization", "Bearer valid-token")
 	request.Header.Set("Content-Type", "application/json")
@@ -56,6 +60,13 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	if len(posts.publishInput.AttachmentIDs) != 1 || posts.publishInput.AttachmentIDs[0] != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
 		t.Fatalf("unexpected attachment ids: %#v", posts.publishInput.AttachmentIDs)
 	}
+	if len(posts.publishInput.ContentRefs) != 2 ||
+		posts.publishInput.ContentRefs[0].Kind != "image" ||
+		posts.publishInput.ContentRefs[0].RefID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" ||
+		posts.publishInput.ContentRefs[1].Kind != "link_preview" ||
+		posts.publishInput.ContentRefs[1].RefID != "https://example.com/campus" {
+		t.Fatalf("unexpected content refs: %#v", posts.publishInput.ContentRefs)
+	}
 
 	var response publishPostResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -72,6 +83,9 @@ func TestPublishPostReturnsCreatedPost(t *testing.T) {
 	}
 	if response.Post.Attachments[0].ThumbnailURL != response.Post.Attachments[0].URL {
 		t.Fatalf("expected attachment thumbnail_url fallback, got %#v", response.Post.Attachments[0])
+	}
+	if len(response.Post.ContentRefs) != 2 || response.Post.ContentRefs[1].RefID != "https://example.com/campus" {
+		t.Fatalf("expected content refs in response, got %#v", response.Post.ContentRefs)
 	}
 }
 
@@ -253,6 +267,9 @@ func TestUpdatePostReturnsUpdatedPost(t *testing.T) {
 	if posts.updateInput.AttachmentIDs != nil {
 		t.Fatalf("expected omitted attachment_ids to stay nil, got %#v", *posts.updateInput.AttachmentIDs)
 	}
+	if posts.updateInput.ContentRefs != nil {
+		t.Fatalf("expected omitted content_refs to stay nil, got %#v", *posts.updateInput.ContentRefs)
+	}
 
 	var response getPostResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -268,9 +285,13 @@ func TestUpdatePostAcceptsAttachmentIDs(t *testing.T) {
 
 	userID := userdomain.NewGeneratedUserID()
 	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	updatedPost := newPostResultWithAttachment("Updated", now)
+	updatedPost.ContentRefs = []postusecase.ContentRef{
+		{Kind: "image", RefID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+	}
 	posts := &fakePostUseCase{
 		updateResult: postusecase.UpdatePostResult{
-			Post: newPostResultWithAttachment("Updated", now),
+			Post: updatedPost,
 		},
 	}
 	router := newPostTestRouter(posts, validParserWithUserID(userID))
@@ -279,7 +300,10 @@ func TestUpdatePostAcceptsAttachmentIDs(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPatch, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c", bytes.NewBufferString(`{
 		"title": "Updated",
 		"body": "Updated body",
-		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"]
+		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"],
+		"content_refs": [
+			{"kind": "image", "ref_id": "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"}
+		]
 	}`))
 	request.Header.Set("Authorization", "Bearer valid-token")
 	request.Header.Set("Content-Type", "application/json")
@@ -292,6 +316,9 @@ func TestUpdatePostAcceptsAttachmentIDs(t *testing.T) {
 	if posts.updateInput.AttachmentIDs == nil || len(*posts.updateInput.AttachmentIDs) != 1 || (*posts.updateInput.AttachmentIDs)[0] != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
 		t.Fatalf("unexpected attachment ids: %#v", posts.updateInput.AttachmentIDs)
 	}
+	if posts.updateInput.ContentRefs == nil || len(*posts.updateInput.ContentRefs) != 1 || (*posts.updateInput.ContentRefs)[0].Kind != "image" || (*posts.updateInput.ContentRefs)[0].RefID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
+		t.Fatalf("unexpected content refs: %#v", posts.updateInput.ContentRefs)
+	}
 
 	var response getPostResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -299,6 +326,9 @@ func TestUpdatePostAcceptsAttachmentIDs(t *testing.T) {
 	}
 	if len(response.Post.Attachments) != 1 || response.Post.Attachments[0].ID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
 		t.Fatalf("expected attachment response, got %#v", response.Post.Attachments)
+	}
+	if len(response.Post.ContentRefs) != 1 || response.Post.ContentRefs[0].Kind != "image" {
+		t.Fatalf("expected content ref response, got %#v", response.Post.ContentRefs)
 	}
 }
 
@@ -785,6 +815,10 @@ func newPostResultWithAttachment(title string, now time.Time) postusecase.Post {
 			Status:       "ready",
 			CreatedAt:    now,
 		},
+	}
+	post.ContentRefs = []postusecase.ContentRef{
+		{Kind: "image", RefID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+		{Kind: "link_preview", RefID: "https://example.com/campus"},
 	}
 	return post
 }

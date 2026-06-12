@@ -11,6 +11,8 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediadomain"
+	"github.com/Versifine/cumt-nexus-api/internal/mention"
+	platformsettings "github.com/Versifine/cumt-nexus-api/internal/platform/settings"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
@@ -50,6 +52,8 @@ type CommentUseCase struct {
 	metadata             CommentMetadataRepository
 	votes                CommentVoteRepository
 	notifications        NotificationPublisher
+	contentRefs          ContentRefRepository
+	settingsReader       platformsettings.Reader
 	commentImageMaxCount int
 	now                  func() time.Time
 }
@@ -60,6 +64,7 @@ type PublishCommentInput struct {
 	ParentID      string
 	Body          string
 	AttachmentIDs []string
+	ContentRefs   []postusecase.ContentRefInput
 }
 
 type ListPostCommentsInput struct {
@@ -84,6 +89,7 @@ type UpdateCommentInput struct {
 	ActorID       userdomain.UserID
 	Body          string
 	AttachmentIDs *[]string
+	ContentRefs   *[]postusecase.ContentRefInput
 }
 
 type DeleteCommentInput struct {
@@ -194,6 +200,9 @@ func NewCommentUseCase(comments CommentRepository, posts PostReader, now func() 
 	if repo, ok := comments.(CommentVoteRepository); ok {
 		uc.votes = repo
 	}
+	if repo, ok := comments.(ContentRefRepository); ok {
+		uc.contentRefs = repo
+	}
 	return uc
 }
 
@@ -214,15 +223,23 @@ type NotificationPublisher interface {
 	NotifyPostCommented(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error
 	NotifyCommentReplied(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error
 	NotifyCommentUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, commentID string) error
+	NotifyMentioned(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error
 }
 
 func (uc *CommentUseCase) SetNotificationPublisher(notifications NotificationPublisher) {
 	uc.notifications = notifications
 }
 
+func (uc *CommentUseCase) SetSettingsReader(settingsReader platformsettings.Reader) {
+	uc.settingsReader = settingsReader
+}
+
 func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishCommentInput) (PublishCommentResult, error) {
 	if strings.TrimSpace(input.AuthorID.String()) == "" {
 		return PublishCommentResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if err := uc.ensurePostingEnabled(ctx); err != nil {
+		return PublishCommentResult{}, err
 	}
 
 	postID, err := postdomain.NewPostID(input.PostID)
@@ -251,6 +268,13 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 	if err != nil {
 		return PublishCommentResult{}, err
 	}
+	contentRefs, err := postusecase.ParseContentRefInputs(input.ContentRefs)
+	if err != nil {
+		return PublishCommentResult{}, err
+	}
+	if err := postusecase.ValidateImageContentRefIDs(contentRefs, attachmentIDs); err != nil {
+		return PublishCommentResult{}, err
+	}
 
 	now := uc.now().UTC()
 	comment, err := commentdomain.NewComment(
@@ -272,6 +296,12 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 	if err != nil {
 		return PublishCommentResult{}, err
 	}
+	if err := postusecase.ValidateImageContentRefs(contentRefs, attachments); err != nil {
+		return PublishCommentResult{}, err
+	}
+	if err := uc.replaceCommentContentRefs(ctx, comment.ID(), contentRefs, now); err != nil {
+		return PublishCommentResult{}, err
+	}
 	metadataViews, err := uc.loadCommentMetadataViews(ctx, []commentdomain.Comment{*comment})
 	if err != nil {
 		return PublishCommentResult{}, err
@@ -279,9 +309,12 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 	if err := uc.notifyCommentPublished(ctx, post, parent, *comment, input.AuthorID); err != nil {
 		return PublishCommentResult{}, err
 	}
+	if err := uc.notifyMentions(ctx, mention.ExtractUsernames(input.Body), input.AuthorID, "comment", comment.ID().String()); err != nil {
+		return PublishCommentResult{}, err
+	}
 
 	return PublishCommentResult{
-		Comment: toCommentDTO(*comment, attachments, metadataViews[comment.ID()], input.AuthorID),
+		Comment: toCommentDTO(*comment, attachments, contentRefs, metadataViews[comment.ID()], input.AuthorID),
 	}, nil
 }
 
@@ -330,9 +363,13 @@ func (uc *CommentUseCase) ListPostComments(ctx context.Context, input ListPostCo
 		MaxDepth: maxDepth,
 	}
 	for _, comment := range comments {
-		result.Comments = append(result.Comments, toCommentDTO(comment, nil, CommentMetadata{}, input.ViewerID))
+		result.Comments = append(result.Comments, toCommentDTO(comment, nil, nil, CommentMetadata{}, input.ViewerID))
 	}
 	result.Comments, err = uc.attachCommentImages(ctx, result.Comments)
+	if err != nil {
+		return ListPostCommentsResult{}, err
+	}
+	result.Comments, err = uc.attachCommentContentRefs(ctx, result.Comments)
 	if err != nil {
 		return ListPostCommentsResult{}, err
 	}
@@ -370,6 +407,10 @@ func (uc *CommentUseCase) listPostCommentsTree(ctx context.Context, postID postd
 	if err != nil {
 		return ListPostCommentsResult{}, err
 	}
+	result.Comments, err = uc.attachCommentContentRefs(ctx, result.Comments)
+	if err != nil {
+		return ListPostCommentsResult{}, err
+	}
 	result.Comments, err = uc.attachCommentMetadata(ctx, result.Comments, viewerID)
 	if err != nil {
 		return ListPostCommentsResult{}, err
@@ -402,9 +443,13 @@ func (uc *CommentUseCase) ListUserComments(ctx context.Context, input ListUserCo
 		Offset:   offset,
 	}
 	for _, comment := range comments {
-		result.Comments = append(result.Comments, toCommentDTO(comment, nil, CommentMetadata{}, input.ViewerID))
+		result.Comments = append(result.Comments, toCommentDTO(comment, nil, nil, CommentMetadata{}, input.ViewerID))
 	}
 	result.Comments, err = uc.attachCommentImages(ctx, result.Comments)
+	if err != nil {
+		return ListUserCommentsResult{}, err
+	}
+	result.Comments, err = uc.attachCommentContentRefs(ctx, result.Comments)
 	if err != nil {
 		return ListUserCommentsResult{}, err
 	}
@@ -438,6 +483,7 @@ func (uc *CommentUseCase) UpdateComment(ctx context.Context, input UpdateComment
 	if comment.AuthorID() != input.ActorID {
 		return UpdateCommentResult{}, apperr.New(apperr.CodeForbidden, "only the comment author can update comment")
 	}
+	oldBody := comment.Body().String()
 
 	body, err := commentdomain.NewCommentBody(input.Body)
 	if err != nil {
@@ -447,6 +493,32 @@ func (uc *CommentUseCase) UpdateComment(ctx context.Context, input UpdateComment
 	if err != nil {
 		return UpdateCommentResult{}, err
 	}
+	contentRefs, replaceContentRefs, err := postusecase.ParseOptionalContentRefInputs(input.ContentRefs)
+	if err != nil {
+		return UpdateCommentResult{}, err
+	}
+	if replaceContentRefs && replaceAttachments {
+		if err := postusecase.ValidateImageContentRefIDs(contentRefs, attachmentIDs); err != nil {
+			return UpdateCommentResult{}, err
+		}
+	}
+
+	var attachments []mediadomain.Attachment
+	contentRefsCheckedAgainstExistingAttachments := false
+	if replaceContentRefs && !replaceAttachments {
+		existing := toCommentDTO(*comment, nil, nil, CommentMetadata{}, input.ActorID)
+		comments, err := uc.attachCommentImages(ctx, []Comment{existing})
+		if err != nil {
+			return UpdateCommentResult{}, err
+		}
+		if len(comments) == 1 {
+			existing = comments[0]
+		}
+		if err := validateImageContentRefsByCommentAttachments(contentRefs, existing.Attachments); err != nil {
+			return UpdateCommentResult{}, err
+		}
+		contentRefsCheckedAgainstExistingAttachments = true
+	}
 
 	now := uc.now().UTC()
 	if err := comment.EditBody(body, now); err != nil {
@@ -455,7 +527,6 @@ func (uc *CommentUseCase) UpdateComment(ctx context.Context, input UpdateComment
 	if err := uc.comments.UpdateContent(ctx, *comment); err != nil {
 		return UpdateCommentResult{}, fmt.Errorf("update comment content: %w", err)
 	}
-	var attachments []mediadomain.Attachment
 	if replaceAttachments {
 		attachments, err = uc.replaceCommentAttachments(ctx, comment.ID(), input.ActorID, attachmentIDs, now)
 		if err != nil {
@@ -467,7 +538,7 @@ func (uc *CommentUseCase) UpdateComment(ctx context.Context, input UpdateComment
 	if err != nil {
 		return UpdateCommentResult{}, err
 	}
-	result := toCommentDTO(*comment, attachments, metadataViews[comment.ID()], input.ActorID)
+	result := toCommentDTO(*comment, attachments, contentRefs, metadataViews[comment.ID()], input.ActorID)
 	if !replaceAttachments {
 		comments, err := uc.attachCommentImages(ctx, []Comment{result})
 		if err != nil {
@@ -476,6 +547,29 @@ func (uc *CommentUseCase) UpdateComment(ctx context.Context, input UpdateComment
 		if len(comments) == 1 {
 			result = comments[0]
 		}
+	}
+	if replaceContentRefs {
+		if !contentRefsCheckedAgainstExistingAttachments {
+			if err := validateImageContentRefsByCommentAttachments(contentRefs, result.Attachments); err != nil {
+				return UpdateCommentResult{}, err
+			}
+		}
+		if err := uc.replaceCommentContentRefs(ctx, comment.ID(), contentRefs, now); err != nil {
+			return UpdateCommentResult{}, err
+		}
+		result.ContentRefs = postusecase.CloneContentRefs(contentRefs)
+	} else {
+		comments, err := uc.attachCommentContentRefs(ctx, []Comment{result})
+		if err != nil {
+			return UpdateCommentResult{}, err
+		}
+		if len(comments) == 1 {
+			result = comments[0]
+		}
+	}
+
+	if err := uc.notifyMentions(ctx, mention.AddedUsernames(oldBody, input.Body), input.ActorID, "comment", comment.ID().String()); err != nil {
+		return UpdateCommentResult{}, err
 	}
 
 	return UpdateCommentResult{Comment: result}, nil
@@ -508,6 +602,20 @@ func (uc *CommentUseCase) DeleteComment(ctx context.Context, input DeleteComment
 	}
 
 	return DeleteCommentResult{}, nil
+}
+
+func (uc *CommentUseCase) ensurePostingEnabled(ctx context.Context) error {
+	if uc.settingsReader == nil {
+		return nil
+	}
+	enabled, err := uc.settingsReader.IsEnabled(ctx, platformsettings.PostingEnabled)
+	if err != nil {
+		return fmt.Errorf("read posting setting: %w", err)
+	}
+	if !enabled {
+		return apperr.New(apperr.CodeForbidden, "posting is disabled")
+	}
+	return nil
 }
 
 func (uc *CommentUseCase) SetCommentVote(ctx context.Context, input SetCommentVoteInput) (SetCommentVoteResult, error) {
@@ -594,6 +702,31 @@ func (uc *CommentUseCase) notifyCommentPublished(ctx context.Context, post *post
 	}
 	if err := uc.notifications.NotifyPostCommented(ctx, post.AuthorID(), actorID, post.ID().String()); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (uc *CommentUseCase) notifyMentions(ctx context.Context, usernames []userdomain.Username, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if len(usernames) == 0 || uc.notifications == nil {
+		return nil
+	}
+	if uc.users == nil {
+		return apperr.New(apperr.CodeInternal, "public user finder is not configured")
+	}
+	for _, username := range usernames {
+		user, err := uc.users.FindByUsername(ctx, username)
+		if err != nil {
+			if apperr.IsCode(err, apperr.CodeNotFound) {
+				continue
+			}
+			return fmt.Errorf("find mentioned user by username: %w", err)
+		}
+		if !user.CanLogin() {
+			continue
+		}
+		if err := uc.notifications.NotifyMentioned(ctx, user.ID(), actorID, sourceType, sourceID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -775,6 +908,60 @@ func (uc *CommentUseCase) attachCommentImages(ctx context.Context, comments []Co
 	return comments, nil
 }
 
+func (uc *CommentUseCase) replaceCommentContentRefs(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, now time.Time) error {
+	if uc.contentRefs == nil {
+		if len(refs) == 0 {
+			return nil
+		}
+		return apperr.New(apperr.CodeInvalidArgument, "comment content refs are not supported")
+	}
+	if err := uc.contentRefs.ReplaceCommentContentRefs(ctx, commentID, refs, now); err != nil {
+		return fmt.Errorf("replace comment content refs: %w", err)
+	}
+	return nil
+}
+
+func (uc *CommentUseCase) attachCommentContentRefs(ctx context.Context, comments []Comment) ([]Comment, error) {
+	if len(comments) == 0 || uc.contentRefs == nil {
+		return comments, nil
+	}
+	commentIDs, err := collectCommentIDs(comments)
+	if err != nil {
+		return nil, err
+	}
+	refViews, err := uc.contentRefs.ListCommentContentRefsByCommentIDs(ctx, commentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list comment content refs: %w", err)
+	}
+	applyCommentContentRefs(comments, refViews)
+	return comments, nil
+}
+
+func applyCommentContentRefs(comments []Comment, refViews map[commentdomain.CommentID][]postusecase.ContentRef) {
+	for index := range comments {
+		commentID, err := commentdomain.NewCommentID(comments[index].ID)
+		if err == nil {
+			comments[index].ContentRefs = postusecase.CloneContentRefs(refViews[commentID])
+		}
+		applyCommentContentRefs(comments[index].Children, refViews)
+	}
+}
+
+func validateImageContentRefsByCommentAttachments(refs []postusecase.ContentRef, attachments []Attachment) error {
+	imageAttachmentIDs := make(map[string]bool, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Kind == postusecase.ContentRefKindImage {
+			imageAttachmentIDs[attachment.ID] = true
+		}
+	}
+	for _, ref := range refs {
+		if ref.Kind == postusecase.ContentRefKindImage && !imageAttachmentIDs[ref.RefID] {
+			return apperr.New(apperr.CodeInvalidArgument, "image content ref must reference a bound image attachment")
+		}
+	}
+	return nil
+}
+
 func (uc *CommentUseCase) attachCommentMetadata(ctx context.Context, comments []Comment, viewerID userdomain.UserID) ([]Comment, error) {
 	if len(comments) == 0 {
 		return comments, nil
@@ -952,11 +1139,12 @@ func (uc *CommentUseCase) findActivePublicUser(ctx context.Context, rawUsername 
 	return user, nil
 }
 
-func toCommentDTO(comment commentdomain.Comment, attachments []mediadomain.Attachment, metadata CommentMetadata, viewerID userdomain.UserID) Comment {
+func toCommentDTO(comment commentdomain.Comment, attachments []mediadomain.Attachment, contentRefs []postusecase.ContentRef, metadata CommentMetadata, viewerID userdomain.UserID) Comment {
 	dto := toCommentTreeDTO(comment, 0, 0, false, viewerID)
 	metadata = normalizeCommentMetadata(metadata)
 	dto.Author = metadata.Author
 	dto.Attachments = toAttachmentDTOs(attachments)
+	dto.ContentRefs = postusecase.CloneContentRefs(contentRefs)
 	return dto
 }
 

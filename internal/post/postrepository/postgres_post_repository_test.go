@@ -113,6 +113,7 @@ func TestPostgresPostRepositoryLoadMetadataByPostIDsReturnsViewerCommunityContex
 	now := testNow()
 
 	authorID := insertTestUser(ctx, t, pool)
+	updateTestUserProfile(ctx, t, pool, authorID, "Alice", "https://example.com/avatar.jpg", "Backend builder")
 	viewerID := insertTestUser(ctx, t, pool)
 	communityID := insertTestCommunity(ctx, t, pool, authorID, "metadata-"+randomSuffix())
 	insertTestCommunityFollow(ctx, t, pool, communityID, viewerID)
@@ -136,6 +137,9 @@ func TestPostgresPostRepositoryLoadMetadataByPostIDsReturnsViewerCommunityContex
 	}
 	if !got.Community.ViewerPermissions.CanPost || got.Community.ViewerPermissions.CanManage || !got.Community.ViewerPermissions.CanModerate {
 		t.Fatalf("unexpected community viewer permissions: %#v", got.Community.ViewerPermissions)
+	}
+	if got.Author.DisplayName != "Alice" || got.Author.AvatarURL != "https://example.com/avatar.jpg" || got.Author.Headline != "Backend builder" {
+		t.Fatalf("expected author profile fields, got %#v", got.Author)
 	}
 }
 
@@ -471,6 +475,56 @@ func TestPostgresPostRepositoryMapsForeignKeyFailure(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryReplaceAndListContentRefs(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "post-content-refs-"+randomSuffix())
+	post := mustPost(t, communityID, authorID, "Post content refs", now)
+	if err := repo.Create(ctx, *post); err != nil {
+		t.Fatalf("Create post returned error: %v", err)
+	}
+	cleanupPost(ctx, t, pool, post.ID())
+
+	refs := []postusecase.ContentRef{
+		{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/one"},
+		{Kind: postusecase.ContentRefKindEmbed, RefID: "https://www.youtube.com/watch?v=one"},
+	}
+	if err := repo.ReplacePostContentRefs(ctx, post.ID(), refs, now); err != nil {
+		t.Fatalf("ReplacePostContentRefs returned error: %v", err)
+	}
+	got, err := repo.ListPostContentRefsByPostIDs(ctx, []postdomain.PostID{post.ID(), postdomain.NewGeneratedPostID()})
+	if err != nil {
+		t.Fatalf("ListPostContentRefsByPostIDs returned error: %v", err)
+	}
+	assertPostRepositoryContentRefs(t, got[post.ID()], refs)
+
+	replacement := []postusecase.ContentRef{
+		{Kind: postusecase.ContentRefKindImage, RefID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+	}
+	if err := repo.ReplacePostContentRefs(ctx, post.ID(), replacement, now.Add(time.Minute)); err != nil {
+		t.Fatalf("ReplacePostContentRefs replacement returned error: %v", err)
+	}
+	got, err = repo.ListPostContentRefsByPostIDs(ctx, []postdomain.PostID{post.ID()})
+	if err != nil {
+		t.Fatalf("ListPostContentRefsByPostIDs after replace returned error: %v", err)
+	}
+	assertPostRepositoryContentRefs(t, got[post.ID()], replacement)
+
+	if err := repo.ReplacePostContentRefs(ctx, post.ID(), nil, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("ReplacePostContentRefs clear returned error: %v", err)
+	}
+	got, err = repo.ListPostContentRefsByPostIDs(ctx, []postdomain.PostID{post.ID()})
+	if err != nil {
+		t.Fatalf("ListPostContentRefsByPostIDs after clear returned error: %v", err)
+	}
+	if len(got[post.ID()]) != 0 {
+		t.Fatalf("expected cleared post content refs, got %#v", got[post.ID()])
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -495,7 +549,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requirePostSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "community_follows"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "community_follows", "post_content_refs"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -576,6 +630,18 @@ func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool) userd
 	})
 
 	return id
+}
+
+func updateTestUserProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID userdomain.UserID, displayName string, avatarURL string, headline string) {
+	t.Helper()
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE users
+		SET display_name = $2, avatar_url = $3, headline = $4
+		WHERE id = $1::uuid
+	`, userID.String(), displayName, avatarURL, headline); err != nil {
+		t.Fatalf("update test user profile: %v", err)
+	}
 }
 
 func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, createdBy userdomain.UserID, rawSlug string) communitydomain.CommunityID {
@@ -713,6 +779,19 @@ func postIDs(posts []postdomain.Post) []postdomain.PostID {
 		ids = append(ids, post.ID())
 	}
 	return ids
+}
+
+func assertPostRepositoryContentRefs(t *testing.T, got []postusecase.ContentRef, want []postusecase.ContentRef) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d content refs, got %d: %#v", len(want), len(got), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("unexpected content ref at %d: got %#v want %#v", index, got[index], want[index])
+		}
+	}
 }
 
 func mustPost(t *testing.T, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, now time.Time) *postdomain.Post {

@@ -34,8 +34,17 @@ type PublicUserFinder interface {
 	FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error)
 }
 
+type NotificationPublisher interface {
+	NotifyMentioned(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error
+}
+
 type PostMetadataRepository interface {
 	LoadMetadataByPostIDs(ctx context.Context, postIDs []postdomain.PostID, viewerID userdomain.UserID) (map[postdomain.PostID]PostMetadata, error)
+}
+
+type ContentRefRepository interface {
+	ReplacePostContentRefs(ctx context.Context, postID postdomain.PostID, refs []ContentRef, now time.Time) error
+	ListPostContentRefsByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]ContentRef, error)
 }
 
 type VoteRepository interface {

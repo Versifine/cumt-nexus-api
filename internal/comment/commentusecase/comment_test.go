@@ -115,6 +115,94 @@ func TestPublishCommentBindsImageAttachments(t *testing.T) {
 	}
 }
 
+func TestPublishCommentPersistsContentRefs(t *testing.T) {
+	now := time.Date(2026, 6, 2, 14, 5, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	attachmentID := mediadomain.NewGeneratedAttachmentID()
+	var createdCommentID commentdomain.CommentID
+	comments := &fakeCommentRepository{
+		createFunc: func(ctx context.Context, comment commentdomain.Comment) error {
+			createdCommentID = comment.ID()
+			return nil
+		},
+		replaceContentRefsFunc: func(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, replacedAt time.Time) error {
+			if commentID != createdCommentID {
+				t.Fatalf("expected comment %q, got %q", createdCommentID.String(), commentID.String())
+			}
+			if !replacedAt.Equal(now) {
+				t.Fatalf("expected replace time %s, got %s", now, replacedAt)
+			}
+			assertCommentContentRefs(t, refs, []postusecase.ContentRef{
+				{Kind: postusecase.ContentRefKindImage, RefID: attachmentID.String()},
+				{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/comment"},
+			})
+			return nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	attachments := &fakeAttachmentRepository{
+		bindReadyImagesToCommentFunc: func(ctx context.Context, commentID commentdomain.CommentID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, bindTime time.Time) ([]mediadomain.Attachment, error) {
+			return []mediadomain.Attachment{*mustMediaAttachment(t, attachmentID, mediadomain.OwnerTypeComment, commentID.String(), authorID, now)}, nil
+		},
+	}
+	uc := NewCommentUseCaseWithAttachments(comments, posts, attachments, 1, func() time.Time { return now })
+
+	result, err := uc.PublishComment(context.Background(), PublishCommentInput{
+		PostID:        post.ID().String(),
+		AuthorID:      authorID,
+		Body:          "Reply",
+		AttachmentIDs: []string{attachmentID.String()},
+		ContentRefs: []postusecase.ContentRefInput{
+			{Kind: "IMAGE", RefID: " " + attachmentID.String() + " "},
+			{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/comment"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishComment returned error: %v", err)
+	}
+	if !comments.replaceContentRefsCalled {
+		t.Fatal("expected comment content refs to be persisted")
+	}
+	assertCommentContentRefs(t, result.Comment.ContentRefs, []postusecase.ContentRef{
+		{Kind: postusecase.ContentRefKindImage, RefID: attachmentID.String()},
+		{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/comment"},
+	})
+}
+
+func TestPublishCommentRejectsImageContentRefWithoutBoundAttachment(t *testing.T) {
+	now := time.Date(2026, 6, 2, 14, 10, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	comments := &fakeCommentRepository{
+		createFunc: func(ctx context.Context, comment commentdomain.Comment) error {
+			t.Fatal("Create should not be called for invalid image content ref")
+			return nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+
+	_, err := uc.PublishComment(context.Background(), PublishCommentInput{
+		PostID:   post.ID().String(),
+		AuthorID: userdomain.NewGeneratedUserID(),
+		Body:     "Reply",
+		ContentRefs: []postusecase.ContentRefInput{
+			{Kind: postusecase.ContentRefKindImage, RefID: mediadomain.NewGeneratedAttachmentID().String()},
+		},
+	})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for unbound image content ref, got %v", err)
+	}
+}
+
 func TestPublishCommentRejectsInvalidInput(t *testing.T) {
 	uc := NewCommentUseCase(&fakeCommentRepository{}, &fakePostRepository{}, time.Now)
 
@@ -250,6 +338,52 @@ func TestPublishReplyNotifiesParentCommentAuthor(t *testing.T) {
 	if notifications.recipientID != parentAuthorID || notifications.actorID != authorID || notifications.commentID != createdCommentID.String() {
 		t.Fatalf("unexpected notification args: %#v", notifications)
 	}
+}
+
+func TestPublishCommentNotifiesMentionedUsers(t *testing.T) {
+	now := time.Date(2026, 6, 2, 15, 10, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	mentionedAlice := mustUser(t, "alice", "active", now)
+	mentionedBob := mustUser(t, "bob_123", "active", now)
+	disabledUser := mustUser(t, "carol", "disabled", now)
+	var createdCommentID commentdomain.CommentID
+	comments := &fakeCommentRepository{
+		createFunc: func(ctx context.Context, comment commentdomain.Comment) error {
+			createdCommentID = comment.ID()
+			return nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	users := &fakePublicUserFinder{
+		users: map[string]*userdomain.User{
+			"alice":   mentionedAlice,
+			"bob_123": mentionedBob,
+			"carol":   disabledUser,
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+	uc.SetPublicUserFinder(users)
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.PublishComment(context.Background(), PublishCommentInput{
+		PostID:   post.ID().String(),
+		AuthorID: authorID,
+		Body:     "Hi @Alice, @bob_123, @missing, @carol and @Alice again.",
+	})
+	if err != nil {
+		t.Fatalf("PublishComment returned error: %v", err)
+	}
+	if len(notifications.mentions) != 2 {
+		t.Fatalf("expected two mention notifications, got %#v", notifications.mentions)
+	}
+	assertMentionNotification(t, notifications.mentions[0], mentionedAlice.ID(), authorID, "comment", createdCommentID.String())
+	assertMentionNotification(t, notifications.mentions[1], mentionedBob.ID(), authorID, "comment", createdCommentID.String())
 }
 
 func TestListPostCommentsNormalizesPagination(t *testing.T) {
@@ -570,6 +704,49 @@ func TestUpdateCommentAllowsAuthor(t *testing.T) {
 	}
 }
 
+func TestUpdateCommentNotifiesOnlyNewMentions(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 30, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	mentionedAlice := mustUser(t, "alice", "active", now)
+	mentionedBob := mustUser(t, "bob_123", "active", now)
+	comment := mustComment(t, post.ID(), authorID, nil, "Original @alice", now)
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	users := &fakePublicUserFinder{
+		users: map[string]*userdomain.User{
+			"alice":   mentionedAlice,
+			"bob_123": mentionedBob,
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return updatedAt })
+	uc.SetPublicUserFinder(users)
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.UpdateComment(context.Background(), UpdateCommentInput{
+		CommentID: comment.ID().String(),
+		ActorID:   authorID,
+		Body:      "Original @alice and @bob_123",
+	})
+	if err != nil {
+		t.Fatalf("UpdateComment returned error: %v", err)
+	}
+	if len(notifications.mentions) != 1 {
+		t.Fatalf("expected one mention notification, got %#v", notifications.mentions)
+	}
+	assertMentionNotification(t, notifications.mentions[0], mentionedBob.ID(), authorID, "comment", comment.ID().String())
+}
+
 func TestUpdateCommentReplacesImageAttachments(t *testing.T) {
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	updatedAt := now.Add(time.Minute)
@@ -621,6 +798,96 @@ func TestUpdateCommentReplacesImageAttachments(t *testing.T) {
 	}
 	if !attachments.replaceCalled {
 		t.Fatal("expected replacement attachment repository call")
+	}
+}
+
+func TestUpdateCommentPreservesContentRefsWhenOmitted(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 10, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	comment := mustComment(t, post.ID(), authorID, nil, "Original", now)
+	existingRefs := []postusecase.ContentRef{
+		{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/original-comment"},
+		{Kind: postusecase.ContentRefKindEmbed, RefID: "https://www.youtube.com/watch?v=comment"},
+	}
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+		listContentRefsFunc: func(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]postusecase.ContentRef, error) {
+			if len(commentIDs) != 1 || commentIDs[0] != comment.ID() {
+				t.Fatalf("unexpected comment ids: %#v", commentIDs)
+			}
+			return map[commentdomain.CommentID][]postusecase.ContentRef{comment.ID(): existingRefs}, nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return updatedAt })
+
+	result, err := uc.UpdateComment(context.Background(), UpdateCommentInput{
+		CommentID: comment.ID().String(),
+		ActorID:   authorID,
+		Body:      "Updated body",
+	})
+	if err != nil {
+		t.Fatalf("UpdateComment returned error: %v", err)
+	}
+	if !comments.listContentRefsCalled {
+		t.Fatal("expected existing content refs to be loaded")
+	}
+	if comments.replaceContentRefsCalled {
+		t.Fatal("did not expect omitted content_refs to replace existing refs")
+	}
+	assertCommentContentRefs(t, result.Comment.ContentRefs, existingRefs)
+}
+
+func TestUpdateCommentClearsContentRefsWithEmptyArray(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 20, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	post := mustPost(t, now)
+	authorID := userdomain.NewGeneratedUserID()
+	comment := mustComment(t, post.ID(), authorID, nil, "Original", now)
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+		replaceContentRefsFunc: func(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, replacedAt time.Time) error {
+			if commentID != comment.ID() {
+				t.Fatalf("expected comment %q, got %q", comment.ID().String(), commentID.String())
+			}
+			if len(refs) != 0 {
+				t.Fatalf("expected content refs to be cleared, got %#v", refs)
+			}
+			return nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return updatedAt })
+	contentRefs := []postusecase.ContentRefInput{}
+
+	result, err := uc.UpdateComment(context.Background(), UpdateCommentInput{
+		CommentID:   comment.ID().String(),
+		ActorID:     authorID,
+		Body:        "Updated body",
+		ContentRefs: &contentRefs,
+	})
+	if err != nil {
+		t.Fatalf("UpdateComment returned error: %v", err)
+	}
+	if !comments.replaceContentRefsCalled {
+		t.Fatal("expected empty content_refs to replace stored refs")
+	}
+	if len(result.Comment.ContentRefs) != 0 {
+		t.Fatalf("expected empty content refs in result, got %#v", result.Comment.ContentRefs)
 	}
 }
 
@@ -836,10 +1103,14 @@ type fakeCommentRepository struct {
 	listVisibleSort           CommentListSort
 	upsertVoteFunc            func(ctx context.Context, vote votedomain.CommentVote) error
 	deleteVoteFunc            func(ctx context.Context, commentID commentdomain.CommentID, userID userdomain.UserID) error
+	replaceContentRefsFunc    func(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, now time.Time) error
+	listContentRefsFunc       func(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]postusecase.ContentRef, error)
 	upsertVoteCalled          bool
 	deleteVoteCalled          bool
 	summarizeVotesCalled      bool
 	findVotesCalled           bool
+	replaceContentRefsCalled  bool
+	listContentRefsCalled     bool
 	voteSummaries             map[commentdomain.CommentID]votedomain.CommentVoteSummary
 	myVotes                   map[commentdomain.CommentID]votedomain.VoteValue
 }
@@ -955,6 +1226,22 @@ func (f *fakeCommentRepository) SummarizeCommentVotesByIDs(ctx context.Context, 
 	return f.voteSummaries, nil
 }
 
+func (f *fakeCommentRepository) ReplaceCommentContentRefs(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, now time.Time) error {
+	f.replaceContentRefsCalled = true
+	if f.replaceContentRefsFunc != nil {
+		return f.replaceContentRefsFunc(ctx, commentID, refs, now)
+	}
+	return nil
+}
+
+func (f *fakeCommentRepository) ListCommentContentRefsByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]postusecase.ContentRef, error) {
+	f.listContentRefsCalled = true
+	if f.listContentRefsFunc != nil {
+		return f.listContentRefsFunc(ctx, commentIDs)
+	}
+	return map[commentdomain.CommentID][]postusecase.ContentRef{}, nil
+}
+
 type fakeNotificationPublisher struct {
 	postCommentedCalled  bool
 	commentRepliedCalled bool
@@ -963,6 +1250,14 @@ type fakeNotificationPublisher struct {
 	actorID              userdomain.UserID
 	postID               string
 	commentID            string
+	mentions             []fakeMentionNotification
+}
+
+type fakeMentionNotification struct {
+	recipientID userdomain.UserID
+	actorID     userdomain.UserID
+	sourceType  string
+	sourceID    string
 }
 
 func (f *fakeNotificationPublisher) NotifyPostCommented(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error {
@@ -987,6 +1282,29 @@ func (f *fakeNotificationPublisher) NotifyCommentUpvoted(ctx context.Context, re
 	f.actorID = actorID
 	f.commentID = commentID
 	return nil
+}
+
+func (f *fakeNotificationPublisher) NotifyMentioned(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	f.mentions = append(f.mentions, fakeMentionNotification{
+		recipientID: recipientID,
+		actorID:     actorID,
+		sourceType:  sourceType,
+		sourceID:    sourceID,
+	})
+	return nil
+}
+
+type fakePublicUserFinder struct {
+	users map[string]*userdomain.User
+}
+
+func (f *fakePublicUserFinder) FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error) {
+	if f.users != nil {
+		if user, ok := f.users[username.String()]; ok {
+			return user, nil
+		}
+	}
+	return nil, apperr.New(apperr.CodeNotFound, "user not found")
 }
 
 type fakePostRepository struct {
@@ -1076,6 +1394,49 @@ func mustMediaAttachment(t *testing.T, id mediadomain.AttachmentID, ownerType me
 		t.Fatalf("RehydrateAttachment returned error: %v", err)
 	}
 	return attachment
+}
+
+func mustUser(t *testing.T, username string, status string, now time.Time) *userdomain.User {
+	t.Helper()
+
+	parsedUsername, err := userdomain.NewUsername(username)
+	if err != nil {
+		t.Fatalf("NewUsername returned error: %v", err)
+	}
+	passwordHash, err := userdomain.NewPasswordHash("hashed-password")
+	if err != nil {
+		t.Fatalf("NewPasswordHash returned error: %v", err)
+	}
+	userStatus, err := userdomain.NewUserStatus(status)
+	if err != nil {
+		t.Fatalf("NewUserStatus returned error: %v", err)
+	}
+	user, err := userdomain.RehydrateUser(userdomain.NewGeneratedUserID(), parsedUsername, passwordHash, userStatus, now, now)
+	if err != nil {
+		t.Fatalf("RehydrateUser returned error: %v", err)
+	}
+	return user
+}
+
+func assertMentionNotification(t *testing.T, notification fakeMentionNotification, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) {
+	t.Helper()
+
+	if notification.recipientID != recipientID || notification.actorID != actorID || notification.sourceType != sourceType || notification.sourceID != sourceID {
+		t.Fatalf("unexpected mention notification: %#v", notification)
+	}
+}
+
+func assertCommentContentRefs(t *testing.T, got []postusecase.ContentRef, want []postusecase.ContentRef) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d content refs, got %d: %#v", len(want), len(got), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("unexpected content ref at %d: got %#v want %#v", index, got[index], want[index])
+		}
+	}
 }
 
 func hasAppCode(err error, code apperr.Code) bool {

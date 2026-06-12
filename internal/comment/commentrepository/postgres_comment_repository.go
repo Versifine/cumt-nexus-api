@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
@@ -23,6 +24,7 @@ import (
 var _ commentusecase.CommentRepository = (*PostgresCommentRepository)(nil)
 var _ commentusecase.CommentMetadataRepository = (*PostgresCommentRepository)(nil)
 var _ commentusecase.CommentVoteRepository = (*PostgresCommentRepository)(nil)
+var _ commentusecase.ContentRefRepository = (*PostgresCommentRepository)(nil)
 
 type PostgresCommentRepository struct {
 	pool *pgxpool.Pool
@@ -405,7 +407,10 @@ func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Cont
 		SELECT
 			comments.id::text,
 			users.id::text,
-			users.username
+			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline
 		FROM comments
 		INNER JOIN users ON users.id = comments.author_id
 		WHERE comments.id = ANY($1::uuid[])
@@ -421,7 +426,10 @@ func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Cont
 		var rawCommentID string
 		var rawAuthorID string
 		var rawUsername string
-		if err := rows.Scan(&rawCommentID, &rawAuthorID, &rawUsername); err != nil {
+		var rawDisplayName string
+		var rawAvatarURL string
+		var rawHeadline string
+		if err := rows.Scan(&rawCommentID, &rawAuthorID, &rawUsername, &rawDisplayName, &rawAvatarURL, &rawHeadline); err != nil {
 			return nil, err
 		}
 		commentID, err := commentdomain.NewCommentID(rawCommentID)
@@ -432,7 +440,9 @@ func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Cont
 			Author: postusecase.UserSummary{
 				ID:          rawAuthorID,
 				Username:    rawUsername,
-				DisplayName: rawUsername,
+				DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
+				AvatarURL:   rawAvatarURL,
+				Headline:    rawHeadline,
 				Badges:      []string{},
 			},
 		}
@@ -450,6 +460,13 @@ func commentIDStrings(commentIDs []commentdomain.CommentID) []string {
 		rawIDs = append(rawIDs, commentID.String())
 	}
 	return rawIDs
+}
+
+func fallbackDisplayName(displayName string, username string) string {
+	if displayName != "" {
+		return displayName
+	}
+	return username
 }
 
 func (repo *PostgresCommentRepository) UpsertCommentVote(ctx context.Context, vote votedomain.CommentVote) error {
@@ -588,6 +605,86 @@ func (repo *PostgresCommentRepository) SummarizeCommentVotesByIDs(ctx context.Co
 	return result, nil
 }
 
+func (repo *PostgresCommentRepository) ReplaceCommentContentRefs(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, now time.Time) error {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin replace comment content refs: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if _, err := tx.Exec(ctx, `DELETE FROM comment_content_refs WHERE comment_id = $1::uuid`, commentID.String()); err != nil {
+		return mapPostgresWriteError("delete comment content refs", err)
+	}
+
+	if len(refs) > 0 {
+		batch := &pgx.Batch{}
+		const query = `
+			INSERT INTO comment_content_refs (
+				comment_id,
+				position,
+				kind,
+				ref_id,
+				created_at
+			)
+			VALUES ($1::uuid, $2, $3, $4, $5)
+		`
+		for position, ref := range refs {
+			batch.Queue(query, commentID.String(), position, ref.Kind, ref.RefID, now)
+		}
+		results := tx.SendBatch(ctx, batch)
+		if err := results.Close(); err != nil {
+			return mapPostgresWriteError("insert comment content refs", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit replace comment content refs: %w", err)
+	}
+	return nil
+}
+
+func (repo *PostgresCommentRepository) ListCommentContentRefsByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]postusecase.ContentRef, error) {
+	result := make(map[commentdomain.CommentID][]postusecase.ContentRef, len(commentIDs))
+	if len(commentIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			comment_id::text,
+			kind,
+			ref_id
+		FROM comment_content_refs
+		WHERE comment_id = ANY($1::uuid[])
+		ORDER BY comment_id ASC, position ASC
+	`
+	rows, err := repo.pool.Query(ctx, query, commentIDStrings(commentIDs))
+	if err != nil {
+		return nil, fmt.Errorf("list comment content refs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommentID string
+		var ref postusecase.ContentRef
+		if err := rows.Scan(&rawCommentID, &ref.Kind, &ref.RefID); err != nil {
+			return nil, err
+		}
+		commentID, err := commentdomain.NewCommentID(rawCommentID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate comment content ref comment id: %v", err)
+		}
+		result[commentID] = append(result[commentID], ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate comment content refs: %w", err)
+	}
+
+	return result, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -669,6 +766,9 @@ func mapPostgresWriteError(operation string, err error) error {
 			return apperr.New(apperr.CodeNotFound, "related record not found")
 		}
 		if pgErr.Code == "23514" {
+			if strings.Contains(pgErr.ConstraintName, "content_refs") {
+				return apperr.New(apperr.CodeInvalidArgument, "comment content refs are invalid")
+			}
 			if pgErr.ConstraintName == "comment_votes_value_check" || pgErr.ConstraintName == "comment_votes_updated_at_check" {
 				return apperr.New(apperr.CodeInvalidArgument, "comment vote is invalid")
 			}

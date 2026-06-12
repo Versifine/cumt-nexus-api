@@ -112,6 +112,147 @@ func TestPublishPostBindsImageAttachments(t *testing.T) {
 	}
 }
 
+func TestPublishPostPersistsContentRefs(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 5, 0, 0, time.UTC)
+	authorID := userdomain.NewGeneratedUserID()
+	communityID := communitydomain.NewGeneratedCommunityID()
+	attachmentID := mediadomain.NewGeneratedAttachmentID()
+	var createdPostID postdomain.PostID
+	posts := &fakePostRepository{
+		createFunc: func(ctx context.Context, post postdomain.Post) error {
+			createdPostID = post.ID()
+			return nil
+		},
+		replaceContentRefsFunc: func(ctx context.Context, postID postdomain.PostID, refs []ContentRef, replacedAt time.Time) error {
+			if postID != createdPostID {
+				t.Fatalf("expected post %q, got %q", createdPostID.String(), postID.String())
+			}
+			if !replacedAt.Equal(now) {
+				t.Fatalf("expected replace time %s, got %s", now, replacedAt)
+			}
+			assertPostContentRefs(t, refs, []ContentRef{
+				{Kind: ContentRefKindImage, RefID: attachmentID.String()},
+				{Kind: ContentRefKindLink, RefID: "https://example.com/campus"},
+			})
+			return nil
+		},
+	}
+	communities := &fakeCommunityPolicy{
+		getResult: communityusecase.GetCommunityResult{Community: newCommunityDTO(communityID, "campus")},
+		canPostResult: communityusecase.CanPostInCommunityResult{
+			Community: newCommunityDTO(communityID, "campus"),
+		},
+	}
+	attachments := &fakeAttachmentRepository{
+		bindFunc: func(ctx context.Context, postID postdomain.PostID, uploaderID userdomain.UserID, attachmentIDs []mediadomain.AttachmentID, maxCount int, bindAt time.Time) ([]mediadomain.Attachment, error) {
+			return []mediadomain.Attachment{*mustAttachment(t, attachmentID, authorID, postID, now)}, nil
+		},
+	}
+	uc := NewPostUseCaseWithAttachments(posts, communities, attachments, 9, func() time.Time { return now })
+
+	result, err := uc.PublishPost(context.Background(), PublishPostInput{
+		CommunitySlug: "campus",
+		AuthorID:      authorID,
+		Title:         "Hello",
+		Body:          "Post body",
+		AttachmentIDs: []string{attachmentID.String()},
+		ContentRefs: []ContentRefInput{
+			{Kind: "IMAGE", RefID: " " + attachmentID.String() + " "},
+			{Kind: ContentRefKindLink, RefID: "https://example.com/campus"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishPost returned error: %v", err)
+	}
+	if !posts.replaceContentRefsCalled {
+		t.Fatal("expected content refs to be persisted")
+	}
+	assertPostContentRefs(t, result.Post.ContentRefs, []ContentRef{
+		{Kind: ContentRefKindImage, RefID: attachmentID.String()},
+		{Kind: ContentRefKindLink, RefID: "https://example.com/campus"},
+	})
+}
+
+func TestPublishPostRejectsImageContentRefWithoutBoundAttachment(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 10, 0, 0, time.UTC)
+	authorID := userdomain.NewGeneratedUserID()
+	communityID := communitydomain.NewGeneratedCommunityID()
+	posts := &fakePostRepository{
+		createFunc: func(ctx context.Context, post postdomain.Post) error {
+			t.Fatal("Create should not be called for invalid image content ref")
+			return nil
+		},
+	}
+	communities := &fakeCommunityPolicy{
+		getResult: communityusecase.GetCommunityResult{Community: newCommunityDTO(communityID, "campus")},
+		canPostResult: communityusecase.CanPostInCommunityResult{
+			Community: newCommunityDTO(communityID, "campus"),
+		},
+	}
+	uc := NewPostUseCase(posts, communities, func() time.Time { return now })
+
+	_, err := uc.PublishPost(context.Background(), PublishPostInput{
+		CommunitySlug: "campus",
+		AuthorID:      authorID,
+		Title:         "Hello",
+		Body:          "Post body",
+		ContentRefs: []ContentRefInput{
+			{Kind: ContentRefKindImage, RefID: mediadomain.NewGeneratedAttachmentID().String()},
+		},
+	})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for unbound image content ref, got %v", err)
+	}
+}
+
+func TestPublishPostNotifiesMentionedUsers(t *testing.T) {
+	now := time.Date(2026, 6, 2, 12, 30, 0, 0, time.UTC)
+	authorID := userdomain.NewGeneratedUserID()
+	communityID := communitydomain.NewGeneratedCommunityID()
+	mentionedAlice := mustUser(t, "alice", "active", now)
+	mentionedBob := mustUser(t, "bob_123", "active", now)
+	disabledUser := mustUser(t, "carol", "disabled", now)
+	var createdPostID postdomain.PostID
+	posts := &fakePostRepository{
+		createFunc: func(ctx context.Context, post postdomain.Post) error {
+			createdPostID = post.ID()
+			return nil
+		},
+	}
+	communities := &fakeCommunityPolicy{
+		getResult: communityusecase.GetCommunityResult{Community: newCommunityDTO(communityID, "campus")},
+		canPostResult: communityusecase.CanPostInCommunityResult{
+			Community: newCommunityDTO(communityID, "campus"),
+		},
+	}
+	users := &fakePublicUserFinder{
+		users: map[string]*userdomain.User{
+			"alice":   mentionedAlice,
+			"bob_123": mentionedBob,
+			"carol":   disabledUser,
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewPostUseCase(posts, communities, func() time.Time { return now })
+	uc.SetPublicUserFinder(users)
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.PublishPost(context.Background(), PublishPostInput{
+		CommunitySlug: "campus",
+		AuthorID:      authorID,
+		Title:         "Hello",
+		Body:          "Hi @Alice, @bob_123, @missing, @carol and @Alice again.",
+	})
+	if err != nil {
+		t.Fatalf("PublishPost returned error: %v", err)
+	}
+	if len(notifications.mentions) != 2 {
+		t.Fatalf("expected two mention notifications, got %#v", notifications.mentions)
+	}
+	assertMentionNotification(t, notifications.mentions[0], mentionedAlice.ID(), authorID, "post", createdPostID.String())
+	assertMentionNotification(t, notifications.mentions[1], mentionedBob.ID(), authorID, "post", createdPostID.String())
+}
+
 func TestPublishPostRejectsInvalidInput(t *testing.T) {
 	uc := NewPostUseCase(&fakePostRepository{}, &fakeCommunityPolicy{}, time.Now)
 
@@ -664,6 +805,44 @@ func TestUpdatePostAllowsAuthor(t *testing.T) {
 	}
 }
 
+func TestUpdatePostNotifiesOnlyNewMentions(t *testing.T) {
+	now := time.Date(2026, 6, 3, 10, 30, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	authorID := userdomain.NewGeneratedUserID()
+	mentionedAlice := mustUser(t, "alice", "active", now)
+	mentionedBob := mustUser(t, "bob_123", "active", now)
+	post := mustPostWithBody(t, communitydomain.NewGeneratedCommunityID(), authorID, "Original", "Hello @alice", now)
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	users := &fakePublicUserFinder{
+		users: map[string]*userdomain.User{
+			"alice":   mentionedAlice,
+			"bob_123": mentionedBob,
+		},
+	}
+	notifications := &fakeNotificationPublisher{}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, func() time.Time { return updatedAt })
+	uc.SetPublicUserFinder(users)
+	uc.SetNotificationPublisher(notifications)
+
+	_, err := uc.UpdatePost(context.Background(), UpdatePostInput{
+		PostID:  post.ID().String(),
+		ActorID: authorID,
+		Title:   "Updated",
+		Body:    "Hello @alice and @bob_123",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePost returned error: %v", err)
+	}
+	if len(notifications.mentions) != 1 {
+		t.Fatalf("expected one mention notification, got %#v", notifications.mentions)
+	}
+	assertMentionNotification(t, notifications.mentions[0], mentionedBob.ID(), authorID, "post", post.ID().String())
+}
+
 func TestUpdatePostReplacesImageAttachments(t *testing.T) {
 	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
 	updatedAt := now.Add(time.Minute)
@@ -710,6 +889,86 @@ func TestUpdatePostReplacesImageAttachments(t *testing.T) {
 	}
 	if !attachments.replaceCalled {
 		t.Fatal("expected replacement attachment repository call")
+	}
+}
+
+func TestUpdatePostPreservesContentRefsWhenOmitted(t *testing.T) {
+	now := time.Date(2026, 6, 3, 10, 10, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	authorID := userdomain.NewGeneratedUserID()
+	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), authorID, "Original", now)
+	existingRefs := []ContentRef{
+		{Kind: ContentRefKindLink, RefID: "https://example.com/original"},
+		{Kind: ContentRefKindEmbed, RefID: "https://www.youtube.com/watch?v=abc"},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+		listContentRefsFunc: func(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]ContentRef, error) {
+			if len(postIDs) != 1 || postIDs[0] != post.ID() {
+				t.Fatalf("unexpected post ids: %#v", postIDs)
+			}
+			return map[postdomain.PostID][]ContentRef{post.ID(): existingRefs}, nil
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, func() time.Time { return updatedAt })
+
+	result, err := uc.UpdatePost(context.Background(), UpdatePostInput{
+		PostID:  post.ID().String(),
+		ActorID: authorID,
+		Title:   "Updated",
+		Body:    "Updated body",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePost returned error: %v", err)
+	}
+	if !posts.listContentRefsCalled {
+		t.Fatal("expected existing content refs to be loaded")
+	}
+	if posts.replaceContentRefsCalled {
+		t.Fatal("did not expect omitted content_refs to replace existing refs")
+	}
+	assertPostContentRefs(t, result.Post.ContentRefs, existingRefs)
+}
+
+func TestUpdatePostClearsContentRefsWithEmptyArray(t *testing.T) {
+	now := time.Date(2026, 6, 3, 10, 20, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Minute)
+	authorID := userdomain.NewGeneratedUserID()
+	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), authorID, "Original", now)
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+		replaceContentRefsFunc: func(ctx context.Context, postID postdomain.PostID, refs []ContentRef, replacedAt time.Time) error {
+			if postID != post.ID() {
+				t.Fatalf("expected post %q, got %q", post.ID().String(), postID.String())
+			}
+			if len(refs) != 0 {
+				t.Fatalf("expected content refs to be cleared, got %#v", refs)
+			}
+			return nil
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, func() time.Time { return updatedAt })
+	contentRefs := []ContentRefInput{}
+
+	result, err := uc.UpdatePost(context.Background(), UpdatePostInput{
+		PostID:      post.ID().String(),
+		ActorID:     authorID,
+		Title:       "Updated",
+		Body:        "Updated body",
+		ContentRefs: &contentRefs,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePost returned error: %v", err)
+	}
+	if !posts.replaceContentRefsCalled {
+		t.Fatal("expected empty content_refs to replace stored refs")
+	}
+	if len(result.Post.ContentRefs) != 0 {
+		t.Fatalf("expected empty content refs in result, got %#v", result.Post.ContentRefs)
 	}
 }
 
@@ -795,11 +1054,15 @@ type fakePostRepository struct {
 	savePostFunc                           func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID, now time.Time) error
 	deletePostSaveFunc                     func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) error
 	listSavedVisiblePostsFunc              func(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]postdomain.Post, error)
+	replaceContentRefsFunc                 func(ctx context.Context, postID postdomain.PostID, refs []ContentRef, now time.Time) error
+	listContentRefsFunc                    func(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]ContentRef, error)
 	savePostCalled                         bool
 	deletePostSaveCalled                   bool
 	listSavedVisiblePostsCalled            bool
 	summarizeSavesCalled                   bool
 	findSavedCalled                        bool
+	replaceContentRefsCalled               bool
+	listContentRefsCalled                  bool
 	saveCounts                             map[postdomain.PostID]int
 	savedPostIDs                           map[postdomain.PostID]bool
 }
@@ -900,6 +1163,22 @@ func (f *fakePostRepository) SummarizeSavesByPostIDs(ctx context.Context, postID
 	return f.saveCounts, nil
 }
 
+func (f *fakePostRepository) ReplacePostContentRefs(ctx context.Context, postID postdomain.PostID, refs []ContentRef, now time.Time) error {
+	f.replaceContentRefsCalled = true
+	if f.replaceContentRefsFunc != nil {
+		return f.replaceContentRefsFunc(ctx, postID, refs, now)
+	}
+	return nil
+}
+
+func (f *fakePostRepository) ListPostContentRefsByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]ContentRef, error) {
+	f.listContentRefsCalled = true
+	if f.listContentRefsFunc != nil {
+		return f.listContentRefsFunc(ctx, postIDs)
+	}
+	return map[postdomain.PostID][]ContentRef{}, nil
+}
+
 type fakeVoteRepository struct {
 	summarizeCalled  bool
 	findByUserCalled bool
@@ -960,6 +1239,40 @@ func (f *fakeVoteRepository) FindByPostIDsAndUser(ctx context.Context, postIDs [
 	return f.myVotes, nil
 }
 
+type fakeNotificationPublisher struct {
+	mentions []fakeMentionNotification
+}
+
+type fakeMentionNotification struct {
+	recipientID userdomain.UserID
+	actorID     userdomain.UserID
+	sourceType  string
+	sourceID    string
+}
+
+func (f *fakeNotificationPublisher) NotifyMentioned(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	f.mentions = append(f.mentions, fakeMentionNotification{
+		recipientID: recipientID,
+		actorID:     actorID,
+		sourceType:  sourceType,
+		sourceID:    sourceID,
+	})
+	return nil
+}
+
+type fakePublicUserFinder struct {
+	users map[string]*userdomain.User
+}
+
+func (f *fakePublicUserFinder) FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error) {
+	if f.users != nil {
+		if user, ok := f.users[username.String()]; ok {
+			return user, nil
+		}
+	}
+	return nil, apperr.New(apperr.CodeNotFound, "user not found")
+}
+
 type fakeCommunityPolicy struct {
 	getCalled     bool
 	canPostCalled bool
@@ -995,19 +1308,68 @@ func newCommunityDTO(id communitydomain.CommunityID, slug string) communityuseca
 func mustPost(t *testing.T, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, now time.Time) *postdomain.Post {
 	t.Helper()
 
+	return mustPostWithBody(t, communityID, authorID, title, "Body for "+title, now)
+}
+
+func mustPostWithBody(t *testing.T, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string, body string, now time.Time) *postdomain.Post {
+	t.Helper()
+
 	postTitle, err := postdomain.NewPostTitle(title)
 	if err != nil {
 		t.Fatalf("NewPostTitle returned error: %v", err)
 	}
-	body, err := postdomain.NewPostBody("Body for " + title)
+	postBody, err := postdomain.NewPostBody(body)
 	if err != nil {
 		t.Fatalf("NewPostBody returned error: %v", err)
 	}
-	post, err := postdomain.NewPost(postdomain.NewGeneratedPostID(), communityID, authorID, postTitle, body, now)
+	post, err := postdomain.NewPost(postdomain.NewGeneratedPostID(), communityID, authorID, postTitle, postBody, now)
 	if err != nil {
 		t.Fatalf("NewPost returned error: %v", err)
 	}
 	return post
+}
+
+func mustUser(t *testing.T, username string, status string, now time.Time) *userdomain.User {
+	t.Helper()
+
+	parsedUsername, err := userdomain.NewUsername(username)
+	if err != nil {
+		t.Fatalf("NewUsername returned error: %v", err)
+	}
+	passwordHash, err := userdomain.NewPasswordHash("hashed-password")
+	if err != nil {
+		t.Fatalf("NewPasswordHash returned error: %v", err)
+	}
+	userStatus, err := userdomain.NewUserStatus(status)
+	if err != nil {
+		t.Fatalf("NewUserStatus returned error: %v", err)
+	}
+	user, err := userdomain.RehydrateUser(userdomain.NewGeneratedUserID(), parsedUsername, passwordHash, userStatus, now, now)
+	if err != nil {
+		t.Fatalf("RehydrateUser returned error: %v", err)
+	}
+	return user
+}
+
+func assertMentionNotification(t *testing.T, notification fakeMentionNotification, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) {
+	t.Helper()
+
+	if notification.recipientID != recipientID || notification.actorID != actorID || notification.sourceType != sourceType || notification.sourceID != sourceID {
+		t.Fatalf("unexpected mention notification: %#v", notification)
+	}
+}
+
+func assertPostContentRefs(t *testing.T, got []ContentRef, want []ContentRef) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d content refs, got %d: %#v", len(want), len(got), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("unexpected content ref at %d: got %#v want %#v", index, got[index], want[index])
+		}
+	}
 }
 
 func mustAttachment(t *testing.T, attachmentID mediadomain.AttachmentID, uploaderID userdomain.UserID, postID postdomain.PostID, now time.Time) *mediadomain.Attachment {

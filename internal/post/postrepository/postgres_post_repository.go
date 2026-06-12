@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
@@ -20,6 +21,7 @@ import (
 var _ postusecase.PostRepository = (*PostgresPostRepository)(nil)
 var _ postusecase.PostMetadataRepository = (*PostgresPostRepository)(nil)
 var _ postusecase.PostSaveRepository = (*PostgresPostRepository)(nil)
+var _ postusecase.ContentRefRepository = (*PostgresPostRepository)(nil)
 
 type PostgresPostRepository struct {
 	pool *pgxpool.Pool
@@ -582,6 +584,9 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 			posts.id::text,
 			users.id::text,
 			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline,
 			communities.id::text,
 			communities.slug,
 			communities.name,
@@ -639,6 +644,9 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 		var rawPostID string
 		var rawAuthorID string
 		var rawUsername string
+		var rawDisplayName string
+		var rawAvatarURL string
+		var rawHeadline string
 		var rawCommunityID string
 		var rawCommunitySlug string
 		var rawCommunityName string
@@ -655,6 +663,9 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 			&rawPostID,
 			&rawAuthorID,
 			&rawUsername,
+			&rawDisplayName,
+			&rawAvatarURL,
+			&rawHeadline,
 			&rawCommunityID,
 			&rawCommunitySlug,
 			&rawCommunityName,
@@ -678,7 +689,9 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 			Author: postusecase.UserSummary{
 				ID:          rawAuthorID,
 				Username:    rawUsername,
-				DisplayName: rawUsername,
+				DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
+				AvatarURL:   rawAvatarURL,
+				Headline:    rawHeadline,
 				Badges:      []string{},
 			},
 			Community: postusecase.CommunitySummary{
@@ -700,6 +713,13 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 	}
 
 	return result, nil
+}
+
+func fallbackDisplayName(displayName string, username string) string {
+	if displayName != "" {
+		return displayName
+	}
+	return username
 }
 
 func communityViewerPermissionsForPostMetadata(viewerID userdomain.UserID, role string, communityStatus string, communityVisibility string) postusecase.CommunityViewerPermissions {
@@ -872,6 +892,86 @@ func (repo *PostgresPostRepository) SummarizeSavesByPostIDs(ctx context.Context,
 	return result, nil
 }
 
+func (repo *PostgresPostRepository) ReplacePostContentRefs(ctx context.Context, postID postdomain.PostID, refs []postusecase.ContentRef, now time.Time) error {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin replace post content refs: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if _, err := tx.Exec(ctx, `DELETE FROM post_content_refs WHERE post_id = $1::uuid`, postID.String()); err != nil {
+		return mapPostgresWriteError("delete post content refs", err)
+	}
+
+	if len(refs) > 0 {
+		batch := &pgx.Batch{}
+		const query = `
+			INSERT INTO post_content_refs (
+				post_id,
+				position,
+				kind,
+				ref_id,
+				created_at
+			)
+			VALUES ($1::uuid, $2, $3, $4, $5)
+		`
+		for position, ref := range refs {
+			batch.Queue(query, postID.String(), position, ref.Kind, ref.RefID, now)
+		}
+		results := tx.SendBatch(ctx, batch)
+		if err := results.Close(); err != nil {
+			return mapPostgresWriteError("insert post content refs", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit replace post content refs: %w", err)
+	}
+	return nil
+}
+
+func (repo *PostgresPostRepository) ListPostContentRefsByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]postusecase.ContentRef, error) {
+	result := make(map[postdomain.PostID][]postusecase.ContentRef, len(postIDs))
+	if len(postIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			post_id::text,
+			kind,
+			ref_id
+		FROM post_content_refs
+		WHERE post_id = ANY($1::uuid[])
+		ORDER BY post_id ASC, position ASC
+	`
+	rows, err := repo.pool.Query(ctx, query, postIDStrings(postIDs))
+	if err != nil {
+		return nil, fmt.Errorf("list post content refs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawPostID string
+		var ref postusecase.ContentRef
+		if err := rows.Scan(&rawPostID, &ref.Kind, &ref.RefID); err != nil {
+			return nil, err
+		}
+		postID, err := postdomain.NewPostID(rawPostID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate post content ref post id: %v", err)
+		}
+		result[postID] = append(result[postID], ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate post content refs: %w", err)
+	}
+
+	return result, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -940,6 +1040,12 @@ func mapPostgresWriteError(operation string, err error) error {
 		}
 		if pgErr.Code == "23503" {
 			return apperr.New(apperr.CodeNotFound, "related record not found")
+		}
+		if pgErr.Code == "23514" {
+			if strings.Contains(pgErr.ConstraintName, "content_refs") {
+				return apperr.New(apperr.CodeInvalidArgument, "post content refs are invalid")
+			}
+			return apperr.New(apperr.CodeInvalidArgument, "post is invalid")
 		}
 	}
 

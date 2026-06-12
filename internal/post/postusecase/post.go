@@ -10,6 +10,8 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediadomain"
+	"github.com/Versifine/cumt-nexus-api/internal/mention"
+	platformsettings "github.com/Versifine/cumt-nexus-api/internal/platform/settings"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
@@ -20,6 +22,11 @@ const (
 	MaxPostListLimit      = 50
 	PostFormat            = "nexus_markdown"
 	DefaultPostExcerptMax = 180
+	MaxContentRefCount    = 50
+	MaxContentRefIDLength = 2048
+	ContentRefKindImage   = "image"
+	ContentRefKindLink    = "link_preview"
+	ContentRefKindEmbed   = "embed"
 )
 
 type PostListSort string
@@ -62,7 +69,10 @@ type PostUseCase struct {
 	saves             PostSaveRepository
 	attachments       AttachmentRepository
 	users             PublicUserFinder
+	notifications     NotificationPublisher
 	metadata          PostMetadataRepository
+	contentRefs       ContentRefRepository
+	settingsReader    platformsettings.Reader
 	postImageMaxCount int
 	now               func() time.Time
 }
@@ -73,6 +83,7 @@ type PublishPostInput struct {
 	Title         string
 	Body          string
 	AttachmentIDs []string
+	ContentRefs   []ContentRefInput
 }
 
 type ListCommunityPostsInput struct {
@@ -129,6 +140,7 @@ type UpdatePostInput struct {
 	Title         string
 	Body          string
 	AttachmentIDs *[]string
+	ContentRefs   *[]ContentRefInput
 }
 
 type DeletePostInput struct {
@@ -204,7 +216,15 @@ type Post struct {
 	Attachments       []Attachment
 }
 
-type ContentRef struct{}
+type ContentRefInput struct {
+	Kind  string
+	RefID string
+}
+
+type ContentRef struct {
+	Kind  string
+	RefID string
+}
 
 type UserSummary struct {
 	ID          string
@@ -291,6 +311,10 @@ func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func(
 	if repo, ok := posts.(PostMetadataRepository); ok {
 		metadataRepo = repo
 	}
+	var contentRefRepo ContentRefRepository
+	if repo, ok := posts.(ContentRefRepository); ok {
+		contentRefRepo = repo
+	}
 	var saveRepo PostSaveRepository
 	if repo, ok := posts.(PostSaveRepository); ok {
 		saveRepo = repo
@@ -302,6 +326,7 @@ func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func(
 		votes:             voteRepo,
 		saves:             saveRepo,
 		metadata:          metadataRepo,
+		contentRefs:       contentRefRepo,
 		postImageMaxCount: 9,
 		now:               now,
 	}
@@ -320,9 +345,20 @@ func (uc *PostUseCase) SetPublicUserFinder(users PublicUserFinder) {
 	uc.users = users
 }
 
+func (uc *PostUseCase) SetNotificationPublisher(notifications NotificationPublisher) {
+	uc.notifications = notifications
+}
+
+func (uc *PostUseCase) SetSettingsReader(settingsReader platformsettings.Reader) {
+	uc.settingsReader = settingsReader
+}
+
 func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) (PublishPostResult, error) {
 	if strings.TrimSpace(input.AuthorID.String()) == "" {
 		return PublishPostResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if err := uc.ensurePostingEnabled(ctx); err != nil {
+		return PublishPostResult{}, err
 	}
 
 	community, err := uc.communities.GetCommunityBySlug(ctx, communityusecase.GetCommunityInput{
@@ -355,6 +391,13 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	if err != nil {
 		return PublishPostResult{}, err
 	}
+	contentRefs, err := ParseContentRefInputs(input.ContentRefs)
+	if err != nil {
+		return PublishPostResult{}, err
+	}
+	if err := ValidateImageContentRefIDs(contentRefs, attachmentIDs); err != nil {
+		return PublishPostResult{}, err
+	}
 
 	now := uc.now().UTC()
 	post, err := postdomain.NewPost(postdomain.NewGeneratedPostID(), communityID, input.AuthorID, title, body, now)
@@ -369,14 +412,23 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	if err != nil {
 		return PublishPostResult{}, err
 	}
+	if err := ValidateImageContentRefs(contentRefs, attachments); err != nil {
+		return PublishPostResult{}, err
+	}
+	if err := uc.replacePostContentRefs(ctx, post.ID(), contentRefs, now); err != nil {
+		return PublishPostResult{}, err
+	}
 
 	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post}, input.AuthorID)
 	if err != nil {
 		return PublishPostResult{}, err
 	}
+	if err := uc.notifyMentions(ctx, mention.ExtractUsernames(input.Body), input.AuthorID, "post", post.ID().String()); err != nil {
+		return PublishPostResult{}, err
+	}
 
 	return PublishPostResult{
-		Post: toPostDTO(*post, postVoteView{}, postSaveView{}, attachments, metadataViews[post.ID()], input.AuthorID),
+		Post: toPostDTO(*post, postVoteView{}, postSaveView{}, attachments, contentRefs, metadataViews[post.ID()], input.AuthorID),
 	}, nil
 }
 
@@ -428,12 +480,16 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
+	contentRefViews, err := uc.loadContentRefViews(ctx, posts)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
 	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.ViewerID)
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -484,6 +540,10 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
+	contentRefViews, err := uc.loadContentRefViews(ctx, posts)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
 
 	result := ListLatestPostsResult{
 		Posts:  make([]Post, 0, len(posts)),
@@ -495,7 +555,7 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 		return ListLatestPostsResult{}, err
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -537,6 +597,10 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 	if err != nil {
 		return ListUserPostsResult{}, err
 	}
+	contentRefViews, err := uc.loadContentRefViews(ctx, posts)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
 	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.ViewerID)
 	if err != nil {
 		return ListUserPostsResult{}, err
@@ -548,7 +612,7 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 		Offset: offset,
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
 	}
 	return result, nil
 }
@@ -576,13 +640,17 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 	if err != nil {
 		return GetPostResult{}, err
 	}
+	contentRefViews, err := uc.loadContentRefViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return GetPostResult{}, err
+	}
 	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post}, input.ViewerID)
 	if err != nil {
 		return GetPostResult{}, err
 	}
 
 	return GetPostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.ViewerID),
+		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID),
 	}, nil
 }
 
@@ -659,6 +727,10 @@ func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsI
 	if err != nil {
 		return ListSavedPostsResult{}, err
 	}
+	contentRefViews, err := uc.loadContentRefViews(ctx, posts)
+	if err != nil {
+		return ListSavedPostsResult{}, err
+	}
 	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.UserID)
 	if err != nil {
 		return ListSavedPostsResult{}, err
@@ -670,7 +742,7 @@ func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsI
 		Offset: offset,
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], metadataViews[post.ID()], input.UserID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.UserID))
 	}
 
 	return result, nil
@@ -692,6 +764,7 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	if post.AuthorID() != input.ActorID {
 		return UpdatePostResult{}, apperr.New(apperr.CodeForbidden, "only the post author can update post")
 	}
+	oldBody := post.Body().String()
 
 	title, err := postdomain.NewPostTitle(input.Title)
 	if err != nil {
@@ -706,6 +779,29 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
+	contentRefs, replaceContentRefs, err := ParseOptionalContentRefInputs(input.ContentRefs)
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
+	if replaceContentRefs && replaceAttachments {
+		if err := ValidateImageContentRefIDs(contentRefs, attachmentIDs); err != nil {
+			return UpdatePostResult{}, err
+		}
+	}
+
+	var attachments []mediadomain.Attachment
+	attachmentsLoaded := false
+	if replaceContentRefs && !replaceAttachments {
+		attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
+		if err != nil {
+			return UpdatePostResult{}, err
+		}
+		attachments = attachmentViews[post.ID()]
+		attachmentsLoaded = true
+		if err := ValidateImageContentRefs(contentRefs, attachments); err != nil {
+			return UpdatePostResult{}, err
+		}
+	}
 
 	now := uc.now().UTC()
 	if err := post.Edit(title, body, now); err != nil {
@@ -715,7 +811,6 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 		return UpdatePostResult{}, fmt.Errorf("update post content: %w", err)
 	}
 
-	var attachments []mediadomain.Attachment
 	if replaceAttachments {
 		attachments, err = uc.replacePostAttachments(ctx, post.ID(), input.ActorID, attachmentIDs, now)
 		if err != nil {
@@ -730,20 +825,37 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
-	if !replaceAttachments {
+	if !replaceAttachments && !attachmentsLoaded {
 		attachmentViews, err := uc.loadAttachmentViews(ctx, []postdomain.Post{*post})
 		if err != nil {
 			return UpdatePostResult{}, err
 		}
 		attachments = attachmentViews[post.ID()]
 	}
+	if replaceContentRefs {
+		if err := ValidateImageContentRefs(contentRefs, attachments); err != nil {
+			return UpdatePostResult{}, err
+		}
+		if err := uc.replacePostContentRefs(ctx, post.ID(), contentRefs, now); err != nil {
+			return UpdatePostResult{}, err
+		}
+	} else {
+		contentRefViews, err := uc.loadContentRefViews(ctx, []postdomain.Post{*post})
+		if err != nil {
+			return UpdatePostResult{}, err
+		}
+		contentRefs = contentRefViews[post.ID()]
+	}
 	metadataViews, err := uc.loadMetadataViews(ctx, []postdomain.Post{*post}, input.ActorID)
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
+	if err := uc.notifyMentions(ctx, mention.AddedUsernames(oldBody, input.Body), input.ActorID, "post", post.ID().String()); err != nil {
+		return UpdatePostResult{}, err
+	}
 
 	return UpdatePostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachments, metadataViews[post.ID()], input.ActorID),
+		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachments, contentRefs, metadataViews[post.ID()], input.ActorID),
 	}, nil
 }
 
@@ -771,6 +883,20 @@ func (uc *PostUseCase) DeletePost(ctx context.Context, input DeletePostInput) (D
 	}
 
 	return DeletePostResult{}, nil
+}
+
+func (uc *PostUseCase) ensurePostingEnabled(ctx context.Context) error {
+	if uc.settingsReader == nil {
+		return nil
+	}
+	enabled, err := uc.settingsReader.IsEnabled(ctx, platformsettings.PostingEnabled)
+	if err != nil {
+		return fmt.Errorf("read posting setting: %w", err)
+	}
+	if !enabled {
+		return apperr.New(apperr.CodeForbidden, "posting is disabled")
+	}
+	return nil
 }
 
 func normalizePagination(limit int, offset int) (int, int, error) {
@@ -884,6 +1010,52 @@ func parseOptionalAttachmentIDs(rawIDs *[]string, maxCount int) ([]mediadomain.A
 		return nil, true, err
 	}
 	return attachmentIDs, true, nil
+}
+
+func ParseContentRefInputs(rawRefs []ContentRefInput) ([]ContentRef, error) {
+	if len(rawRefs) == 0 {
+		return []ContentRef{}, nil
+	}
+	if len(rawRefs) > MaxContentRefCount {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "content ref count is invalid")
+	}
+
+	refs := make([]ContentRef, 0, len(rawRefs))
+	seen := make(map[string]bool, len(rawRefs))
+	for _, rawRef := range rawRefs {
+		kind := strings.ToLower(strings.TrimSpace(rawRef.Kind))
+		switch kind {
+		case ContentRefKindImage, ContentRefKindLink, ContentRefKindEmbed:
+		default:
+			return nil, apperr.New(apperr.CodeInvalidArgument, "content ref kind is invalid")
+		}
+
+		refID := strings.TrimSpace(rawRef.RefID)
+		if refID == "" || len(refID) > MaxContentRefIDLength {
+			return nil, apperr.New(apperr.CodeInvalidArgument, "content ref id is invalid")
+		}
+		key := kind + "\x00" + refID
+		if seen[key] {
+			return nil, apperr.New(apperr.CodeInvalidArgument, "content ref is duplicated")
+		}
+		seen[key] = true
+		refs = append(refs, ContentRef{
+			Kind:  kind,
+			RefID: refID,
+		})
+	}
+	return refs, nil
+}
+
+func ParseOptionalContentRefInputs(rawRefs *[]ContentRefInput) ([]ContentRef, bool, error) {
+	if rawRefs == nil {
+		return nil, false, nil
+	}
+	refs, err := ParseContentRefInputs(*rawRefs)
+	if err != nil {
+		return nil, true, err
+	}
+	return refs, true, nil
 }
 
 type postVoteView struct {
@@ -1012,6 +1184,63 @@ func (uc *PostUseCase) loadAttachmentViews(ctx context.Context, posts []postdoma
 	return views, nil
 }
 
+func (uc *PostUseCase) replacePostContentRefs(ctx context.Context, postID postdomain.PostID, refs []ContentRef, now time.Time) error {
+	if uc.contentRefs == nil {
+		if len(refs) == 0 {
+			return nil
+		}
+		return apperr.New(apperr.CodeInvalidArgument, "post content refs are not supported")
+	}
+	if err := uc.contentRefs.ReplacePostContentRefs(ctx, postID, refs, now); err != nil {
+		return fmt.Errorf("replace post content refs: %w", err)
+	}
+	return nil
+}
+
+func (uc *PostUseCase) loadContentRefViews(ctx context.Context, posts []postdomain.Post) (map[postdomain.PostID][]ContentRef, error) {
+	views := make(map[postdomain.PostID][]ContentRef, len(posts))
+	if len(posts) == 0 || uc.contentRefs == nil {
+		return views, nil
+	}
+	postIDs := make([]postdomain.PostID, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID())
+	}
+	views, err := uc.contentRefs.ListPostContentRefsByPostIDs(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list post content refs: %w", err)
+	}
+	return views, nil
+}
+
+func ValidateImageContentRefs(refs []ContentRef, attachments []mediadomain.Attachment) error {
+	imageAttachmentIDs := make(map[string]bool, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Kind().String() == ContentRefKindImage {
+			imageAttachmentIDs[attachment.ID().String()] = true
+		}
+	}
+	for _, ref := range refs {
+		if ref.Kind == ContentRefKindImage && !imageAttachmentIDs[ref.RefID] {
+			return apperr.New(apperr.CodeInvalidArgument, "image content ref must reference a bound image attachment")
+		}
+	}
+	return nil
+}
+
+func ValidateImageContentRefIDs(refs []ContentRef, attachmentIDs []mediadomain.AttachmentID) error {
+	imageAttachmentIDs := make(map[string]bool, len(attachmentIDs))
+	for _, attachmentID := range attachmentIDs {
+		imageAttachmentIDs[attachmentID.String()] = true
+	}
+	for _, ref := range refs {
+		if ref.Kind == ContentRefKindImage && !imageAttachmentIDs[ref.RefID] {
+			return apperr.New(apperr.CodeInvalidArgument, "image content ref must reference a bound image attachment")
+		}
+	}
+	return nil
+}
+
 func (uc *PostUseCase) loadMetadataViews(ctx context.Context, posts []postdomain.Post, viewerID userdomain.UserID) (map[postdomain.PostID]PostMetadata, error) {
 	views := make(map[postdomain.PostID]PostMetadata, len(posts))
 	if len(posts) == 0 {
@@ -1056,7 +1285,32 @@ func (uc *PostUseCase) findActivePublicUser(ctx context.Context, rawUsername str
 	return user, nil
 }
 
-func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveView, attachments []mediadomain.Attachment, metadata PostMetadata, viewerID userdomain.UserID) Post {
+func (uc *PostUseCase) notifyMentions(ctx context.Context, usernames []userdomain.Username, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if len(usernames) == 0 || uc.notifications == nil {
+		return nil
+	}
+	if uc.users == nil {
+		return apperr.New(apperr.CodeInternal, "public user finder is not configured")
+	}
+	for _, username := range usernames {
+		user, err := uc.users.FindByUsername(ctx, username)
+		if err != nil {
+			if apperr.IsCode(err, apperr.CodeNotFound) {
+				continue
+			}
+			return fmt.Errorf("find mentioned user by username: %w", err)
+		}
+		if !user.CanLogin() {
+			continue
+		}
+		if err := uc.notifications.NotifyMentioned(ctx, user.ID(), actorID, sourceType, sourceID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveView, attachments []mediadomain.Attachment, contentRefs []ContentRef, metadata PostMetadata, viewerID userdomain.UserID) Post {
 	score := voteView.upvoteCount - voteView.downvoteCount
 	metadata = normalizePostMetadata(metadata)
 	attachmentDTOs := toAttachmentDTOs(attachments)
@@ -1068,7 +1322,7 @@ func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveVie
 		Body:              post.Body().String(),
 		BodyExcerpt:       makeExcerpt(post.Body().String(), DefaultPostExcerptMax),
 		Format:            PostFormat,
-		ContentRefs:       []ContentRef{},
+		ContentRefs:       CloneContentRefs(contentRefs),
 		Status:            post.Status().String(),
 		Community:         metadata.Community,
 		Author:            metadata.Author,
@@ -1085,6 +1339,15 @@ func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveVie
 		UpdatedAt:         post.UpdatedAt(),
 		Attachments:       attachmentDTOs,
 	}
+}
+
+func CloneContentRefs(refs []ContentRef) []ContentRef {
+	if len(refs) == 0 {
+		return []ContentRef{}
+	}
+	result := make([]ContentRef, len(refs))
+	copy(result, refs)
+	return result
 }
 
 func fallbackPostMetadata(post postdomain.Post) PostMetadata {

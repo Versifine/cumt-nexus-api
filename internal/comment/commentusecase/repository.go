@@ -34,6 +34,11 @@ type CommentMetadataRepository interface {
 	LoadMetadataByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]CommentMetadata, error)
 }
 
+type ContentRefRepository interface {
+	ReplaceCommentContentRefs(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, now time.Time) error
+	ListCommentContentRefsByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]postusecase.ContentRef, error)
+}
+
 type CommentVoteRepository interface {
 	UpsertCommentVote(ctx context.Context, vote votedomain.CommentVote) error
 	DeleteCommentVote(ctx context.Context, commentID commentdomain.CommentID, userID userdomain.UserID) error

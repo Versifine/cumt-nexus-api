@@ -14,6 +14,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/auth/delivery/authhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/httpserver"
+	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/gin-gonic/gin"
 )
@@ -33,7 +34,11 @@ func TestPublishCommentReturnsCreatedComment(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/posts/8f92e975-5323-4a58-bac1-1336b668183c/comments", bytes.NewBufferString(`{
 		"body": "Reply",
-		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"]
+		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"],
+		"content_refs": [
+			{"kind": "image", "ref_id": "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+			{"kind": "link_preview", "ref_id": "https://example.com/comment"}
+		]
 	}`))
 	request.Header.Set("Authorization", "Bearer valid-token")
 	request.Header.Set("Content-Type", "application/json")
@@ -55,6 +60,13 @@ func TestPublishCommentReturnsCreatedComment(t *testing.T) {
 	if len(comments.publishInput.AttachmentIDs) != 1 || comments.publishInput.AttachmentIDs[0] != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
 		t.Fatalf("unexpected attachment ids: %#v", comments.publishInput.AttachmentIDs)
 	}
+	if len(comments.publishInput.ContentRefs) != 2 ||
+		comments.publishInput.ContentRefs[0].Kind != "image" ||
+		comments.publishInput.ContentRefs[0].RefID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" ||
+		comments.publishInput.ContentRefs[1].Kind != "link_preview" ||
+		comments.publishInput.ContentRefs[1].RefID != "https://example.com/comment" {
+		t.Fatalf("unexpected content refs: %#v", comments.publishInput.ContentRefs)
+	}
 
 	var response publishCommentResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -68,6 +80,9 @@ func TestPublishCommentReturnsCreatedComment(t *testing.T) {
 	}
 	if response.Comment.Attachments[0].ThumbnailURL != response.Comment.Attachments[0].URL {
 		t.Fatalf("expected attachment thumbnail_url fallback, got %#v", response.Comment.Attachments[0])
+	}
+	if len(response.Comment.ContentRefs) != 2 || response.Comment.ContentRefs[1].RefID != "https://example.com/comment" {
+		t.Fatalf("expected content refs in response, got %#v", response.Comment.ContentRefs)
 	}
 }
 
@@ -229,6 +244,9 @@ func TestUpdateCommentReturnsUpdatedComment(t *testing.T) {
 	if comments.updateInput.AttachmentIDs != nil {
 		t.Fatalf("expected omitted attachment_ids to stay nil, got %#v", *comments.updateInput.AttachmentIDs)
 	}
+	if comments.updateInput.ContentRefs != nil {
+		t.Fatalf("expected omitted content_refs to stay nil, got %#v", *comments.updateInput.ContentRefs)
+	}
 
 	var response publishCommentResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -244,9 +262,13 @@ func TestUpdateCommentAcceptsAttachmentIDs(t *testing.T) {
 
 	userID := userdomain.NewGeneratedUserID()
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	updatedComment := newCommentResultWithAttachment("Updated body", now)
+	updatedComment.ContentRefs = []postusecase.ContentRef{
+		{Kind: "image", RefID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+	}
 	comments := &fakeCommentUseCase{
 		updateResult: commentusecase.UpdateCommentResult{
-			Comment: newCommentResultWithAttachment("Updated body", now),
+			Comment: updatedComment,
 		},
 	}
 	router := newCommentTestRouter(comments, validParserWithUserID(userID))
@@ -254,7 +276,10 @@ func TestUpdateCommentAcceptsAttachmentIDs(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPatch, "/api/v1/comments/98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a", bytes.NewBufferString(`{
 		"body": "Updated body",
-		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"]
+		"attachment_ids": ["98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"],
+		"content_refs": [
+			{"kind": "image", "ref_id": "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"}
+		]
 	}`))
 	request.Header.Set("Authorization", "Bearer valid-token")
 	request.Header.Set("Content-Type", "application/json")
@@ -267,6 +292,9 @@ func TestUpdateCommentAcceptsAttachmentIDs(t *testing.T) {
 	if comments.updateInput.AttachmentIDs == nil || len(*comments.updateInput.AttachmentIDs) != 1 || (*comments.updateInput.AttachmentIDs)[0] != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
 		t.Fatalf("unexpected attachment ids: %#v", comments.updateInput.AttachmentIDs)
 	}
+	if comments.updateInput.ContentRefs == nil || len(*comments.updateInput.ContentRefs) != 1 || (*comments.updateInput.ContentRefs)[0].Kind != "image" || (*comments.updateInput.ContentRefs)[0].RefID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
+		t.Fatalf("unexpected content refs: %#v", comments.updateInput.ContentRefs)
+	}
 
 	var response publishCommentResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -274,6 +302,9 @@ func TestUpdateCommentAcceptsAttachmentIDs(t *testing.T) {
 	}
 	if len(response.Comment.Attachments) != 1 || response.Comment.Attachments[0].ID != "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a" {
 		t.Fatalf("expected attachment response, got %#v", response.Comment.Attachments)
+	}
+	if len(response.Comment.ContentRefs) != 1 || response.Comment.ContentRefs[0].Kind != "image" {
+		t.Fatalf("expected content ref response, got %#v", response.Comment.ContentRefs)
 	}
 }
 
@@ -540,6 +571,10 @@ func newCommentResult(body string, now time.Time) commentusecase.Comment {
 func newCommentResultWithAttachment(body string, now time.Time) commentusecase.Comment {
 	comment := newCommentResult(body, now)
 	comment.Attachments = []commentusecase.Attachment{newAttachmentResult(now)}
+	comment.ContentRefs = []postusecase.ContentRef{
+		{Kind: "image", RefID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
+		{Kind: "link_preview", RefID: "https://example.com/comment"},
+	}
 	return comment
 }
 

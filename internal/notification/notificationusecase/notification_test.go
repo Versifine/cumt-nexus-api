@@ -300,6 +300,49 @@ func TestNotifyCommentRepliedCreatesNotification(t *testing.T) {
 	}
 }
 
+func TestNotifyMentionedCreatesNotification(t *testing.T) {
+	recipientID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository, time.Now)
+
+	if err := uc.NotifyMentioned(context.Background(), recipientID, actorID, NotificationSourcePost, "post-1"); err != nil {
+		t.Fatalf("NotifyMentioned returned error: %v", err)
+	}
+	if !repository.createCalled {
+		t.Fatal("expected notification create")
+	}
+	notification := repository.createdNotification
+	if notification.Type != NotificationTypeMention || notification.SourceType != NotificationSourcePost || notification.SourceID != "post-1" {
+		t.Fatalf("unexpected mention notification: %#v", notification)
+	}
+	if notification.LastActorID != actorID.String() || notification.AggregateKey != "" {
+		t.Fatalf("unexpected mention metadata: %#v", notification)
+	}
+}
+
+func TestNotifyMentionedSkipsSelf(t *testing.T) {
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository, time.Now)
+
+	if err := uc.NotifyMentioned(context.Background(), actorID, actorID, NotificationSourcePost, "post-1"); err != nil {
+		t.Fatalf("NotifyMentioned returned error: %v", err)
+	}
+	if repository.createCalled || repository.upsertAggregatedCalled {
+		t.Fatal("expected self mention notification to be skipped")
+	}
+}
+
+func TestNotifyMentionedRejectsInvalidSource(t *testing.T) {
+	uc := NewUseCase(&fakeRepository{}, time.Now)
+
+	err := uc.NotifyMentioned(context.Background(), userdomain.NewGeneratedUserID(), userdomain.NewGeneratedUserID(), "profile", "target-1")
+	if !apperr.IsCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument, got %v", err)
+	}
+}
+
 type fakeRepository struct {
 	listCalled                   bool
 	createCalled                 bool

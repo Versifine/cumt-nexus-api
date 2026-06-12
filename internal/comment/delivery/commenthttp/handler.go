@@ -29,14 +29,16 @@ type CommentUseCase interface {
 }
 
 type publishCommentRequest struct {
-	Body          string   `json:"body" binding:"required"`
-	ParentID      string   `json:"parent_id"`
-	AttachmentIDs []string `json:"attachment_ids"`
+	Body          string              `json:"body" binding:"required"`
+	ParentID      string              `json:"parent_id"`
+	AttachmentIDs []string            `json:"attachment_ids"`
+	ContentRefs   []contentRefRequest `json:"content_refs"`
 }
 
 type updateCommentRequest struct {
-	Body          string    `json:"body" binding:"required"`
-	AttachmentIDs *[]string `json:"attachment_ids"`
+	Body          string               `json:"body" binding:"required"`
+	AttachmentIDs *[]string            `json:"attachment_ids"`
+	ContentRefs   *[]contentRefRequest `json:"content_refs"`
 }
 
 type setCommentVoteRequest struct {
@@ -68,6 +70,11 @@ type commentResponse struct {
 }
 
 type contentRefResponse struct {
+	Kind  string `json:"kind"`
+	RefID string `json:"ref_id"`
+}
+
+type contentRefRequest struct {
 	Kind  string `json:"kind"`
 	RefID string `json:"ref_id"`
 }
@@ -180,6 +187,7 @@ func (h *Handler) PublishComment(c *gin.Context) {
 		ParentID:      req.ParentID,
 		Body:          req.Body,
 		AttachmentIDs: req.AttachmentIDs,
+		ContentRefs:   toContentRefInputs(req.ContentRefs),
 	})
 	if err != nil {
 		_ = c.Error(err)
@@ -304,6 +312,7 @@ func (h *Handler) UpdateComment(c *gin.Context) {
 		ActorID:       userID,
 		Body:          req.Body,
 		AttachmentIDs: req.AttachmentIDs,
+		ContentRefs:   toOptionalContentRefInputs(req.ContentRefs),
 	})
 	if err != nil {
 		_ = c.Error(err)
@@ -449,10 +458,32 @@ func toCommentVoteResponse(vote commentusecase.CommentVote) commentVoteResponse 
 
 func toContentRefResponses(refs []postusecase.ContentRef) []contentRefResponse {
 	response := make([]contentRefResponse, 0, len(refs))
-	for range refs {
-		response = append(response, contentRefResponse{})
+	for _, ref := range refs {
+		response = append(response, contentRefResponse{
+			Kind:  ref.Kind,
+			RefID: ref.RefID,
+		})
 	}
 	return response
+}
+
+func toContentRefInputs(refs []contentRefRequest) []postusecase.ContentRefInput {
+	inputs := make([]postusecase.ContentRefInput, 0, len(refs))
+	for _, ref := range refs {
+		inputs = append(inputs, postusecase.ContentRefInput{
+			Kind:  ref.Kind,
+			RefID: ref.RefID,
+		})
+	}
+	return inputs
+}
+
+func toOptionalContentRefInputs(refs *[]contentRefRequest) *[]postusecase.ContentRefInput {
+	if refs == nil {
+		return nil
+	}
+	inputs := toContentRefInputs(*refs)
+	return &inputs
 }
 
 func toUserSummaryResponse(user postusecase.UserSummary) userSummaryResponse {
