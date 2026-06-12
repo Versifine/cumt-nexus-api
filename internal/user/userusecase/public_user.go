@@ -32,6 +32,7 @@ type PublicUser struct {
 	Username    string
 	DisplayName string
 	AvatarURL   string
+	BannerURL   string
 	Headline    string
 	Bio         string
 	Badges      []string
@@ -78,7 +79,11 @@ func (uc *PublicUserUseCase) GetPublicUser(ctx context.Context, input GetPublicU
 	publicUser := PublicUser{
 		ID:          user.ID().String(),
 		Username:    user.Username().String(),
-		DisplayName: user.Username().String(),
+		DisplayName: publicDisplayName(user),
+		AvatarURL:   user.AvatarURL().String(),
+		BannerURL:   user.BannerURL().String(),
+		Headline:    user.Headline().String(),
+		Bio:         user.Bio().String(),
 		Badges:      []string{},
 		Roles:       []string{},
 		Status:      user.Status().String(),
@@ -90,4 +95,31 @@ func (uc *PublicUserUseCase) GetPublicUser(ctx context.Context, input GetPublicU
 	}
 
 	return GetPublicUserResult{User: publicUser}, nil
+}
+
+func buildPublicUser(user *userdomain.User, postCount int, commentCount int) PublicUser {
+	return PublicUser{
+		ID:          user.ID().String(),
+		Username:    user.Username().String(),
+		DisplayName: publicDisplayName(user),
+		AvatarURL:   user.AvatarURL().String(),
+		BannerURL:   user.BannerURL().String(),
+		Headline:    user.Headline().String(),
+		Bio:         user.Bio().String(),
+		Badges:      []string{},
+		Roles:       []string{},
+		Status:      user.Status().String(),
+		Stats: PublicUserStats{
+			PostCount:    postCount,
+			CommentCount: commentCount,
+		},
+		CreatedAt: user.CreatedAt(),
+	}
+}
+
+func publicDisplayName(user *userdomain.User) string {
+	if user.DisplayName().String() != "" {
+		return user.DisplayName().String()
+	}
+	return user.Username().String()
 }

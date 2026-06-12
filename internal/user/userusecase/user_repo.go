@@ -10,4 +10,5 @@ type UserRepository interface {
 	Create(ctx context.Context, user userdomain.User) error
 	FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error)
 	FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error)
+	UpdateProfile(ctx context.Context, user userdomain.User) error
 }

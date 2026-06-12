@@ -159,6 +159,99 @@ func TestUserCreationAndRehydrateInvariants(t *testing.T) {
 	}
 }
 
+func TestProfileValuesAndUpdateProfile(t *testing.T) {
+	user := mustNewUser(t, time.Now().UTC())
+
+	displayName, err := NewDisplayName(" Alice ")
+	if err != nil {
+		t.Fatalf("NewDisplayName returned error: %v", err)
+	}
+	if displayName.String() != "Alice" {
+		t.Fatalf("expected trimmed display name, got %q", displayName.String())
+	}
+
+	headline, err := NewHeadline(" Building things ")
+	if err != nil {
+		t.Fatalf("NewHeadline returned error: %v", err)
+	}
+	if headline.String() != "Building things" {
+		t.Fatalf("expected trimmed headline, got %q", headline.String())
+	}
+
+	bio, err := NewBio(" hello world ")
+	if err != nil {
+		t.Fatalf("NewBio returned error: %v", err)
+	}
+	if bio.String() != "hello world" {
+		t.Fatalf("expected trimmed bio, got %q", bio.String())
+	}
+
+	avatarURL, err := NewAvatarURL("https://example.com/avatar.jpg")
+	if err != nil {
+		t.Fatalf("NewAvatarURL returned error: %v", err)
+	}
+	bannerURL, err := NewBannerURL("https://example.com/banner.jpg")
+	if err != nil {
+		t.Fatalf("NewBannerURL returned error: %v", err)
+	}
+
+	updatedAt := user.CreatedAt().Add(time.Minute)
+	if err := user.UpdateProfile(displayName, avatarURL, bannerURL, headline, bio, updatedAt); err != nil {
+		t.Fatalf("UpdateProfile returned error: %v", err)
+	}
+
+	if user.DisplayName().String() != "Alice" {
+		t.Fatalf("expected display name Alice, got %q", user.DisplayName().String())
+	}
+	if user.AvatarURL().String() != "https://example.com/avatar.jpg" {
+		t.Fatalf("expected avatar url to be updated, got %q", user.AvatarURL().String())
+	}
+	if user.BannerURL().String() != "https://example.com/banner.jpg" {
+		t.Fatalf("expected banner url to be updated, got %q", user.BannerURL().String())
+	}
+	if user.Headline().String() != "Building things" {
+		t.Fatalf("expected headline to be updated, got %q", user.Headline().String())
+	}
+	if user.Bio().String() != "hello world" {
+		t.Fatalf("expected bio to be updated, got %q", user.Bio().String())
+	}
+	if !user.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("expected updated_at %s, got %s", updatedAt, user.UpdatedAt())
+	}
+}
+
+func TestProfileValidation(t *testing.T) {
+	if _, err := NewDisplayName(strings.Repeat("a", 41)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long display name, got %v", err)
+	}
+	if _, err := NewHeadline(strings.Repeat("a", 81)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long headline, got %v", err)
+	}
+	if _, err := NewBio(strings.Repeat("a", 301)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long bio, got %v", err)
+	}
+	if _, err := NewAvatarURL("ftp://example.com/avatar.jpg"); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for invalid avatar url scheme, got %v", err)
+	}
+	if _, err := NewAvatarURL("not-a-url"); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for malformed avatar url, got %v", err)
+	}
+	if _, err := NewBannerURL("ftp://example.com/banner.jpg"); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for invalid banner url scheme, got %v", err)
+	}
+	if _, err := NewBannerURL("not-a-url"); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for malformed banner url, got %v", err)
+	}
+
+	user := mustNewUser(t, time.Now().UTC())
+	if err := user.UpdateProfile("", "", "", "", "", time.Time{}); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for zero update time, got %v", err)
+	}
+	if err := user.UpdateProfile("", "", "", "", "", user.CreatedAt().Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for update before create time, got %v", err)
+	}
+}
+
 func mustNewUser(t *testing.T, now time.Time) *User {
 	t.Helper()
 

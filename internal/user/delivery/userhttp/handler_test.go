@@ -224,6 +224,98 @@ func TestPublicUserReadRejectsInvalidAuth(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileReturnsUpdatedUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	updater := &fakeProfileUpdateUseCase{
+		result: userusecase.UpdateProfileResult{
+			User: userusecase.PublicUser{
+				ID:          userID.String(),
+				Username:    "alice",
+				DisplayName: "Alice",
+				AvatarURL:   "https://example.com/avatar.jpg",
+				BannerURL:   "https://example.com/banner.jpg",
+				Headline:    "Building the backend",
+				Bio:         "Go + PostgreSQL",
+				Badges:      []string{},
+				Roles:       []string{},
+				Status:      "active",
+				Stats: userusecase.PublicUserStats{
+					PostCount:    2,
+					CommentCount: 3,
+				},
+				CreatedAt: time.Date(2026, 6, 11, 9, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	parser := &fakeAccessTokenParser{
+		claims: &authtoken.AccessTokenClaims{
+			UserID: userID,
+		},
+	}
+	router := newUpdateProfileTestRouter(updater, parser)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/me/profile", strings.NewReader(`{"display_name":"Alice","avatar_url":"https://example.com/avatar.jpg","banner_url":"https://example.com/banner.jpg"}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !updater.called {
+		t.Fatal("expected update profile usecase to be called")
+	}
+	if updater.input.UserID != userID {
+		t.Fatalf("expected user id %q, got %q", userID.String(), updater.input.UserID.String())
+	}
+	if updater.input.DisplayName == nil || *updater.input.DisplayName != "Alice" {
+		t.Fatalf("expected display name Alice, got %#v", updater.input.DisplayName)
+	}
+	if updater.input.BannerURL == nil || *updater.input.BannerURL != "https://example.com/banner.jpg" {
+		t.Fatalf("expected banner url, got %#v", updater.input.BannerURL)
+	}
+
+	var response updateProfileResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.User.DisplayName != "Alice" || response.User.AvatarURL != "https://example.com/avatar.jpg" || response.User.BannerURL != "https://example.com/banner.jpg" {
+		t.Fatalf("unexpected response body: %#v", response.User)
+	}
+}
+
+func TestUpdateProfileRejectsInvalidJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	updater := &fakeProfileUpdateUseCase{}
+	parser := &fakeAccessTokenParser{
+		claims: &authtoken.AccessTokenClaims{
+			UserID: userID,
+		},
+	}
+	router := newUpdateProfileTestRouter(updater, parser)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/me/profile", strings.NewReader(`{"display_name":`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	assertMeErrorCode(t, recorder, apperr.CodeInvalidArgument)
+	if updater.called {
+		t.Fatal("update profile usecase should not be called for invalid JSON")
+	}
+}
+
 type fakeCurrentUserUseCase struct {
 	called bool
 	input  userusecase.CurrentUserInput
@@ -238,6 +330,13 @@ type fakePublicUserUseCase struct {
 	err    error
 }
 
+type fakeProfileUpdateUseCase struct {
+	called bool
+	input  userusecase.UpdateProfileInput
+	result userusecase.UpdateProfileResult
+	err    error
+}
+
 func (f *fakePublicUserUseCase) GetPublicUser(ctx context.Context, input userusecase.GetPublicUserInput) (userusecase.GetPublicUserResult, error) {
 	f.called = true
 	f.input = input
@@ -245,6 +344,12 @@ func (f *fakePublicUserUseCase) GetPublicUser(ctx context.Context, input useruse
 }
 
 func (f *fakeCurrentUserUseCase) GetCurrentUser(ctx context.Context, input userusecase.CurrentUserInput) (userusecase.CurrentUserResult, error) {
+	f.called = true
+	f.input = input
+	return f.result, f.err
+}
+
+func (f *fakeProfileUpdateUseCase) UpdateProfile(ctx context.Context, input userusecase.UpdateProfileInput) (userusecase.UpdateProfileResult, error) {
 	f.called = true
 	f.input = input
 	return f.result, f.err
@@ -281,6 +386,19 @@ func newPublicUserTestRouter(publicUsers PublicUserUseCase, parser authhttp.Acce
 	publicRead := router.Group("/api/v1")
 	publicRead.Use(authhttp.OptionalAuth(parser))
 	RegisterPublicRoutes(publicRead, NewHandler(&fakeCurrentUserUseCase{}, publicUsers))
+
+	return router
+}
+
+func newUpdateProfileTestRouter(updater ProfileUpdateUseCase, parser authhttp.AccessTokenParser) *gin.Engine {
+	router := gin.New()
+	router.Use(httpserver.ErrorMiddleware())
+
+	protected := router.Group("/api/v1")
+	protected.Use(authhttp.RequireAuth(parser))
+	handler := NewHandler(&fakeCurrentUserUseCase{})
+	handler.SetProfileUpdater(updater)
+	RegisterRoutes(protected, handler)
 
 	return router
 }

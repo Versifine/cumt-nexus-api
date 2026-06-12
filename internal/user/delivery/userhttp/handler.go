@@ -12,8 +12,9 @@ import (
 )
 
 type Handler struct {
-	currentUser CurrentUserUseCase
-	publicUsers PublicUserUseCase
+	currentUser    CurrentUserUseCase
+	publicUsers    PublicUserUseCase
+	profileUpdater ProfileUpdateUseCase
 }
 
 type CurrentUserUseCase interface {
@@ -22,6 +23,10 @@ type CurrentUserUseCase interface {
 
 type PublicUserUseCase interface {
 	GetPublicUser(ctx context.Context, input userusecase.GetPublicUserInput) (userusecase.GetPublicUserResult, error)
+}
+
+type ProfileUpdateUseCase interface {
+	UpdateProfile(ctx context.Context, input userusecase.UpdateProfileInput) (userusecase.UpdateProfileResult, error)
 }
 
 type currentUserResponse struct {
@@ -37,6 +42,7 @@ type publicUserResponse struct {
 	Username    string                  `json:"username"`
 	DisplayName string                  `json:"display_name"`
 	AvatarURL   string                  `json:"avatar_url"`
+	BannerURL   string                  `json:"banner_url"`
 	Headline    string                  `json:"headline"`
 	Bio         string                  `json:"bio"`
 	Badges      []string                `json:"badges"`
@@ -55,6 +61,18 @@ type getPublicUserResponse struct {
 	User publicUserResponse `json:"user"`
 }
 
+type updateProfileRequest struct {
+	DisplayName *string `json:"display_name"`
+	AvatarURL   *string `json:"avatar_url"`
+	BannerURL   *string `json:"banner_url"`
+	Headline    *string `json:"headline"`
+	Bio         *string `json:"bio"`
+}
+
+type updateProfileResponse struct {
+	User publicUserResponse `json:"user"`
+}
+
 func NewHandler(currentUser CurrentUserUseCase, publicUsers ...PublicUserUseCase) *Handler {
 	var publicUserUC PublicUserUseCase
 	if len(publicUsers) > 0 {
@@ -66,8 +84,13 @@ func NewHandler(currentUser CurrentUserUseCase, publicUsers ...PublicUserUseCase
 	}
 }
 
+func (h *Handler) SetProfileUpdater(profileUpdater ProfileUpdateUseCase) {
+	h.profileUpdater = profileUpdater
+}
+
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/me", handler.Me)
+	group.PATCH("/me/profile", handler.UpdateProfile)
 }
 
 func RegisterPublicRoutes(group *gin.RouterGroup, handler *Handler) {
@@ -121,12 +144,53 @@ func (h *Handler) GetPublicUser(c *gin.Context) {
 	})
 }
 
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	if h.profileUpdater == nil {
+		_ = c.Error(apperr.New(apperr.CodeInternal, "profile update usecase is not configured"))
+		c.Abort()
+		return
+	}
+
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req updateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid profile update request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.profileUpdater.UpdateProfile(c.Request.Context(), userusecase.UpdateProfileInput{
+		UserID:      userID,
+		DisplayName: req.DisplayName,
+		AvatarURL:   req.AvatarURL,
+		BannerURL:   req.BannerURL,
+		Headline:    req.Headline,
+		Bio:         req.Bio,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusOK, updateProfileResponse{
+		User: toPublicUserResponse(result.User),
+	})
+}
+
 func toPublicUserResponse(user userusecase.PublicUser) publicUserResponse {
 	return publicUserResponse{
 		ID:          user.ID,
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
 		AvatarURL:   user.AvatarURL,
+		BannerURL:   user.BannerURL,
 		Headline:    user.Headline,
 		Bio:         user.Bio,
 		Badges:      user.Badges,

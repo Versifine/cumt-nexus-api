@@ -70,6 +70,52 @@ func TestPostgresUserRepositoryFindNotFound(t *testing.T) {
 	}
 }
 
+func TestPostgresUserRepositoryUpdateProfile(t *testing.T) {
+	ctx, repo, pool := newTestRepository(t)
+	username := newTestUsername(t)
+	defer cleanupUserByUsername(ctx, t, pool, username)
+
+	user := newTestUser(t, username)
+	if err := repo.Create(ctx, *user); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	displayName, err := userdomain.NewDisplayName("Alice")
+	if err != nil {
+		t.Fatalf("NewDisplayName returned error: %v", err)
+	}
+	avatarURL, err := userdomain.NewAvatarURL("https://example.com/avatar.jpg")
+	if err != nil {
+		t.Fatalf("NewAvatarURL returned error: %v", err)
+	}
+	bannerURL, err := userdomain.NewBannerURL("https://example.com/banner.jpg")
+	if err != nil {
+		t.Fatalf("NewBannerURL returned error: %v", err)
+	}
+	headline, err := userdomain.NewHeadline("Building CUMT Nexus")
+	if err != nil {
+		t.Fatalf("NewHeadline returned error: %v", err)
+	}
+	bio, err := userdomain.NewBio("Backend builder")
+	if err != nil {
+		t.Fatalf("NewBio returned error: %v", err)
+	}
+
+	updatedAt := user.CreatedAt().Add(time.Minute)
+	if err := user.UpdateProfile(displayName, avatarURL, bannerURL, headline, bio, updatedAt); err != nil {
+		t.Fatalf("UpdateProfile returned error: %v", err)
+	}
+	if err := repo.UpdateProfile(ctx, *user); err != nil {
+		t.Fatalf("UpdateProfile repository returned error: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, user.ID())
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	assertSameUser(t, got, user)
+}
+
 func newTestRepository(t *testing.T) (context.Context, *PostgresUserRepository, *pgxpool.Pool) {
 	t.Helper()
 
@@ -186,6 +232,21 @@ func assertSameUser(t *testing.T, got *userdomain.User, want *userdomain.User) {
 	}
 	if got.Status() != want.Status() {
 		t.Fatalf("expected status %q, got %q", want.Status().String(), got.Status().String())
+	}
+	if got.DisplayName() != want.DisplayName() {
+		t.Fatalf("expected display name %q, got %q", want.DisplayName().String(), got.DisplayName().String())
+	}
+	if got.AvatarURL() != want.AvatarURL() {
+		t.Fatalf("expected avatar url %q, got %q", want.AvatarURL().String(), got.AvatarURL().String())
+	}
+	if got.BannerURL() != want.BannerURL() {
+		t.Fatalf("expected banner url %q, got %q", want.BannerURL().String(), got.BannerURL().String())
+	}
+	if got.Headline() != want.Headline() {
+		t.Fatalf("expected headline %q, got %q", want.Headline().String(), got.Headline().String())
+	}
+	if got.Bio() != want.Bio() {
+		t.Fatalf("expected bio %q, got %q", want.Bio().String(), got.Bio().String())
 	}
 }
 

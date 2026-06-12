@@ -28,11 +28,16 @@ func (ur *PostgresUserRepository) Create(ctx context.Context, user userdomain.Us
 			id,
 			username,
 			password_hash,
+			display_name,
+			avatar_url,
+			banner_url,
+			headline,
+			bio,
 			status,
 			created_at,
 			updated_at
 		)
-		VALUES($1::uuid,$2,$3,$4,$5,$6)
+		VALUES($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 	`
 	_, err := ur.pool.Exec(
 		ctx,
@@ -40,6 +45,11 @@ func (ur *PostgresUserRepository) Create(ctx context.Context, user userdomain.Us
 		user.ID().String(),
 		user.Username().String(),
 		user.PasswordHash().Raw(),
+		user.DisplayName().String(),
+		user.AvatarURL().String(),
+		user.BannerURL().String(),
+		user.Headline().String(),
+		user.Bio().String(),
 		user.Status().String(),
 		user.CreatedAt(),
 		user.UpdatedAt(),
@@ -61,6 +71,11 @@ func (ur *PostgresUserRepository) FindByID(ctx context.Context, id userdomain.Us
 			id::text,
 			username,
 			password_hash,
+			display_name,
+			avatar_url,
+			banner_url,
+			headline,
+			bio,
 			status,
 			created_at,
 			updated_at
@@ -78,6 +93,11 @@ func (ur *PostgresUserRepository) FindByUsername(ctx context.Context, username u
 			id::text,
 			username,
 			password_hash,
+			display_name,
+			avatar_url,
+			banner_url,
+			headline,
+			bio,
 			status,
 			created_at,
 			updated_at
@@ -128,10 +148,48 @@ func (ur *PostgresUserRepository) CountVisibleCommentsByAuthorInPublicCommunitie
 	return count, nil
 }
 
+func (ur *PostgresUserRepository) UpdateProfile(ctx context.Context, user userdomain.User) error {
+	const query = `
+		UPDATE users
+		SET
+			display_name = $2,
+			avatar_url = $3,
+			banner_url = $4,
+			headline = $5,
+			bio = $6,
+			updated_at = $7
+		WHERE id = $1::uuid
+	`
+
+	result, err := ur.pool.Exec(
+		ctx,
+		query,
+		user.ID().String(),
+		user.DisplayName().String(),
+		user.AvatarURL().String(),
+		user.BannerURL().String(),
+		user.Headline().String(),
+		user.Bio().String(),
+		user.UpdatedAt(),
+	)
+	if err != nil {
+		return fmt.Errorf("update user profile: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.New(apperr.CodeNotFound, "user not found")
+	}
+	return nil
+}
+
 func scanUser(row pgx.Row) (*userdomain.User, error) {
 	var rawID string
 	var rawUsername string
 	var rawPasswordHash string
+	var rawDisplayName string
+	var rawAvatarURL string
+	var rawBannerURL string
+	var rawHeadline string
+	var rawBio string
 	var rawStatus string
 	var createdAt time.Time
 	var updatedAt time.Time
@@ -140,6 +198,11 @@ func scanUser(row pgx.Row) (*userdomain.User, error) {
 		&rawID,
 		&rawUsername,
 		&rawPasswordHash,
+		&rawDisplayName,
+		&rawAvatarURL,
+		&rawBannerURL,
+		&rawHeadline,
+		&rawBio,
 		&rawStatus,
 		&createdAt,
 		&updatedAt,
@@ -165,15 +228,45 @@ func scanUser(row pgx.Row) (*userdomain.User, error) {
 		return nil, fmt.Errorf("rehydrate password hash: %v", err)
 	}
 
+	displayName, err := userdomain.NewDisplayName(rawDisplayName)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate display name: %v", err)
+	}
+
+	avatarURL, err := userdomain.NewAvatarURL(rawAvatarURL)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate avatar url: %v", err)
+	}
+
+	bannerURL, err := userdomain.NewBannerURL(rawBannerURL)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate banner url: %v", err)
+	}
+
+	headline, err := userdomain.NewHeadline(rawHeadline)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate headline: %v", err)
+	}
+
+	bio, err := userdomain.NewBio(rawBio)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate bio: %v", err)
+	}
+
 	status, err := userdomain.NewUserStatus(rawStatus)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate user status: %v", err)
 	}
 
-	user, err := userdomain.RehydrateUser(
+	user, err := userdomain.RehydrateUserWithProfile(
 		userID,
 		username,
 		passwordHash,
+		displayName,
+		avatarURL,
+		bannerURL,
+		headline,
+		bio,
 		status,
 		createdAt,
 		updatedAt,
