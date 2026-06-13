@@ -61,11 +61,18 @@ func TestResolveEmbedReturnsEmbed(t *testing.T) {
 
 	usecase := &fakeUseCase{
 		embed: contentrefusecase.Embed{
+			ID:            "a9f42d54-9484-40da-b478-83f41c7e173b",
 			Provider:      contentrefusecase.ProviderBilibili,
+			ProviderRef:   "BV1xx411c7mD",
 			URL:           "https://www.bilibili.com/video/BV1xx411c7mD",
 			CanonicalURL:  "https://www.bilibili.com/video/BV1xx411c7mD",
 			EmbedURL:      "https://player.bilibili.com/player.html?bvid=BV1xx411c7mD",
 			IframeAllowed: true,
+			Title:         "Campus video",
+			Description:   "Campus description",
+			ImageURL:      "https://example.com/cover.jpg",
+			AuthorName:    "Alice",
+			Status:        contentrefusecase.EmbedStatusReady,
 		},
 	}
 	router := newContentRefTestRouter(usecase, validParser())
@@ -88,7 +95,12 @@ func TestResolveEmbedReturnsEmbed(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if response.Embed.Provider != contentrefusecase.ProviderBilibili || !response.Embed.IframeAllowed {
+	if response.Embed.ID != "a9f42d54-9484-40da-b478-83f41c7e173b" ||
+		response.Embed.Provider != contentrefusecase.ProviderBilibili ||
+		response.Embed.ProviderRef != "BV1xx411c7mD" ||
+		!response.Embed.IframeAllowed ||
+		response.Embed.Title != "Campus video" ||
+		response.Embed.Status != contentrefusecase.EmbedStatusReady {
 		t.Fatalf("unexpected embed response: %#v", response.Embed)
 	}
 }

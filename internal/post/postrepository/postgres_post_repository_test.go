@@ -490,7 +490,7 @@ func TestPostgresPostRepositoryReplaceAndListContentRefs(t *testing.T) {
 
 	refs := []postusecase.ContentRef{
 		{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/one"},
-		{Kind: postusecase.ContentRefKindEmbed, RefID: "https://www.youtube.com/watch?v=one"},
+		{Kind: postusecase.ContentRefKindEmbed, RefID: "ba9d3ef9-29e4-4bb9-b2da-1c7ba55e2702"},
 	}
 	if err := repo.ReplacePostContentRefs(ctx, post.ID(), refs, now); err != nil {
 		t.Fatalf("ReplacePostContentRefs returned error: %v", err)

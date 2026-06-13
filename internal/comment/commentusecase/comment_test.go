@@ -809,7 +809,7 @@ func TestUpdateCommentPreservesContentRefsWhenOmitted(t *testing.T) {
 	comment := mustComment(t, post.ID(), authorID, nil, "Original", now)
 	existingRefs := []postusecase.ContentRef{
 		{Kind: postusecase.ContentRefKindLink, RefID: "https://example.com/original-comment"},
-		{Kind: postusecase.ContentRefKindEmbed, RefID: "https://www.youtube.com/watch?v=comment"},
+		{Kind: postusecase.ContentRefKindEmbed, RefID: "2ac24321-6509-42f0-aa2a-a0d708699c95"},
 	}
 	comments := &fakeCommentRepository{
 		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {

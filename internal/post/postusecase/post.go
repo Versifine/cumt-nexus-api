@@ -15,6 +15,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
+	"github.com/google/uuid"
 )
 
 const (
@@ -1033,6 +1034,11 @@ func ParseContentRefInputs(rawRefs []ContentRefInput) ([]ContentRef, error) {
 		refID := strings.TrimSpace(rawRef.RefID)
 		if refID == "" || len(refID) > MaxContentRefIDLength {
 			return nil, apperr.New(apperr.CodeInvalidArgument, "content ref id is invalid")
+		}
+		if kind == ContentRefKindEmbed {
+			if _, err := uuid.Parse(refID); err != nil {
+				return nil, apperr.New(apperr.CodeInvalidArgument, "embed content ref id is invalid")
+			}
 		}
 		key := kind + "\x00" + refID
 		if seen[key] {

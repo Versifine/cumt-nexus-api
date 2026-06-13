@@ -42,11 +42,18 @@ type resolveLinkPreviewResponse struct {
 }
 
 type embedResponse struct {
+	ID            string `json:"id"`
 	Provider      string `json:"provider"`
+	ProviderRef   string `json:"provider_ref"`
 	URL           string `json:"url"`
 	CanonicalURL  string `json:"canonical_url"`
 	EmbedURL      string `json:"embed_url"`
 	IframeAllowed bool   `json:"iframe_allowed"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	ImageURL      string `json:"image_url"`
+	AuthorName    string `json:"author_name"`
+	Status        string `json:"status"`
 }
 
 type resolveEmbedResponse struct {
@@ -134,10 +141,17 @@ func toLinkPreviewResponse(preview contentrefusecase.LinkPreview) linkPreviewRes
 
 func toEmbedResponse(embed contentrefusecase.Embed) embedResponse {
 	return embedResponse{
+		ID:            embed.ID,
 		Provider:      embed.Provider,
+		ProviderRef:   embed.ProviderRef,
 		URL:           embed.URL,
 		CanonicalURL:  embed.CanonicalURL,
 		EmbedURL:      embed.EmbedURL,
 		IframeAllowed: embed.IframeAllowed,
+		Title:         embed.Title,
+		Description:   embed.Description,
+		ImageURL:      embed.ImageURL,
+		AuthorName:    embed.AuthorName,
+		Status:        embed.Status,
 	}
 }

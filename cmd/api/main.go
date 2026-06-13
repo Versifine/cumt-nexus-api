@@ -24,6 +24,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/community/delivery/communityhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/contentref/contentrefrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/contentref/contentrefusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/contentref/delivery/contentrefhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/effect/delivery/effecthttp"
@@ -99,6 +100,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	mediaRepo := mediarepository.NewPostgresMediaRepository(pool)
 	effectRepo := effectrepository.NewPostgresEffectRepository(pool)
 	adminRepo := adminrepository.NewPostgresAdminRepository(pool)
+	contentRefRepo := contentrefrepository.NewPostgresContentRefRepository(pool)
 	objectStorage, err := storage.NewObjectStorage(ctx, cfg.Storage)
 	if err != nil {
 		return err
@@ -141,7 +143,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 		ImageMaxBytes: cfg.Upload.ImageMaxBytes,
 	}, time.Now)
 	mediaUC.SetSettingsReader(adminRepo)
-	contentRefUC := contentrefusecase.NewUseCase()
+	contentRefUC := contentrefusecase.NewUseCase(contentRefRepo)
 	effectUC := effectusecase.NewUseCase(effectRepo, commentRepo, time.Now)
 	adminUC := adminusecase.NewUseCase(adminRepo, time.Now)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {

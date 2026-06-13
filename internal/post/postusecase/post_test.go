@@ -205,6 +205,15 @@ func TestPublishPostRejectsImageContentRefWithoutBoundAttachment(t *testing.T) {
 	}
 }
 
+func TestParseContentRefInputsRejectsEmbedRefWithoutResolvedID(t *testing.T) {
+	_, err := ParseContentRefInputs([]ContentRefInput{
+		{Kind: ContentRefKindEmbed, RefID: "https://www.douyin.com/video/7123456789012345678"},
+	})
+	if !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for unresolved embed ref, got %v", err)
+	}
+}
+
 func TestPublishPostNotifiesMentionedUsers(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 30, 0, 0, time.UTC)
 	authorID := userdomain.NewGeneratedUserID()
@@ -899,7 +908,7 @@ func TestUpdatePostPreservesContentRefsWhenOmitted(t *testing.T) {
 	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), authorID, "Original", now)
 	existingRefs := []ContentRef{
 		{Kind: ContentRefKindLink, RefID: "https://example.com/original"},
-		{Kind: ContentRefKindEmbed, RefID: "https://www.youtube.com/watch?v=abc"},
+		{Kind: ContentRefKindEmbed, RefID: "1d2d1912-e4b6-4e0d-a7c2-5f2c57c4ce91"},
 	}
 	posts := &fakePostRepository{
 		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
