@@ -469,9 +469,6 @@ func (uc *UseCase) ensurePlatformStaff(ctx context.Context, actorID userdomain.U
 	if strings.TrimSpace(actorID.String()) == "" {
 		return apperr.New(apperr.CodeUnauthenticated, "authentication required")
 	}
-	if uc.repository == nil {
-		return apperr.New(apperr.CodeInternal, "admin repository is not configured")
-	}
 	isStaff, err := uc.repository.IsPlatformStaff(ctx, actorID)
 	if err != nil {
 		return fmt.Errorf("check platform staff: %w", err)
@@ -486,7 +483,7 @@ func (uc *UseCase) withWriteRepository(ctx context.Context, fn func(ctx context.
 	if uc.transactions != nil {
 		return uc.transactions.WithinTx(ctx, fn)
 	}
-	return fn(ctx, uc.repository)
+	return apperr.New(apperr.CodeInternal, "admin transaction support is not configured")
 }
 
 func normalizePagination(limit int, offset int) (int, int, error) {

@@ -371,14 +371,62 @@ func resizeForThumbnail(source image.Image, maxDimension int) image.Image {
 	}
 
 	target := image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
+	scaleX := float64(width) / float64(targetWidth)
+	scaleY := float64(height) / float64(targetHeight)
 	for y := range targetHeight {
-		sourceY := bounds.Min.Y + y*height/targetHeight
+		srcYF := (float64(y)+0.5)*scaleY - 0.5
+		y0 := int(srcYF)
+		y1 := y0 + 1
+		yFrac := srcYF - float64(y0)
+		if y0 < bounds.Min.Y {
+			y0 = bounds.Min.Y
+		}
+		if y1 >= bounds.Max.Y {
+			y1 = bounds.Max.Y - 1
+		}
 		for x := range targetWidth {
-			sourceX := bounds.Min.X + x*width/targetWidth
-			target.Set(x, y, compositeOnWhite(source.At(sourceX, sourceY)))
+			srcXF := (float64(x)+0.5)*scaleX - 0.5
+			x0 := int(srcXF)
+			x1 := x0 + 1
+			xFrac := srcXF - float64(x0)
+			if x0 < bounds.Min.X {
+				x0 = bounds.Min.X
+			}
+			if x1 >= bounds.Max.X {
+				x1 = bounds.Max.X - 1
+			}
+			c00 := compositeOnWhite(source.At(x0, y0))
+			c10 := compositeOnWhite(source.At(x1, y0))
+			c01 := compositeOnWhite(source.At(x0, y1))
+			c11 := compositeOnWhite(source.At(x1, y1))
+			target.SetRGBA(x, y, bilinearBlend(c00, c10, c01, c11, xFrac, yFrac))
 		}
 	}
 	return target
+}
+
+func bilinearBlend(c00, c10, c01, c11 color.RGBA, xFrac, yFrac float64) color.RGBA {
+	lerp := func(a, b uint8, t float64) uint8 {
+		return uint8(float64(a)*(1-t) + float64(b)*t + 0.5)
+	}
+	top := color.RGBA{
+		R: lerp(c00.R, c10.R, xFrac),
+		G: lerp(c00.G, c10.G, xFrac),
+		B: lerp(c00.B, c10.B, xFrac),
+		A: 0xff,
+	}
+	bot := color.RGBA{
+		R: lerp(c01.R, c11.R, xFrac),
+		G: lerp(c01.G, c11.G, xFrac),
+		B: lerp(c01.B, c11.B, xFrac),
+		A: 0xff,
+	}
+	return color.RGBA{
+		R: lerp(top.R, bot.R, yFrac),
+		G: lerp(top.G, bot.G, yFrac),
+		B: lerp(top.B, bot.B, yFrac),
+		A: 0xff,
+	}
 }
 
 func compositeOnWhite(source color.Color) color.RGBA {

@@ -1,8 +1,6 @@
 package mention
 
 import (
-	"strings"
-
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -62,5 +60,8 @@ func AddedUsernames(oldText string, newText string) []userdomain.Username {
 }
 
 func isUsernameRune(value rune) bool {
-	return strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", value)
+	return (value >= 'a' && value <= 'z') ||
+		(value >= 'A' && value <= 'Z') ||
+		(value >= '0' && value <= '9') ||
+		value == '_'
 }

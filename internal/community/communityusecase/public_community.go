@@ -253,8 +253,6 @@ type Community struct {
 type CommunitySettings struct {
 	Name        string
 	Description string
-	AvatarURL   string
-	BannerURL   string
 	UpdatedAt   time.Time
 }
 

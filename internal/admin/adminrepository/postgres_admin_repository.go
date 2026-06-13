@@ -455,6 +455,7 @@ func (repo *PostgresAdminRepository) IsEnabled(ctx context.Context, key string) 
 	var enabled bool
 	if err := repo.db.QueryRow(ctx, query, normalizedKey).Scan(&enabled); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// No row means the setting has not been explicitly configured; default to enabled.
 			return true, nil
 		}
 		return false, fmt.Errorf("read admin setting: %w", err)

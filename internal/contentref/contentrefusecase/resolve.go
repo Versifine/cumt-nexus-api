@@ -1,10 +1,12 @@
-package contentrefusecase
+﻿package contentrefusecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	stdhtml "html"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -58,6 +60,7 @@ type UseCase struct {
 	embeds     EmbedRepository
 	httpClient HTTPClient
 	now        func() time.Time
+	log        *slog.Logger
 }
 
 type ResolveLinkPreviewInput struct {
@@ -110,6 +113,7 @@ func NewUseCase(embedRepositories ...EmbedRepository) *UseCase {
 	}
 	return &UseCase{
 		embeds: embeds,
+		log:    slog.Default(),
 		httpClient: &http.Client{
 			Timeout: defaultHTTPTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -186,7 +190,10 @@ func (uc *UseCase) ResolveEmbed(ctx context.Context, input ResolveEmbedInput) (E
 	}
 
 	if uc.embeds != nil {
-		metadata := uc.fetchEmbedMetadata(ctx, provider, canonicalURL)
+		metadata, err := uc.fetchEmbedMetadata(ctx, provider, canonicalURL)
+		if err != nil {
+			return Embed{}, fmt.Errorf("fetch embed metadata: %w", err)
+		}
 		embed.Title = metadata.Title
 		embed.Description = metadata.Description
 		embed.ImageURL = metadata.ImageURL
@@ -599,37 +606,42 @@ func resolveQQMusicEmbed(normalized *url.URL) (string, string, string, string, b
 	return ProviderQQMusic, providerRef, canonical.String(), embed.String(), true, nil
 }
 
-func (uc *UseCase) fetchEmbedMetadata(ctx context.Context, provider string, canonicalURL string) embedMetadata {
+func (uc *UseCase) fetchEmbedMetadata(ctx context.Context, provider string, canonicalURL string) (embedMetadata, error) {
 	normalized, _, err := normalizePublicURL(canonicalURL)
 	if err != nil {
-		return embedMetadata{}
+		return embedMetadata{}, nil
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, normalized.String(), nil)
 	if err != nil {
-		return embedMetadata{}
+		return embedMetadata{}, nil
 	}
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	req.Header.Set("User-Agent", "cumt-nexus-api/1.0")
 
 	resp, err := uc.httpClient.Do(req)
 	if err != nil {
-		return embedMetadata{}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return embedMetadata{}, err
+		}
+		uc.log.Warn("fetch embed metadata failed", "url", canonicalURL, "error", err)
+		return embedMetadata{}, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-		return embedMetadata{Status: EmbedStatusUnavailable}
+		return embedMetadata{Status: EmbedStatusUnavailable}, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return embedMetadata{}
+		uc.log.Warn("fetch embed metadata unexpected status", "url", canonicalURL, "status", resp.StatusCode)
+		return embedMetadata{}, nil
 	}
 
 	metadata := parseHTMLMetadata(io.LimitReader(resp.Body, maxMetadataBytes), normalized)
 	if metadata.AuthorName == "" && provider == ProviderDouyin {
 		metadata.AuthorName = deriveDouyinAuthorName(metadata.Title)
 	}
-	return metadata
+	return metadata, nil
 }
 
 func parseHTMLMetadata(reader io.Reader, baseURL *url.URL) embedMetadata {

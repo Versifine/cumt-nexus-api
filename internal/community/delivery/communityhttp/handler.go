@@ -1,4 +1,4 @@
-package communityhttp
+﻿package communityhttp
 
 import (
 	"context"
@@ -188,8 +188,6 @@ type updateCommunityRuleResponse struct {
 type communitySettingsResponse struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	AvatarURL   string    `json:"avatar_url"`
-	BannerURL   string    `json:"banner_url"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
@@ -1056,8 +1054,6 @@ func toCommunitySettingsResponse(settings communityusecase.CommunitySettings) co
 	return communitySettingsResponse{
 		Name:        settings.Name,
 		Description: settings.Description,
-		AvatarURL:   settings.AvatarURL,
-		BannerURL:   settings.BannerURL,
 		UpdatedAt:   settings.UpdatedAt,
 	}
 }
