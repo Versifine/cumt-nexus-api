@@ -133,7 +133,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 `PATCH /api/v1/me/profile` 需要 Bearer，允许当前用户更新公开资料字段 `display_name`、`avatar_url`、`banner_url`、`headline` 和 `bio`。五个字段都支持显式传空字符串清空；请求至少要包含一个字段；`display_name` 最多 40 字，`headline` 最多 80 字，`bio` 最多 300 字，`avatar_url` 和 `banner_url` 非空时必须是 `http/https` 绝对 URL。成功响应返回当前用户更新后的公开资料和实时公开计数。
 
-发帖、编辑帖子、发评论和编辑评论均支持可选 `content_refs` 请求字段，元素结构为 `{ "kind": "...", "ref_id": "..." }`，允许 `kind=image|link_preview|embed`，最多 50 条，并按请求顺序持久化和返回。`image` 引用必须指向同一次请求中已绑定或内容当前已绑定的图片附件 ID；`link_preview` 和 `embed` 的 `ref_id` 是前端通过解析接口或客户端生成的稳定引用字符串，当前不新增独立实体表。编辑请求省略 `content_refs` 时保留原引用，显式传空数组时清空原引用。
+`POST /api/v1/embeds/resolve` 需要 Bearer，接受单个公开 URL 或包含 URL 的分享文本。嵌入解析只支持白名单 provider：Bilibili 视频、抖音视频、网易云音乐单曲 / 歌单 / 专辑、QQ 音乐单曲；`b23.tv` 和 `v.douyin.com` 会在白名单重定向边界内展开，禁止内网、localhost、用户信息 URL 和非 `http/https` scheme。抖音支持 canonical `/video/:id`、`/user/...?...modal_id=:id`、`open.douyin.com/player/video?vid=:id` 以及常见 `aweme_id/video_id/item_id` 参数。成功响应会 upsert `embeds` 记录并返回 `embed.id`、`provider_ref`、`canonical_url`、受控 `embed_url`、`iframe_allowed`、标题、描述、封面、作者和 `status=ready|unavailable`；第三方元数据抓取失败不阻断解析成功。
+
+发帖、编辑帖子、发评论和编辑评论均支持可选 `content_refs` 请求字段，元素结构为 `{ "kind": "...", "ref_id": "..." }`，允许 `kind=image|link_preview|embed`，最多 50 条，并按请求顺序持久化和返回。`image` 引用必须指向同一次请求中已绑定或内容当前已绑定的图片附件 ID；`embed` 的 `ref_id` 必须使用 `/api/v1/embeds/resolve` 返回的 `embed.id`；`link_preview` 的 `ref_id` 是前端通过解析接口或客户端生成的稳定引用字符串。编辑请求省略 `content_refs` 时保留原引用，显式传空数组时清空原引用。
 
 图片上传响应中的 `thumbnail_url` 是前端列表页缩略图读取字段。大于 512px 边长的 PNG/JPEG 上传会同步生成最大边 512px、质量 82 的独立 JPEG 缩略图并写入 `thumbnail_object_key`；小图、WebP 或缩略图生成 / 上传失败时，`thumbnail_url` 回退为原图 `url`。该回退不影响原图上传成功。
 

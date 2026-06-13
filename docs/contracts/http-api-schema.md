@@ -243,7 +243,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `contentrefhttp` | `resolveEmbedRequest` | `url` |
 | `contentrefhttp` | `linkPreviewResponse` | `provider`, `url`, `canonical_url`, `host`, `title`, `description`, `image_url` |
 | `contentrefhttp` | `resolveLinkPreviewResponse` | `preview` |
-| `contentrefhttp` | `embedResponse` | `provider`, `url`, `canonical_url`, `embed_url`, `iframe_allowed` |
+| `contentrefhttp` | `embedResponse` | `id`, `provider`, `provider_ref`, `url`, `canonical_url`, `embed_url`, `iframe_allowed`, `title`, `description`, `image_url`, `author_name`, `status` |
 | `contentrefhttp` | `resolveEmbedResponse` | `embed` |
 | `effecthttp` | `effectResponse` | `id`, `name`, `description`, `cost_points`, `asset_url`, `animation_key`, `is_active`, `created_at`, `updated_at` |
 | `effecthttp` | `listEffectsCatalogResponse` | `effects` |

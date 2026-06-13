@@ -208,7 +208,7 @@ GET /api/v1/posts?source=recommended&sort=hot&t=day&limit=20&offset=0
 
 `source=recommended` 当前是后端公开可解释推荐流，默认 `sort=hot`，匿名读取使用 `hot + new` 混排并做社区 rank 去重；携带有效 Bearer 时会给关注社区和互动过的社区加权。显式传 `sort=best|hot|new|top|rising` 时，该排序语义作为推荐基线；它不是机器学习推荐，也不是预计算时间线。`t` 支持 `hour|day|week|month|year|all`。
 
-发帖和编辑帖子支持可选 `content_refs` 请求字段，元素结构为 `{ "kind": "image|link_preview|embed", "ref_id": "..." }`。`image` 引用必须指向同一次请求绑定或帖子当前已绑定的图片附件 ID；编辑时省略 `content_refs` 保留原引用，传空数组清空原引用。
+发帖和编辑帖子支持可选 `content_refs` 请求字段，元素结构为 `{ "kind": "image|link_preview|embed", "ref_id": "..." }`。`image` 引用必须指向同一次请求绑定或帖子当前已绑定的图片附件 ID；`embed` 引用必须使用 `POST /api/v1/embeds/resolve` 返回的 `embed.id`；编辑时省略 `content_refs` 保留原引用，传空数组清空原引用。
 
 ### Comments
 
@@ -228,7 +228,7 @@ DELETE /api/v1/comments/:id/vote
 GET /api/v1/posts/:id/comments?view=tree&sort=new&limit=20&offset=0&max_depth=6
 ```
 
-发评论和编辑评论同样支持可选 `content_refs`，语义与帖子一致：按请求顺序返回，`image` 引用必须匹配评论已绑定图片附件，省略保留、空数组清空。
+发评论和编辑评论同样支持可选 `content_refs`，语义与帖子一致：按请求顺序返回，`image` 引用必须匹配评论已绑定图片附件，`embed` 引用必须使用已解析的 `embed.id`，省略保留、空数组清空。
 
 ### Media
 
@@ -239,6 +239,9 @@ POST /api/v1/embeds/resolve
 ```
 
 上传使用 `multipart/form-data`，字段为 `file` 和可选 `alt_text`；PNG/JPEG 上传成功后会返回解析出的图片 `width` 和 `height`。大于 512px 边长的 PNG/JPEG 会同步生成最大边 512px 的独立 JPEG 缩略图，附件响应中的 `thumbnail_url` 指向该缩略图；小图、WebP 或缩略图生成 / 上传失败时，`thumbnail_url` 回退为原图 `url`。
+
+`POST /api/v1/embeds/resolve` 支持 Bilibili、抖音、网易云音乐和 QQ 音乐白名单链接。请求体可以是 URL，也可以是包含 URL 的分享文本；后端会展开 `b23.tv` / `v.douyin.com` 短链、提取稳定资源 ID、返回受控 `embed_url`、`canonical_url`、`provider_ref`、元数据和 `status`，并持久化 `embed.id` 供帖子 / 评论 `content_refs.kind=embed` 引用。后端不接受用户提交的任意 iframe HTML。
+
 未绑定和异常附件通过后台清理命令回收：
 
 ```bash

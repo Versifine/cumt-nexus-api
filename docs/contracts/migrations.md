@@ -50,6 +50,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000016 | create_admin_management | 创建平台管理设置表和平台管理审计日志表 |
 | 000017 | add_user_profile_fields | 为 `users` 表增加公开资料字段和基础长度/URL 约束 |
 | 000018 | add_user_banner_url | 为 `users` 表增加公开主页背景图 URL 字段和 URL 约束 |
+| 000019 | create_embeds | 创建白名单嵌入解析结果表 |
 
 ## 阶段 19 边界
 
