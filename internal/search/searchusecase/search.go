@@ -21,6 +21,7 @@ const (
 	ScopeAll         Scope = "all"
 	ScopeCommunities Scope = "communities"
 	ScopePosts       Scope = "posts"
+	ScopeUsers       Scope = "users"
 )
 
 type UseCase struct {
@@ -40,8 +41,11 @@ type SearchResult struct {
 	Scope       string
 	Limit       int
 	Offset      int
+	NextOffset  int
+	HasMore     bool
 	Communities []CommunityResult
 	Posts       []PostResult
+	Users       []UserResult
 }
 
 func NewUseCase(repository Repository) *UseCase {
@@ -65,25 +69,42 @@ func (uc *UseCase) Search(ctx context.Context, input SearchInput) (SearchResult,
 	}
 
 	result := SearchResult{
-		Query:  query,
-		Scope:  scope.String(),
-		Limit:  limit,
-		Offset: offset,
+		Query:      query,
+		Scope:      scope.String(),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset,
 	}
 
 	if scope == ScopeAll || scope == ScopeCommunities {
-		communities, err := uc.repository.SearchCommunities(ctx, query, limit, offset)
+		communities, err := uc.repository.SearchCommunities(ctx, query, limit+1, offset)
 		if err != nil {
 			return SearchResult{}, fmt.Errorf("search communities: %w", err)
 		}
+		communities, hasMore := trimSearchPage(communities, limit)
 		result.Communities = communities
+		result.HasMore = result.HasMore || hasMore
+		result.NextOffset = maxInt(result.NextOffset, offset+len(communities))
 	}
 	if scope == ScopeAll || scope == ScopePosts {
-		posts, err := uc.repository.SearchPosts(ctx, query, limit, offset)
+		posts, err := uc.repository.SearchPosts(ctx, query, limit+1, offset)
 		if err != nil {
 			return SearchResult{}, fmt.Errorf("search posts: %w", err)
 		}
+		posts, hasMore := trimSearchPage(posts, limit)
 		result.Posts = posts
+		result.HasMore = result.HasMore || hasMore
+		result.NextOffset = maxInt(result.NextOffset, offset+len(posts))
+	}
+	if scope == ScopeAll || scope == ScopeUsers {
+		users, err := uc.repository.SearchUsers(ctx, query, limit+1, offset)
+		if err != nil {
+			return SearchResult{}, fmt.Errorf("search users: %w", err)
+		}
+		users, hasMore := trimSearchPage(users, limit)
+		result.Users = users
+		result.HasMore = result.HasMore || hasMore
+		result.NextOffset = maxInt(result.NextOffset, offset+len(users))
 	}
 
 	return result, nil
@@ -111,6 +132,8 @@ func normalizeScope(raw string) (Scope, error) {
 		return ScopeCommunities, nil
 	case ScopePosts:
 		return ScopePosts, nil
+	case ScopeUsers:
+		return ScopeUsers, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "search scope is invalid")
 	}
@@ -134,4 +157,18 @@ func normalizePagination(limit int, offset int) (int, int, error) {
 		limit = MaxSearchLimit
 	}
 	return limit, offset, nil
+}
+
+func trimSearchPage[T any](items []T, limit int) ([]T, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }

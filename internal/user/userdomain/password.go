@@ -4,7 +4,10 @@ import (
 	"strings"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 )
+
+const MaxPlainPasswordBytes = 256
 
 type PlainPassword string
 type PasswordHash string
@@ -22,6 +25,9 @@ func NewPlainPassword(raw string) (PlainPassword, error) {
 	}
 	if len(raw) < 8 {
 		return "", apperr.New(apperr.CodeInvalidArgument, "password is invalid")
+	}
+	if err := textlimit.EnsureMaxBytes(raw, "password", MaxPlainPasswordBytes); err != nil {
+		return "", err
 	}
 	return PlainPassword(raw), nil
 }

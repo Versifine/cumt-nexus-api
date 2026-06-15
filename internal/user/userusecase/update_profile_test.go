@@ -174,14 +174,16 @@ func TestUpdateProfileRepositoryError(t *testing.T) {
 }
 
 type fakeProfileRepository struct {
-	findCalled   bool
-	updateCalled bool
-	user         *userdomain.User
-	updatedUser  userdomain.User
-	postCount    int
-	commentCount int
-	findErr      error
-	updateErr    error
+	findCalled     bool
+	updateCalled   bool
+	user           *userdomain.User
+	updatedUser    userdomain.User
+	postCount      int
+	commentCount   int
+	followerCount  int
+	followingCount int
+	findErr        error
+	updateErr      error
 }
 
 func (f *fakeProfileRepository) FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error) {
@@ -204,4 +206,12 @@ func (f *fakeProfileRepository) CountVisiblePostsByAuthorInPublicCommunities(ctx
 
 func (f *fakeProfileRepository) CountVisibleCommentsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error) {
 	return f.commentCount, nil
+}
+
+func (f *fakeProfileRepository) CountFollowers(ctx context.Context, userID userdomain.UserID) (int, error) {
+	return f.followerCount, nil
+}
+
+func (f *fakeProfileRepository) CountFollowing(ctx context.Context, userID userdomain.UserID) (int, error) {
+	return f.followingCount, nil
 }

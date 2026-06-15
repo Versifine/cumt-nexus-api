@@ -67,6 +67,7 @@ type commentResponse struct {
 	CreatedAt         time.Time                 `json:"created_at"`
 	UpdatedAt         time.Time                 `json:"updated_at"`
 	Attachments       []attachmentResponse      `json:"attachments"`
+	Effects           []commentEffectResponse   `json:"effects"`
 }
 
 type contentRefResponse struct {
@@ -111,6 +112,17 @@ type attachmentResponse struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type commentEffectResponse struct {
+	ID            string              `json:"id"`
+	EffectID      string              `json:"effect_id"`
+	Name          string              `json:"name"`
+	AssetURL      string              `json:"asset_url"`
+	AnimationKey  string              `json:"animation_key"`
+	AppliedByUser userSummaryResponse `json:"applied_by_user"`
+	PointsSpent   int                 `json:"points_spent"`
+	CreatedAt     time.Time           `json:"created_at"`
+}
+
 type publishCommentResponse struct {
 	Comment commentResponse `json:"comment"`
 }
@@ -128,18 +140,22 @@ type setCommentVoteResponse struct {
 }
 
 type listPostCommentsResponse struct {
-	Comments []commentResponse `json:"comments"`
-	View     string            `json:"view"`
-	Sort     string            `json:"sort"`
-	Limit    int               `json:"limit"`
-	Offset   int               `json:"offset"`
-	MaxDepth int               `json:"max_depth"`
+	Comments   []commentResponse `json:"comments"`
+	View       string            `json:"view"`
+	Sort       string            `json:"sort"`
+	Limit      int               `json:"limit"`
+	Offset     int               `json:"offset"`
+	NextOffset int               `json:"next_offset"`
+	HasMore    bool              `json:"has_more"`
+	MaxDepth   int               `json:"max_depth"`
 }
 
 type listUserCommentsResponse struct {
-	Comments []commentResponse `json:"comments"`
-	Limit    int               `json:"limit"`
-	Offset   int               `json:"offset"`
+	Comments   []commentResponse `json:"comments"`
+	Limit      int               `json:"limit"`
+	Offset     int               `json:"offset"`
+	NextOffset int               `json:"next_offset"`
+	HasMore    bool              `json:"has_more"`
 }
 
 func NewHandler(comments CommentUseCase) *Handler {
@@ -238,12 +254,14 @@ func (h *Handler) ListPostComments(c *gin.Context) {
 	}
 
 	response := listPostCommentsResponse{
-		Comments: make([]commentResponse, 0, len(result.Comments)),
-		View:     result.View,
-		Sort:     result.Sort,
-		Limit:    result.Limit,
-		Offset:   result.Offset,
-		MaxDepth: result.MaxDepth,
+		Comments:   make([]commentResponse, 0, len(result.Comments)),
+		View:       result.View,
+		Sort:       result.Sort,
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
+		MaxDepth:   result.MaxDepth,
 	}
 	for _, comment := range result.Comments {
 		response.Comments = append(response.Comments, toCommentResponse(comment))
@@ -281,9 +299,11 @@ func (h *Handler) ListUserComments(c *gin.Context) {
 	}
 
 	response := listUserCommentsResponse{
-		Comments: make([]commentResponse, 0, len(result.Comments)),
-		Limit:    result.Limit,
-		Offset:   result.Offset,
+		Comments:   make([]commentResponse, 0, len(result.Comments)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, comment := range result.Comments {
 		response.Comments = append(response.Comments, toCommentResponse(comment))
@@ -435,6 +455,7 @@ func toCommentResponse(comment commentusecase.Comment) commentResponse {
 		CreatedAt:         comment.CreatedAt,
 		UpdatedAt:         comment.UpdatedAt,
 		Attachments:       toAttachmentResponses(comment.Attachments),
+		Effects:           toCommentEffectResponses(comment.Effects),
 	}
 }
 
@@ -527,6 +548,23 @@ func toAttachmentResponses(attachments []commentusecase.Attachment) []attachment
 			AltText:      attachment.AltText,
 			Status:       attachment.Status,
 			CreatedAt:    attachment.CreatedAt,
+		})
+	}
+	return response
+}
+
+func toCommentEffectResponses(effects []commentusecase.CommentEffectSummary) []commentEffectResponse {
+	response := make([]commentEffectResponse, 0, len(effects))
+	for _, effect := range effects {
+		response = append(response, commentEffectResponse{
+			ID:            effect.ID,
+			EffectID:      effect.EffectID,
+			Name:          effect.Name,
+			AssetURL:      effect.AssetURL,
+			AnimationKey:  effect.AnimationKey,
+			AppliedByUser: toUserSummaryResponse(effect.AppliedByUser),
+			PointsSpent:   effect.PointsSpent,
+			CreatedAt:     effect.CreatedAt,
 		})
 	}
 	return response

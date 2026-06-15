@@ -15,6 +15,7 @@ import (
 	platformsettings "github.com/Versifine/cumt-nexus-api/internal/platform/settings"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
@@ -51,7 +52,9 @@ type CommentUseCase struct {
 	users                PublicUserFinder
 	metadata             CommentMetadataRepository
 	votes                CommentVoteRepository
+	effects              CommentEffectRepository
 	notifications        NotificationPublisher
+	progression          XPRecorder
 	contentRefs          ContentRefRepository
 	settingsReader       platformsettings.Reader
 	commentImageMaxCount int
@@ -113,18 +116,22 @@ type PublishCommentResult struct {
 }
 
 type ListPostCommentsResult struct {
-	Comments []Comment
-	View     string
-	Sort     string
-	Limit    int
-	Offset   int
-	MaxDepth int
+	Comments   []Comment
+	View       string
+	Sort       string
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
+	MaxDepth   int
 }
 
 type ListUserCommentsResult struct {
-	Comments []Comment
-	Limit    int
-	Offset   int
+	Comments   []Comment
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type UpdateCommentResult struct {
@@ -167,6 +174,18 @@ type Comment struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	Attachments       []Attachment
+	Effects           []CommentEffectSummary
+}
+
+type CommentEffectSummary struct {
+	ID            string
+	EffectID      string
+	Name          string
+	AssetURL      string
+	AnimationKey  string
+	AppliedByUser postusecase.UserSummary
+	PointsSpent   int
+	CreatedAt     time.Time
 }
 
 type Attachment struct {
@@ -200,6 +219,9 @@ func NewCommentUseCase(comments CommentRepository, posts PostReader, now func() 
 	if repo, ok := comments.(CommentVoteRepository); ok {
 		uc.votes = repo
 	}
+	if repo, ok := comments.(CommentEffectRepository); ok {
+		uc.effects = repo
+	}
 	if repo, ok := comments.(ContentRefRepository); ok {
 		uc.contentRefs = repo
 	}
@@ -230,6 +252,14 @@ func (uc *CommentUseCase) SetNotificationPublisher(notifications NotificationPub
 	uc.notifications = notifications
 }
 
+type XPRecorder interface {
+	GrantXP(ctx context.Context, input progressionusecase.GrantXPInput) error
+}
+
+func (uc *CommentUseCase) SetXPRecorder(progression XPRecorder) {
+	uc.progression = progression
+}
+
 func (uc *CommentUseCase) SetSettingsReader(settingsReader platformsettings.Reader) {
 	uc.settingsReader = settingsReader
 }
@@ -249,6 +279,9 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 	post, err := uc.posts.FindVisibleByID(ctx, postID)
 	if err != nil {
 		return PublishCommentResult{}, fmt.Errorf("find post for comment: %w", err)
+	}
+	if post.IsLocked() {
+		return PublishCommentResult{}, apperr.New(apperr.CodeConflict, "post is locked")
 	}
 
 	parent, err := uc.resolveParentComment(ctx, post.ID(), input.ParentID)
@@ -312,6 +345,9 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 	if err := uc.notifyMentions(ctx, mention.ExtractUsernames(input.Body), input.AuthorID, "comment", comment.ID().String()); err != nil {
 		return PublishCommentResult{}, err
 	}
+	if err := uc.grantXP(ctx, input.AuthorID, input.AuthorID, progressionusecase.XPSourceCommentPublish, comment.ID().String()); err != nil {
+		return PublishCommentResult{}, err
+	}
 
 	return PublishCommentResult{
 		Comment: toCommentDTO(*comment, attachments, contentRefs, metadataViews[comment.ID()], input.AuthorID),
@@ -349,18 +385,21 @@ func (uc *CommentUseCase) ListPostComments(ctx context.Context, input ListPostCo
 		return uc.listPostCommentsTree(ctx, post.ID(), input.ViewerID, listSort, limit, offset, maxDepth)
 	}
 
-	comments, err := uc.comments.ListVisibleByPost(ctx, post.ID(), listSort, limit, offset)
+	comments, err := uc.comments.ListVisibleByPost(ctx, post.ID(), listSort, limit+1, offset)
 	if err != nil {
 		return ListPostCommentsResult{}, fmt.Errorf("list post comments: %w", err)
 	}
+	comments, hasMore := trimCommentDomainPage(comments, limit)
 
 	result := ListPostCommentsResult{
-		Comments: make([]Comment, 0, len(comments)),
-		View:     view.String(),
-		Sort:     listSort.String(),
-		Limit:    limit,
-		Offset:   offset,
-		MaxDepth: maxDepth,
+		Comments:   make([]Comment, 0, len(comments)),
+		View:       view.String(),
+		Sort:       listSort.String(),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(comments),
+		HasMore:    hasMore,
+		MaxDepth:   maxDepth,
 	}
 	for _, comment := range comments {
 		result.Comments = append(result.Comments, toCommentDTO(comment, nil, nil, CommentMetadata{}, input.ViewerID))
@@ -378,6 +417,10 @@ func (uc *CommentUseCase) ListPostComments(ctx context.Context, input ListPostCo
 		return ListPostCommentsResult{}, err
 	}
 	result.Comments, err = uc.attachCommentVotes(ctx, result.Comments, input.ViewerID)
+	if err != nil {
+		return ListPostCommentsResult{}, err
+	}
+	result.Comments, err = uc.attachCommentEffects(ctx, result.Comments)
 	if err != nil {
 		return ListPostCommentsResult{}, err
 	}
@@ -395,13 +438,16 @@ func (uc *CommentUseCase) listPostCommentsTree(ctx context.Context, postID postd
 		return ListPostCommentsResult{}, err
 	}
 
+	tree, rootCount := buildCommentTree(comments, viewerID, listSort, voteSummaries, limit, offset, maxDepth)
 	result := ListPostCommentsResult{
-		Comments: buildCommentTree(comments, viewerID, listSort, voteSummaries, limit, offset, maxDepth),
-		View:     CommentListViewTree.String(),
-		Sort:     listSort.String(),
-		Limit:    limit,
-		Offset:   offset,
-		MaxDepth: maxDepth,
+		Comments:   tree,
+		View:       CommentListViewTree.String(),
+		Sort:       listSort.String(),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: minInt(offset+limit, rootCount),
+		HasMore:    offset+limit < rootCount,
+		MaxDepth:   maxDepth,
 	}
 	result.Comments, err = uc.attachCommentImages(ctx, result.Comments)
 	if err != nil {
@@ -419,6 +465,10 @@ func (uc *CommentUseCase) listPostCommentsTree(ctx context.Context, postID postd
 	if err != nil {
 		return ListPostCommentsResult{}, err
 	}
+	result.Comments, err = uc.attachCommentEffects(ctx, result.Comments)
+	if err != nil {
+		return ListPostCommentsResult{}, err
+	}
 	return result, nil
 }
 
@@ -432,15 +482,18 @@ func (uc *CommentUseCase) ListUserComments(ctx context.Context, input ListUserCo
 		return ListUserCommentsResult{}, err
 	}
 
-	comments, err := uc.comments.ListVisibleByAuthorInPublicCommunities(ctx, author.ID(), limit, offset)
+	comments, err := uc.comments.ListVisibleByAuthorInPublicCommunities(ctx, author.ID(), limit+1, offset)
 	if err != nil {
 		return ListUserCommentsResult{}, fmt.Errorf("list public user comments: %w", err)
 	}
+	comments, hasMore := trimCommentDomainPage(comments, limit)
 
 	result := ListUserCommentsResult{
-		Comments: make([]Comment, 0, len(comments)),
-		Limit:    limit,
-		Offset:   offset,
+		Comments:   make([]Comment, 0, len(comments)),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(comments),
+		HasMore:    hasMore,
 	}
 	for _, comment := range comments {
 		result.Comments = append(result.Comments, toCommentDTO(comment, nil, nil, CommentMetadata{}, input.ViewerID))
@@ -458,6 +511,10 @@ func (uc *CommentUseCase) ListUserComments(ctx context.Context, input ListUserCo
 		return ListUserCommentsResult{}, err
 	}
 	result.Comments, err = uc.attachCommentVotes(ctx, result.Comments, input.ViewerID)
+	if err != nil {
+		return ListUserCommentsResult{}, err
+	}
+	result.Comments, err = uc.attachCommentEffects(ctx, result.Comments)
 	if err != nil {
 		return ListUserCommentsResult{}, err
 	}
@@ -658,6 +715,11 @@ func (uc *CommentUseCase) SetCommentVote(ctx context.Context, input SetCommentVo
 			return SetCommentVoteResult{}, err
 		}
 	}
+	if comment.AuthorID() != input.UserID && value == votedomain.VoteValueUp && previousVotes[comment.ID()] != votedomain.VoteValueUp {
+		if err := uc.grantXP(ctx, comment.AuthorID(), input.UserID, progressionusecase.XPSourceCommentUpvote, comment.ID().String()+":"+input.UserID.String()); err != nil {
+			return SetCommentVoteResult{}, err
+		}
+	}
 
 	return SetCommentVoteResult{
 		Vote: toCommentVoteDTO(*vote),
@@ -731,6 +793,18 @@ func (uc *CommentUseCase) notifyMentions(ctx context.Context, usernames []userdo
 	return nil
 }
 
+func (uc *CommentUseCase) grantXP(ctx context.Context, userID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if uc.progression == nil || strings.TrimSpace(userID.String()) == "" {
+		return nil
+	}
+	return uc.progression.GrantXP(ctx, progressionusecase.GrantXPInput{
+		UserID:     userID,
+		ActorID:    actorID,
+		SourceType: sourceType,
+		SourceID:   sourceID,
+	})
+}
+
 func (uc *CommentUseCase) shouldNotifyCommentUpvote(commentAuthorID userdomain.UserID, voterID userdomain.UserID, value votedomain.VoteValue, previousVote votedomain.VoteValue) bool {
 	if uc.notifications == nil || commentAuthorID == voterID || value != votedomain.VoteValueUp {
 		return false
@@ -774,6 +848,20 @@ func normalizePagination(limit int, offset int) (int, int, error) {
 	}
 
 	return limit, offset, nil
+}
+
+func trimCommentDomainPage(comments []commentdomain.Comment, limit int) ([]commentdomain.Comment, bool) {
+	if len(comments) <= limit {
+		return comments, false
+	}
+	return comments[:limit], true
+}
+
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func normalizeCommentListView(raw string) (CommentListView, error) {
@@ -1016,6 +1104,22 @@ func (uc *CommentUseCase) attachCommentVotes(ctx context.Context, comments []Com
 	return comments, nil
 }
 
+func (uc *CommentUseCase) attachCommentEffects(ctx context.Context, comments []Comment) ([]Comment, error) {
+	if len(comments) == 0 || uc.effects == nil {
+		return comments, nil
+	}
+	commentIDs, err := collectCommentIDs(comments)
+	if err != nil {
+		return nil, err
+	}
+	effectViews, err := uc.effects.ListCommentEffectsByCommentIDs(ctx, commentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list comment effects: %w", err)
+	}
+	applyCommentEffectViews(comments, effectViews)
+	return comments, nil
+}
+
 func (uc *CommentUseCase) loadTreeSortVoteSummaries(ctx context.Context, comments []commentdomain.Comment, listSort CommentListSort) (map[commentdomain.CommentID]votedomain.CommentVoteSummary, error) {
 	summaries := make(map[commentdomain.CommentID]votedomain.CommentVoteSummary, len(comments))
 	if len(comments) == 0 || uc.votes == nil || !commentListSortUsesVotes(listSort) {
@@ -1121,6 +1225,27 @@ func applyCommentVoteViews(comments []Comment, summaries map[commentdomain.Comme
 	}
 }
 
+func applyCommentEffectViews(comments []Comment, effectViews map[commentdomain.CommentID][]CommentEffectSummary) {
+	for index := range comments {
+		commentID, err := commentdomain.NewCommentID(comments[index].ID)
+		if err == nil {
+			comments[index].Effects = cloneCommentEffectSummaries(effectViews[commentID])
+		}
+		applyCommentEffectViews(comments[index].Children, effectViews)
+	}
+}
+
+func cloneCommentEffectSummaries(effects []CommentEffectSummary) []CommentEffectSummary {
+	result := make([]CommentEffectSummary, 0, len(effects))
+	for _, effect := range effects {
+		if effect.AppliedByUser.Badges == nil {
+			effect.AppliedByUser.Badges = []string{}
+		}
+		result = append(result, effect)
+	}
+	return result
+}
+
 func (uc *CommentUseCase) findActivePublicUser(ctx context.Context, rawUsername string) (*userdomain.User, error) {
 	if uc.users == nil {
 		return nil, apperr.New(apperr.CodeInternal, "public user finder is not configured")
@@ -1171,6 +1296,7 @@ func toCommentTreeDTO(comment commentdomain.Comment, depth int, replyCount int, 
 		CreatedAt:         comment.CreatedAt(),
 		UpdatedAt:         comment.UpdatedAt(),
 		Attachments:       []Attachment{},
+		Effects:           []CommentEffectSummary{},
 	}
 	if hasParentID {
 		dto.ParentID = parentID.String()
@@ -1241,7 +1367,7 @@ func toAttachmentDTOs(attachments []mediadomain.Attachment) []Attachment {
 	return result
 }
 
-func buildCommentTree(comments []commentdomain.Comment, viewerID userdomain.UserID, listSort CommentListSort, voteSummaries map[commentdomain.CommentID]votedomain.CommentVoteSummary, limit int, offset int, maxDepth int) []Comment {
+func buildCommentTree(comments []commentdomain.Comment, viewerID userdomain.UserID, listSort CommentListSort, voteSummaries map[commentdomain.CommentID]votedomain.CommentVoteSummary, limit int, offset int, maxDepth int) ([]Comment, int) {
 	childrenByParent := make(map[commentdomain.CommentID][]commentdomain.Comment)
 	byID := make(map[commentdomain.CommentID]commentdomain.Comment, len(comments))
 	for _, comment := range comments {
@@ -1269,7 +1395,7 @@ func buildCommentTree(comments []commentdomain.Comment, viewerID userdomain.User
 	}
 
 	if offset >= len(roots) {
-		return []Comment{}
+		return []Comment{}, len(roots)
 	}
 	end := offset + limit
 	if end > len(roots) {
@@ -1281,7 +1407,7 @@ func buildCommentTree(comments []commentdomain.Comment, viewerID userdomain.User
 	for _, root := range roots[offset:end] {
 		appendCommentPreorder(&result, root, 0, maxDepth, childrenByParent, visited, viewerID)
 	}
-	return result
+	return result, len(roots)
 }
 
 func appendCommentPreorder(result *[]Comment, comment commentdomain.Comment, depth int, maxDepth int, childrenByParent map[commentdomain.CommentID][]commentdomain.Comment, visited map[commentdomain.CommentID]bool, viewerID userdomain.UserID) {

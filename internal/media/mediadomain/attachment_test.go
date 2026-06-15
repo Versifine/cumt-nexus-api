@@ -75,6 +75,14 @@ func TestAttachmentRejectsInvalidInput(t *testing.T) {
 			params.OwnerID = "not-a-uuid"
 		}},
 		{name: "blank object key", mutate: func(params *NewAttachmentParams) { params.ObjectKey = " " }},
+		{name: "long bucket", mutate: func(params *NewAttachmentParams) { params.Bucket = strings.Repeat("x", MaxStorageBucketRunes+1) }},
+		{name: "long object key", mutate: func(params *NewAttachmentParams) { params.ObjectKey = strings.Repeat("x", MaxObjectKeyRunes+1) }},
+		{name: "long thumbnail object key", mutate: func(params *NewAttachmentParams) {
+			params.ThumbnailObjectKey = strings.Repeat("x", MaxObjectKeyRunes+1)
+		}},
+		{name: "long public url", mutate: func(params *NewAttachmentParams) {
+			params.PublicURL = "https://example.com/" + strings.Repeat("x", MaxAttachmentPublicURLSize)
+		}},
 		{name: "invalid mime", mutate: func(params *NewAttachmentParams) { params.MimeType = "image/svg+xml" }},
 		{name: "invalid size", mutate: func(params *NewAttachmentParams) { params.SizeBytes = 0 }},
 		{name: "long alt", mutate: func(params *NewAttachmentParams) { params.AltText = strings.Repeat("x", MaxAltTextLength+1) }},

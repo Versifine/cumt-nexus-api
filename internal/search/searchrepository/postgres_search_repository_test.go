@@ -138,6 +138,104 @@ func TestPostgresSearchRepositoryHandlesPunctuationQueries(t *testing.T) {
 	}
 }
 
+func TestPostgresSearchRepositorySearchUsers(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresSearchRepository(pool)
+
+	matchingID := insertTestUserWithProfile(ctx, t, pool, testUserProfile{
+		Username:    "alice_" + randomSuffix(),
+		DisplayName: "Alice Search",
+		Headline:    "Campus mentor",
+		Bio:         "Helping with backend search",
+		Status:      "active",
+	})
+	disabledID := insertTestUserWithProfile(ctx, t, pool, testUserProfile{
+		Username:    "disabled_" + randomSuffix(),
+		DisplayName: "Alice Disabled",
+		Status:      "disabled",
+	})
+
+	results, err := repo.SearchUsers(ctx, "alice", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchUsers returned error: %v", err)
+	}
+
+	if !containsUser(results, matchingID.String()) {
+		t.Fatalf("expected active matching user %q, got %#v", matchingID.String(), results)
+	}
+	if containsUser(results, disabledID.String()) {
+		t.Fatalf("expected disabled user %q to be excluded, got %#v", disabledID.String(), results)
+	}
+}
+
+func TestPostgresSearchRepositoryRanksUsernamePrefixAboveBio(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresSearchRepository(pool)
+
+	term := "rankuser" + randomSuffix()
+	usernameMatch := insertTestUserWithProfile(ctx, t, pool, testUserProfile{
+		Username: term + "_alice",
+		Bio:      "ordinary bio",
+		Status:   "active",
+	})
+	bioMatch := insertTestUserWithProfile(ctx, t, pool, testUserProfile{
+		Username: "ordinary_" + randomSuffix(),
+		Bio:      "bio has " + term,
+		Status:   "active",
+	})
+
+	results, err := repo.SearchUsers(ctx, term, 20, 0)
+	if err != nil {
+		t.Fatalf("SearchUsers returned error: %v", err)
+	}
+
+	usernameIndex := userIndex(results, usernameMatch.String())
+	bioIndex := userIndex(results, bioMatch.String())
+	if usernameIndex < 0 || bioIndex < 0 {
+		t.Fatalf("expected both username/bio matches, got %#v", results)
+	}
+	if usernameIndex > bioIndex {
+		t.Fatalf("expected username prefix match to rank before bio match, got username=%d bio=%d results=%#v", usernameIndex, bioIndex, results)
+	}
+}
+
+func TestPostgresSearchRepositoryHandlesChineseAndSubstringFallback(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresSearchRepository(pool)
+
+	authorID := insertTestUserWithProfile(ctx, t, pool, testUserProfile{
+		Username:    "zhuser_" + randomSuffix(),
+		DisplayName: "矿大同学" + randomSuffix(),
+		Status:      "active",
+	})
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "矿大生活"+randomSuffix(), "active")
+	postID := insertTestPost(ctx, t, pool, communityID, authorID, "今天的矿大食堂", "ordinary body", "visible")
+
+	users, err := repo.SearchUsers(ctx, "同学", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchUsers chinese query returned error: %v", err)
+	}
+	if !containsUser(users, authorID.String()) {
+		t.Fatalf("expected chinese display name match %q, got %#v", authorID.String(), users)
+	}
+
+	communities, err := repo.SearchCommunities(ctx, "生活", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchCommunities chinese query returned error: %v", err)
+	}
+	if !containsCommunity(communities, communityID.String()) {
+		t.Fatalf("expected chinese community name match %q, got %#v", communityID.String(), communities)
+	}
+
+	posts, err := repo.SearchPosts(ctx, "食堂", 20, 0)
+	if err != nil {
+		t.Fatalf("SearchPosts chinese query returned error: %v", err)
+	}
+	if !containsPost(posts, postID.String()) {
+		t.Fatalf("expected chinese post title match %q, got %#v", postID.String(), posts)
+	}
+}
+
 func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()
 
@@ -193,6 +291,20 @@ func requireSearchSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) 
 			t.Skipf("%s index does not exist; run go run ./cmd/migrate up before repository tests", indexName)
 		}
 	}
+
+	var functionExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_proc
+			WHERE proname = 'escape_like_query'
+		)
+	`).Scan(&functionExists); err != nil {
+		t.Fatalf("check escape_like_query function exists: %v", err)
+	}
+	if !functionExists {
+		t.Skip("escape_like_query function does not exist; run go run ./cmd/migrate up before repository tests")
+	}
 }
 
 func testPostgresConfig() config.PostgresConfig {
@@ -232,20 +344,47 @@ func envInt(key string, fallback int) int {
 func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool) userdomain.UserID {
 	t.Helper()
 
+	return insertTestUserWithProfile(ctx, t, pool, testUserProfile{
+		Username: "search_repo_" + randomSuffix(),
+		Status:   "active",
+	})
+}
+
+type testUserProfile struct {
+	Username    string
+	DisplayName string
+	AvatarURL   string
+	Headline    string
+	Bio         string
+	Status      string
+}
+
+func insertTestUserWithProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool, profile testUserProfile) userdomain.UserID {
+	t.Helper()
+
 	id := userdomain.NewGeneratedUserID()
-	username := "search_repo_" + randomSuffix()
+	if profile.Username == "" {
+		profile.Username = "search_repo_" + randomSuffix()
+	}
+	if profile.Status == "" {
+		profile.Status = "active"
+	}
 	_, err := pool.Exec(ctx, `
 		INSERT INTO users (
 			id,
 			username,
 			password_hash,
+			display_name,
+			avatar_url,
+			headline,
+			bio,
 			status,
 			is_platform_staff,
 			created_at,
 			updated_at
 		)
-		VALUES ($1::uuid, $2, $3, 'active', false, $4, $4)
-	`, id.String(), username, "hashed-password-"+username, testNow())
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, false, $9, $9)
+	`, id.String(), profile.Username, "hashed-password-"+profile.Username, profile.DisplayName, profile.AvatarURL, profile.Headline, profile.Bio, profile.Status, testNow())
 	if err != nil {
 		t.Fatalf("insert test user: %v", err)
 	}
@@ -346,7 +485,20 @@ func containsPost(results []searchusecase.PostResult, id string) bool {
 	return false
 }
 
+func containsUser(results []searchusecase.UserResult, id string) bool {
+	return userIndex(results, id) >= 0
+}
+
 func postIndex(results []searchusecase.PostResult, id string) int {
+	for index, result := range results {
+		if result.ID == id {
+			return index
+		}
+	}
+	return -1
+}
+
+func userIndex(results []searchusecase.UserResult, id string) int {
 	for index, result := range results {
 		if result.ID == id {
 			return index

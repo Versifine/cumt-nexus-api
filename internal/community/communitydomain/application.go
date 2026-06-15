@@ -5,8 +5,14 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
+)
+
+const (
+	MaxApplicationReasonRunes = 500
+	MaxRejectReasonRunes      = 500
 )
 
 type CommunityApplicationID string
@@ -36,12 +42,12 @@ func (id CommunityApplicationID) String() string {
 type ApplicationReason string
 
 func NewApplicationReason(raw string) (ApplicationReason, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "community application reason is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "community application reason", MaxApplicationReasonRunes)
+	if err != nil {
+		return "", err
 	}
 
-	return ApplicationReason(raw), nil
+	return ApplicationReason(value), nil
 }
 
 func (reason ApplicationReason) String() string {
@@ -51,12 +57,12 @@ func (reason ApplicationReason) String() string {
 type RejectReason string
 
 func NewRejectReason(raw string) (RejectReason, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "community application reject reason is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "community application reject reason", MaxRejectReasonRunes)
+	if err != nil {
+		return "", err
 	}
 
-	return RejectReason(raw), nil
+	return RejectReason(value), nil
 }
 
 func (reason RejectReason) String() string {

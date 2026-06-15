@@ -14,7 +14,7 @@ func NewRouter(log *slog.Logger, cfg config.HTTPConfig) *gin.Engine {
 	router.Use(RequestIDMiddleware())
 	router.Use(RequestLoggerMiddleware(log))
 	router.Use(CORSMiddleware(cfg.CORSAllowedOrigins))
-	router.Use(ErrorMiddleware())
+	router.Use(ErrorMiddleware(log))
 
 	RegisterHealthRoutes(router)
 

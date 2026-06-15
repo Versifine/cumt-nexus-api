@@ -51,9 +51,11 @@ type ListReportsInput struct {
 }
 
 type ListReportsResult struct {
-	Reports []ContentReport
-	Limit   int
-	Offset  int
+	Reports    []ContentReport
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type GetReportInput struct {
@@ -97,15 +99,18 @@ func (uc *ConsoleUseCase) ListReports(ctx context.Context, input ListReportsInpu
 		return ListReportsResult{}, err
 	}
 
-	records, err := uc.reports.ListReports(ctx, status, limit, offset)
+	records, err := uc.reports.ListReports(ctx, status, limit+1, offset)
 	if err != nil {
 		return ListReportsResult{}, fmt.Errorf("list moderation reports: %w", err)
 	}
+	records, hasMore := trimReportRecordsPage(records, limit)
 
 	result := ListReportsResult{
-		Reports: make([]ContentReport, 0, len(records)),
-		Limit:   limit,
-		Offset:  offset,
+		Reports:    make([]ContentReport, 0, len(records)),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(records),
+		HasMore:    hasMore,
 	}
 	for _, record := range records {
 		result.Reports = append(result.Reports, toContentReportRecordDTO(record))
@@ -236,4 +241,11 @@ func normalizeReportPagination(limit int, offset int) (int, int, error) {
 		limit = maxReportListLimit
 	}
 	return limit, offset, nil
+}
+
+func trimReportRecordsPage(items []ContentReportRecord, limit int) ([]ContentReportRecord, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
 }

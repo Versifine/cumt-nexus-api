@@ -148,6 +148,128 @@ func (ur *PostgresUserRepository) CountVisibleCommentsByAuthorInPublicCommunitie
 	return count, nil
 }
 
+func (ur *PostgresUserRepository) CountFollowers(ctx context.Context, userID userdomain.UserID) (int, error) {
+	const query = `
+		SELECT COUNT(*)::int
+		FROM user_follows
+		INNER JOIN users ON users.id = user_follows.follower_id
+		WHERE user_follows.following_id = $1::uuid
+			AND users.status = 'active'
+	`
+
+	var count int
+	if err := ur.pool.QueryRow(ctx, query, userID.String()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count user followers: %w", err)
+	}
+	return count, nil
+}
+
+func (ur *PostgresUserRepository) CountFollowing(ctx context.Context, userID userdomain.UserID) (int, error) {
+	const query = `
+		SELECT COUNT(*)::int
+		FROM user_follows
+		INNER JOIN users ON users.id = user_follows.following_id
+		WHERE user_follows.follower_id = $1::uuid
+			AND users.status = 'active'
+	`
+
+	var count int
+	if err := ur.pool.QueryRow(ctx, query, userID.String()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count followed users: %w", err)
+	}
+	return count, nil
+}
+
+func (ur *PostgresUserRepository) IsFollowing(ctx context.Context, followerID userdomain.UserID, followingID userdomain.UserID) (bool, error) {
+	const query = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM user_follows
+			WHERE follower_id = $1::uuid
+				AND following_id = $2::uuid
+		)
+	`
+
+	var exists bool
+	if err := ur.pool.QueryRow(ctx, query, followerID.String(), followingID.String()).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check user follow: %w", err)
+	}
+	return exists, nil
+}
+
+func (ur *PostgresUserRepository) FollowUser(ctx context.Context, followerID userdomain.UserID, followingID userdomain.UserID, now time.Time) error {
+	const query = `
+		INSERT INTO user_follows (
+			follower_id,
+			following_id,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3)
+		ON CONFLICT (follower_id, following_id) DO NOTHING
+	`
+
+	if _, err := ur.pool.Exec(ctx, query, followerID.String(), followingID.String(), now); err != nil {
+		return mapUserWriteError("follow user", err)
+	}
+	return nil
+}
+
+func (ur *PostgresUserRepository) DeleteUserFollow(ctx context.Context, followerID userdomain.UserID, followingID userdomain.UserID) error {
+	const query = `
+		DELETE FROM user_follows
+		WHERE follower_id = $1::uuid
+			AND following_id = $2::uuid
+	`
+
+	if _, err := ur.pool.Exec(ctx, query, followerID.String(), followingID.String()); err != nil {
+		return mapUserWriteError("delete user follow", err)
+	}
+	return nil
+}
+
+func (ur *PostgresUserRepository) ListFollowedActiveUsers(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]userdomain.User, error) {
+	const query = `
+		SELECT
+			users.id::text,
+			users.username,
+			users.password_hash,
+			users.display_name,
+			users.avatar_url,
+			users.banner_url,
+			users.headline,
+			users.bio,
+			users.status,
+			users.created_at,
+			users.updated_at
+		FROM user_follows
+		INNER JOIN users ON users.id = user_follows.following_id
+		WHERE user_follows.follower_id = $1::uuid
+			AND users.status = 'active'
+		ORDER BY user_follows.created_at DESC, users.username ASC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := ur.pool.Query(ctx, query, userID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list followed active users: %w", err)
+	}
+	defer rows.Close()
+
+	users := make([]userdomain.User, 0)
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, *user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate followed active users: %w", err)
+	}
+	return users, nil
+}
+
 func (ur *PostgresUserRepository) UpdateProfile(ctx context.Context, user userdomain.User) error {
 	const query = `
 		UPDATE users
@@ -179,6 +301,20 @@ func (ur *PostgresUserRepository) UpdateProfile(ctx context.Context, user userdo
 		return apperr.New(apperr.CodeNotFound, "user not found")
 	}
 	return nil
+}
+
+func mapUserWriteError(operation string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23503" {
+			return apperr.New(apperr.CodeNotFound, "related user not found")
+		}
+		if pgErr.Code == "23514" && pgErr.ConstraintName == "user_follows_no_self_ck" {
+			return apperr.New(apperr.CodeInvalidArgument, "can't follow yourself")
+		}
+	}
+
+	return fmt.Errorf("%s: %w", operation, err)
 }
 
 func scanUser(row pgx.Row) (*userdomain.User, error) {

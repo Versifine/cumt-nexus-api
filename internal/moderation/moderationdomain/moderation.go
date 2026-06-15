@@ -7,9 +7,12 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
 )
+
+const MaxReasonRunes = 500
 
 type ContentReportID string
 
@@ -140,11 +143,11 @@ func validateTarget(target Target) error {
 type Reason string
 
 func NewReason(raw string) (Reason, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "moderation reason is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "moderation reason", MaxReasonRunes)
+	if err != nil {
+		return "", err
 	}
-	return Reason(raw), nil
+	return Reason(value), nil
 }
 
 func (reason Reason) String() string {
@@ -179,13 +182,37 @@ func (status ReportStatus) String() string {
 type ActionType string
 
 const (
-	ActionTypeRemove ActionType = "remove"
+	ActionTypeRemove        ActionType = "remove"
+	ActionTypeApprove       ActionType = "approve"
+	ActionTypeSpam          ActionType = "spam"
+	ActionTypeIgnoreReports ActionType = "ignore_reports"
+	ActionTypeLock          ActionType = "lock"
+	ActionTypePin           ActionType = "pin"
+	ActionTypeMarkNSFW      ActionType = "mark_nsfw"
+	ActionTypeMarkSpoiler   ActionType = "mark_spoiler"
+	ActionTypeSetFlair      ActionType = "set_flair"
 )
 
 func NewActionType(raw string) (ActionType, error) {
 	switch ActionType(strings.TrimSpace(strings.ToLower(raw))) {
 	case ActionTypeRemove:
 		return ActionTypeRemove, nil
+	case ActionTypeApprove:
+		return ActionTypeApprove, nil
+	case ActionTypeSpam:
+		return ActionTypeSpam, nil
+	case ActionTypeIgnoreReports:
+		return ActionTypeIgnoreReports, nil
+	case ActionTypeLock:
+		return ActionTypeLock, nil
+	case ActionTypePin:
+		return ActionTypePin, nil
+	case ActionTypeMarkNSFW:
+		return ActionTypeMarkNSFW, nil
+	case ActionTypeMarkSpoiler:
+		return ActionTypeMarkSpoiler, nil
+	case ActionTypeSetFlair:
+		return ActionTypeSetFlair, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "moderation action type is invalid")
 	}

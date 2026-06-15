@@ -2,6 +2,7 @@ package postdomain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,9 @@ func TestPostValues(t *testing.T) {
 	if _, err := NewPostTitle(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for blank title, got %v", err)
 	}
+	if _, err := NewPostTitle(strings.Repeat("a", MaxPostTitleRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long title, got %v", err)
+	}
 
 	body, err := NewPostBody(" Body ")
 	if err != nil {
@@ -40,12 +44,16 @@ func TestPostValues(t *testing.T) {
 	if _, err := NewPostBody(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for blank body, got %v", err)
 	}
+	if _, err := NewPostBody(strings.Repeat("a", MaxPostBodyRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long body, got %v", err)
+	}
 
 	assertPostStatus(t, "visible", PostStatusVisible)
 	assertPostStatus(t, "removed", PostStatusRemoved)
 	assertPostStatus(t, "deleted", PostStatusDeleted)
 	assertPostStatus(t, "locked", PostStatusLocked)
 	assertPostStatus(t, "hidden", PostStatusHidden)
+	assertPostStatus(t, "spam", PostStatusSpam)
 	if _, err := NewPostStatus("draft"); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for invalid status, got %v", err)
 	}

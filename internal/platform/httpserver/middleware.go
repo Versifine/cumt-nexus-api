@@ -3,6 +3,7 @@ package httpserver
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -39,7 +40,11 @@ func RecoveryMiddleware(log *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-func ErrorMiddleware() gin.HandlerFunc {
+func ErrorMiddleware(loggers ...*slog.Logger) gin.HandlerFunc {
+	var log *slog.Logger
+	if len(loggers) > 0 {
+		log = loggers[0]
+	}
 	return func(c *gin.Context) {
 		c.Next()
 		if len(c.Errors) == 0 {
@@ -52,9 +57,27 @@ func ErrorMiddleware() gin.HandlerFunc {
 		if lastErr == nil {
 			return
 		}
+		logUnexpectedError(log, c, lastErr.Err)
 		writeError(c, lastErr.Err)
 		c.Abort()
 	}
+}
+
+func logUnexpectedError(log *slog.Logger, c *gin.Context, err error) {
+	if log == nil || err == nil {
+		return
+	}
+	var appErr *apperr.Error
+	if errors.As(err, &appErr) && appErr.Code() != apperr.CodeInternal {
+		return
+	}
+	log.Error(
+		"http handler error",
+		"request_id", RequestID(c),
+		"method", c.Request.Method,
+		"path", c.Request.URL.Path,
+		"error", err,
+	)
 }
 
 func RequestLoggerMiddleware(log *slog.Logger) gin.HandlerFunc {

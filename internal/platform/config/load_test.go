@@ -29,6 +29,20 @@ var configEnvKeys = []string{
 	"LOG_FORMAT",
 	"AUTH_TOKEN_SECRET",
 	"AUTH_ACCESS_TOKEN_TTL",
+	"AUTH_EMAIL_ALLOWED_DOMAINS",
+	"AUTH_EMAIL_CODE_TTL",
+	"AUTH_EMAIL_CODE_RESEND_INTERVAL",
+	"AUTH_EMAIL_CODE_MAX_ATTEMPTS",
+	"AUTH_EMAIL_CODE_DAILY_LIMIT",
+	"AUTH_EMAIL_CODE_IP_HOURLY_LIMIT",
+	"AUTH_EMAIL_CODE_LENGTH",
+	"MAIL_PROVIDER",
+	"SMTP_HOST",
+	"SMTP_PORT",
+	"SMTP_USERNAME",
+	"SMTP_PASSWORD",
+	"SMTP_FROM",
+	"SMTP_TLS_MODE",
 	"OBJECT_STORAGE_PROVIDER",
 	"OBJECT_STORAGE_ENDPOINT",
 	"OBJECT_STORAGE_REGION",
@@ -97,6 +111,30 @@ func TestLoadAppliesLocalDefaults(t *testing.T) {
 	}
 	if cfg.Auth.AccessTokenTTL != 24*time.Hour {
 		t.Fatalf("expected access token ttl 24h, got %v", cfg.Auth.AccessTokenTTL)
+	}
+	if got, want := cfg.Auth.EmailAllowedDomains, []string{"cumt.edu.cn", "mail.cumt.edu.cn"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("unexpected allowed email domains: %#v", got)
+	}
+	if cfg.Auth.EmailCodeTTL != 10*time.Minute {
+		t.Fatalf("expected email code ttl 10m, got %v", cfg.Auth.EmailCodeTTL)
+	}
+	if cfg.Auth.EmailCodeResendInterval != time.Minute {
+		t.Fatalf("expected email code resend interval 1m, got %v", cfg.Auth.EmailCodeResendInterval)
+	}
+	if cfg.Auth.EmailCodeMaxAttempts != 5 {
+		t.Fatalf("expected email code max attempts 5, got %d", cfg.Auth.EmailCodeMaxAttempts)
+	}
+	if cfg.Auth.EmailCodeDailyLimit != 10 {
+		t.Fatalf("expected email code daily limit 10, got %d", cfg.Auth.EmailCodeDailyLimit)
+	}
+	if cfg.Auth.EmailCodeIPHourlyLimit != 30 {
+		t.Fatalf("expected email code ip hourly limit 30, got %d", cfg.Auth.EmailCodeIPHourlyLimit)
+	}
+	if cfg.Auth.EmailCodeLength != 6 {
+		t.Fatalf("expected email code length 6, got %d", cfg.Auth.EmailCodeLength)
+	}
+	if cfg.Mail.Provider != "log" {
+		t.Fatalf("expected mail provider log, got %q", cfg.Mail.Provider)
 	}
 	if cfg.Storage.Provider != "local" {
 		t.Fatalf("expected local storage provider, got %q", cfg.Storage.Provider)

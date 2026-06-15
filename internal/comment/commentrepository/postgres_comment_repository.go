@@ -25,6 +25,7 @@ var _ commentusecase.CommentRepository = (*PostgresCommentRepository)(nil)
 var _ commentusecase.CommentMetadataRepository = (*PostgresCommentRepository)(nil)
 var _ commentusecase.CommentVoteRepository = (*PostgresCommentRepository)(nil)
 var _ commentusecase.ContentRefRepository = (*PostgresCommentRepository)(nil)
+var _ commentusecase.CommentEffectRepository = (*PostgresCommentRepository)(nil)
 
 type PostgresCommentRepository struct {
 	pool *pgxpool.Pool
@@ -449,6 +450,86 @@ func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Cont
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate comment metadata: %w", err)
+	}
+
+	return result, nil
+}
+
+func (repo *PostgresCommentRepository) ListCommentEffectsByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]commentusecase.CommentEffectSummary, error) {
+	result := make(map[commentdomain.CommentID][]commentusecase.CommentEffectSummary, len(commentIDs))
+	if len(commentIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			comment_effects.comment_id::text,
+			comment_effects.id::text,
+			comment_effects.effect_id,
+			effects.name,
+			effects.asset_url,
+			effects.animation_key,
+			users.id::text,
+			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline,
+			comment_effects.points_spent,
+			comment_effects.created_at
+		FROM comment_effects
+		INNER JOIN effects ON effects.id = comment_effects.effect_id
+		INNER JOIN users ON users.id = comment_effects.user_id
+		WHERE comment_effects.comment_id = ANY($1::uuid[])
+		ORDER BY comment_effects.comment_id ASC, comment_effects.created_at DESC, comment_effects.id DESC
+	`
+
+	rows, err := repo.pool.Query(ctx, query, commentIDStrings(commentIDs))
+	if err != nil {
+		return nil, fmt.Errorf("list comment effects: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawCommentID string
+		var effect commentusecase.CommentEffectSummary
+		var rawAppliedByUserID string
+		var rawUsername string
+		var rawDisplayName string
+		var rawAvatarURL string
+		var rawHeadline string
+		if err := rows.Scan(
+			&rawCommentID,
+			&effect.ID,
+			&effect.EffectID,
+			&effect.Name,
+			&effect.AssetURL,
+			&effect.AnimationKey,
+			&rawAppliedByUserID,
+			&rawUsername,
+			&rawDisplayName,
+			&rawAvatarURL,
+			&rawHeadline,
+			&effect.PointsSpent,
+			&effect.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		commentID, err := commentdomain.NewCommentID(rawCommentID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate comment effect comment id: %v", err)
+		}
+		effect.AppliedByUser = postusecase.UserSummary{
+			ID:          rawAppliedByUserID,
+			Username:    rawUsername,
+			DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
+			AvatarURL:   rawAvatarURL,
+			Headline:    rawHeadline,
+			Badges:      []string{},
+		}
+		result[commentID] = append(result[commentID], effect)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate comment effects: %w", err)
 	}
 
 	return result, nil

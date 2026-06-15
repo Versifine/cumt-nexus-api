@@ -2,6 +2,7 @@ package moderationdomain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,14 +30,16 @@ func TestReportStatuses(t *testing.T) {
 }
 
 func TestActionTypes(t *testing.T) {
-	action, err := NewActionType("remove")
-	if err != nil {
-		t.Fatalf("NewActionType returned error: %v", err)
-	}
-	if action != ActionTypeRemove {
-		t.Fatalf("expected remove action, got %q", action.String())
-	}
-	if _, err := NewActionType("approve"); !hasAppCode(err, apperr.CodeInvalidArgument) {
+	assertActionType(t, "remove", ActionTypeRemove)
+	assertActionType(t, "approve", ActionTypeApprove)
+	assertActionType(t, "spam", ActionTypeSpam)
+	assertActionType(t, "ignore_reports", ActionTypeIgnoreReports)
+	assertActionType(t, "lock", ActionTypeLock)
+	assertActionType(t, "pin", ActionTypePin)
+	assertActionType(t, "mark_nsfw", ActionTypeMarkNSFW)
+	assertActionType(t, "mark_spoiler", ActionTypeMarkSpoiler)
+	assertActionType(t, "set_flair", ActionTypeSetFlair)
+	if _, err := NewActionType("ban"); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for invalid action type, got %v", err)
 	}
 }
@@ -124,6 +127,9 @@ func TestInvalidReasonAndTimesReturnInvalidArgument(t *testing.T) {
 	if _, err := NewReason(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for blank reason, got %v", err)
 	}
+	if _, err := NewReason(strings.Repeat("a", MaxReasonRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long reason, got %v", err)
+	}
 
 	now := testNow()
 	if _, err := RehydrateContentReport(NewGeneratedContentReportID(), mustPostTarget(t), userdomain.NewGeneratedUserID(), mustReason(t, "spam"), ReportStatusPending, nil, nil, now, now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
@@ -153,6 +159,17 @@ func assertReportStatus(t *testing.T, raw string, want ReportStatus) {
 	}
 	if got != want {
 		t.Fatalf("expected report status %q, got %q", want.String(), got.String())
+	}
+}
+
+func assertActionType(t *testing.T, raw string, want ActionType) {
+	t.Helper()
+	got, err := NewActionType(raw)
+	if err != nil {
+		t.Fatalf("NewActionType returned error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected action type %q, got %q", want.String(), got.String())
 	}
 }
 

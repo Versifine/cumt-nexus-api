@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/admin/adminusecase"
@@ -12,6 +13,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/platform/settings"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -84,21 +86,31 @@ func (repo *PostgresAdminRepository) IsPlatformStaff(ctx context.Context, userID
 	return isPlatformStaff, nil
 }
 
-func (repo *PostgresAdminRepository) ListUsers(ctx context.Context, status string, limit int, offset int) ([]adminusecase.User, error) {
+func (repo *PostgresAdminRepository) ListUsers(ctx context.Context, status string, searchQuery string, limit int, offset int) ([]adminusecase.User, error) {
 	query := `
 		SELECT
 			id::text,
 			username,
 			status,
 			is_platform_staff,
+			COALESCE(platform_role, ''),
 			created_at,
 			updated_at
 		FROM users
 	`
 	args := []any{limit, offset}
+	where := make([]string, 0, 2)
 	if status != "all" {
-		query += " WHERE status = $3"
 		args = append(args, status)
+		where = append(where, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if searchQuery != "" {
+		args = append(args, "%"+escapeLikePattern(strings.ToLower(searchQuery))+"%")
+		placeholder := fmt.Sprintf("$%d", len(args))
+		where = append(where, fmt.Sprintf("(LOWER(username) LIKE %s ESCAPE '\\' OR id::text ILIKE %s ESCAPE '\\')", placeholder, placeholder))
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
 	}
 	query += " ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2"
 
@@ -129,6 +141,7 @@ func (repo *PostgresAdminRepository) FindUserByID(ctx context.Context, userID us
 			username,
 			status,
 			is_platform_staff,
+			COALESCE(platform_role, ''),
 			created_at,
 			updated_at
 		FROM users
@@ -145,11 +158,33 @@ func (repo *PostgresAdminRepository) FindUserByID(ctx context.Context, userID us
 	return user, nil
 }
 
+func (repo *PostgresAdminRepository) FindUserPasswordHash(ctx context.Context, userID userdomain.UserID) (userdomain.PasswordHash, error) {
+	const query = `
+		SELECT password_hash
+		FROM users
+		WHERE id = $1::uuid
+		LIMIT 1
+	`
+	var rawHash string
+	if err := repo.db.QueryRow(ctx, query, userID.String()).Scan(&rawHash); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", apperr.New(apperr.CodeNotFound, "user not found")
+		}
+		return "", fmt.Errorf("find user password hash: %w", err)
+	}
+	hash, err := userdomain.NewPasswordHash(rawHash)
+	if err != nil {
+		return "", err
+	}
+	return hash, nil
+}
+
 func (repo *PostgresAdminRepository) UpdateUser(ctx context.Context, userID userdomain.UserID, input adminusecase.UpdateUserRecordInput) (adminusecase.User, error) {
 	const query = `
 		UPDATE users
 		SET status = $2,
 			is_platform_staff = $3,
+			platform_role = CASE WHEN $3 THEN COALESCE(platform_role, 'staff') ELSE NULL END,
 			updated_at = $4
 		WHERE id = $1::uuid
 		RETURNING
@@ -157,6 +192,7 @@ func (repo *PostgresAdminRepository) UpdateUser(ctx context.Context, userID user
 			username,
 			status,
 			is_platform_staff,
+			COALESCE(platform_role, ''),
 			created_at,
 			updated_at
 	`
@@ -170,7 +206,351 @@ func (repo *PostgresAdminRepository) UpdateUser(ctx context.Context, userID user
 	return user, nil
 }
 
-func (repo *PostgresAdminRepository) ListCommunities(ctx context.Context, status string, limit int, offset int) ([]adminusecase.Community, error) {
+func (repo *PostgresAdminRepository) UpdateUserPlatformRole(ctx context.Context, userID userdomain.UserID, role string, updatedAt time.Time) (adminusecase.User, error) {
+	const query = `
+		UPDATE users
+		SET platform_role = NULLIF($2, ''),
+			is_platform_staff = ($2 <> ''),
+			updated_at = $3
+		WHERE id = $1::uuid
+		RETURNING
+			id::text,
+			username,
+			status,
+			is_platform_staff,
+			COALESCE(platform_role, ''),
+			created_at,
+			updated_at
+	`
+	user, err := scanUser(repo.db.QueryRow(ctx, query, userID.String(), role, updatedAt))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.User{}, apperr.New(apperr.CodeNotFound, "user not found")
+		}
+		return adminusecase.User{}, mapAdminWriteError("update user platform role", err)
+	}
+	return user, nil
+}
+
+func (repo *PostgresAdminRepository) CountPlatformOwners(ctx context.Context) (int, error) {
+	const query = `
+		SELECT COUNT(*)
+		FROM users
+		WHERE status = 'active'
+			AND platform_role = 'owner'
+	`
+	var count int
+	if err := repo.db.QueryRow(ctx, query).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count platform owners: %w", err)
+	}
+	return count, nil
+}
+
+func (repo *PostgresAdminRepository) FindCurrentOwnerTransfer(ctx context.Context, now time.Time) (adminusecase.OwnerTransfer, error) {
+	if err := repo.expireOwnerTransfers(ctx, now); err != nil {
+		return adminusecase.OwnerTransfer{}, err
+	}
+	transfer, err := scanOwnerTransfer(repo.db.QueryRow(ctx, ownerTransferSelectSQL()+`
+		WHERE platform_owner_transfers.status = 'pending'
+		ORDER BY platform_owner_transfers.created_at DESC, platform_owner_transfers.id DESC
+		LIMIT 1
+	`, now))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.OwnerTransfer{}, apperr.New(apperr.CodeNotFound, "owner transfer not found")
+		}
+		return adminusecase.OwnerTransfer{}, err
+	}
+	return transfer, nil
+}
+
+func (repo *PostgresAdminRepository) FindOwnerTransferByID(ctx context.Context, transferID string, now time.Time) (adminusecase.OwnerTransfer, error) {
+	if err := repo.expireOwnerTransfers(ctx, now); err != nil {
+		return adminusecase.OwnerTransfer{}, err
+	}
+	transfer, err := scanOwnerTransfer(repo.db.QueryRow(ctx, ownerTransferSelectSQL()+`
+		WHERE platform_owner_transfers.id = $2::uuid
+		LIMIT 1
+	`, now, transferID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.OwnerTransfer{}, apperr.New(apperr.CodeNotFound, "owner transfer not found")
+		}
+		return adminusecase.OwnerTransfer{}, err
+	}
+	return transfer, nil
+}
+
+func (repo *PostgresAdminRepository) CreateOwnerTransfer(ctx context.Context, input adminusecase.CreateOwnerTransferRecordInput) (adminusecase.OwnerTransfer, error) {
+	if err := repo.expireOwnerTransfers(ctx, input.CreatedAt); err != nil {
+		return adminusecase.OwnerTransfer{}, err
+	}
+	transfer, err := scanOwnerTransfer(repo.db.QueryRow(ctx, `
+		WITH inserted AS (
+			INSERT INTO platform_owner_transfers (
+				id,
+				status,
+				initiated_by,
+				target_user_id,
+				previous_owner_role,
+				reason,
+				expires_at,
+				created_at,
+				updated_at
+			)
+			VALUES ($1::uuid, 'pending', $2::uuid, $3::uuid, NULLIF($4, ''), $5, $6, $7, $7)
+			RETURNING *
+		)
+		SELECT
+			inserted.id::text,
+			inserted.status,
+			inserted.initiated_by::text,
+			initiator.username,
+			inserted.target_user_id::text,
+			target.username,
+			COALESCE(inserted.previous_owner_role, ''),
+			inserted.reason,
+			inserted.created_at,
+			inserted.updated_at,
+			inserted.expires_at,
+			inserted.accepted_at,
+			inserted.cancelled_at
+		FROM inserted
+		INNER JOIN users AS initiator ON initiator.id = inserted.initiated_by
+		INNER JOIN users AS target ON target.id = inserted.target_user_id
+	`, input.ID, input.InitiatedByID.String(), input.TargetUserID.String(), input.PreviousOwnerRole, input.Reason, input.ExpiresAt, input.CreatedAt))
+	if err != nil {
+		return adminusecase.OwnerTransfer{}, mapAdminWriteError("create owner transfer", err)
+	}
+	return transfer, nil
+}
+
+func (repo *PostgresAdminRepository) CancelOwnerTransfer(ctx context.Context, transferID string, cancelledAt time.Time) (adminusecase.OwnerTransfer, error) {
+	transfer, err := scanOwnerTransfer(repo.db.QueryRow(ctx, `
+		WITH updated AS (
+			UPDATE platform_owner_transfers
+			SET status = 'cancelled',
+				cancelled_at = $2,
+				updated_at = $2
+			WHERE id = $1::uuid
+				AND status = 'pending'
+				AND expires_at > $2
+			RETURNING *
+		)
+		SELECT
+			updated.id::text,
+			updated.status,
+			updated.initiated_by::text,
+			initiator.username,
+			updated.target_user_id::text,
+			target.username,
+			COALESCE(updated.previous_owner_role, ''),
+			updated.reason,
+			updated.created_at,
+			updated.updated_at,
+			updated.expires_at,
+			updated.accepted_at,
+			updated.cancelled_at
+		FROM updated
+		INNER JOIN users AS initiator ON initiator.id = updated.initiated_by
+		INNER JOIN users AS target ON target.id = updated.target_user_id
+	`, transferID, cancelledAt))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.OwnerTransfer{}, apperr.New(apperr.CodeConflict, "owner transfer is not pending")
+		}
+		return adminusecase.OwnerTransfer{}, mapAdminWriteError("cancel owner transfer", err)
+	}
+	return transfer, nil
+}
+
+func (repo *PostgresAdminRepository) AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) (adminusecase.OwnerTransfer, error) {
+	var initiatedBy string
+	var targetUserID string
+	var previousOwnerRole pgtype.Text
+	if err := repo.db.QueryRow(ctx, `
+		SELECT initiated_by::text, target_user_id::text, previous_owner_role
+		FROM platform_owner_transfers
+		WHERE id = $1::uuid
+			AND status = 'pending'
+			AND expires_at > $2
+		LIMIT 1
+		FOR UPDATE
+	`, transferID, acceptedAt).Scan(&initiatedBy, &targetUserID, &previousOwnerRole); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.OwnerTransfer{}, apperr.New(apperr.CodeConflict, "owner transfer is not pending")
+		}
+		return adminusecase.OwnerTransfer{}, fmt.Errorf("lock owner transfer: %w", err)
+	}
+	if err := lockOwnerTransferUsers(ctx, repo.db, initiatedBy, targetUserID); err != nil {
+		return adminusecase.OwnerTransfer{}, err
+	}
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE users
+		SET platform_role = NULL,
+			is_platform_staff = false,
+			updated_at = $1
+		WHERE status = 'active'
+			AND platform_role = 'owner'
+			AND id <> $2::uuid
+			AND id <> $3::uuid
+	`, acceptedAt, targetUserID, initiatedBy); err != nil {
+		return adminusecase.OwnerTransfer{}, mapAdminWriteError("clear extra platform owners", err)
+	}
+	previousRole := ""
+	if previousOwnerRole.Valid {
+		previousRole = previousOwnerRole.String
+	}
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE users
+		SET platform_role = NULLIF($2, ''),
+			is_platform_staff = ($2 <> ''),
+			tokens_revoked_after = $3,
+			updated_at = $3
+		WHERE id = $1::uuid
+	`, initiatedBy, previousRole, acceptedAt); err != nil {
+		return adminusecase.OwnerTransfer{}, mapAdminWriteError("downgrade previous platform owner", err)
+	}
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE users
+		SET platform_role = 'owner',
+			is_platform_staff = true,
+			updated_at = $2
+		WHERE id = $1::uuid
+			AND status = 'active'
+	`, targetUserID, acceptedAt); err != nil {
+		return adminusecase.OwnerTransfer{}, mapAdminWriteError("promote new platform owner", err)
+	}
+	transfer, err := scanOwnerTransfer(repo.db.QueryRow(ctx, `
+		WITH updated AS (
+			UPDATE platform_owner_transfers
+			SET status = 'accepted',
+				accepted_at = $2,
+				updated_at = $2
+			WHERE id = $1::uuid
+			RETURNING *
+		)
+		SELECT
+			updated.id::text,
+			updated.status,
+			updated.initiated_by::text,
+			initiator.username,
+			updated.target_user_id::text,
+			target.username,
+			COALESCE(updated.previous_owner_role, ''),
+			updated.reason,
+			updated.created_at,
+			updated.updated_at,
+			updated.expires_at,
+			updated.accepted_at,
+			updated.cancelled_at
+		FROM updated
+		INNER JOIN users AS initiator ON initiator.id = updated.initiated_by
+		INNER JOIN users AS target ON target.id = updated.target_user_id
+	`, transferID, acceptedAt))
+	if err != nil {
+		return adminusecase.OwnerTransfer{}, mapAdminWriteError("mark owner transfer accepted", err)
+	}
+	return transfer, nil
+}
+
+func (repo *PostgresAdminRepository) BootstrapOwner(ctx context.Context, input adminusecase.BootstrapOwnerRecordInput) (adminusecase.User, error) {
+	user, err := scanUser(repo.db.QueryRow(ctx, `
+		UPDATE users
+		SET platform_role = 'owner',
+			is_platform_staff = true,
+			updated_at = $2
+		WHERE id = $1::uuid
+			AND status = 'active'
+		RETURNING
+			id::text,
+			username,
+			status,
+			is_platform_staff,
+			COALESCE(platform_role, ''),
+			created_at,
+			updated_at
+	`, input.UserID.String(), input.UpdatedAt))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.User{}, apperr.New(apperr.CodeNotFound, "user not found")
+		}
+		return adminusecase.User{}, mapAdminWriteError("bootstrap platform owner", err)
+	}
+	return user, nil
+}
+
+func (repo *PostgresAdminRepository) RecoverOwner(ctx context.Context, input adminusecase.RecoverOwnerRecordInput) (adminusecase.OwnerRecoveryRecordResult, error) {
+	if err := lockOwnerTransferUsers(ctx, repo.db, input.CompromisedUserID.String(), input.NewOwnerID.String()); err != nil {
+		return adminusecase.OwnerRecoveryRecordResult{}, err
+	}
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE users
+		SET platform_role = NULL,
+			is_platform_staff = false,
+			updated_at = $1
+		WHERE status = 'active'
+			AND platform_role = 'owner'
+			AND id <> $2::uuid
+			AND id <> $3::uuid
+	`, input.UpdatedAt, input.NewOwnerID.String(), input.CompromisedUserID.String()); err != nil {
+		return adminusecase.OwnerRecoveryRecordResult{}, mapAdminWriteError("clear extra platform owners", err)
+	}
+	compromisedStatusExpr := "status"
+	if input.DisableCompromised {
+		compromisedStatusExpr = "'disabled'"
+	}
+	revokeExpr := "tokens_revoked_after"
+	if input.RevokeSessions {
+		revokeExpr = "$2"
+	}
+	compromisedQuery := fmt.Sprintf(`
+		UPDATE users
+		SET platform_role = NULL,
+			is_platform_staff = false,
+			status = %s,
+			tokens_revoked_after = %s,
+			updated_at = $2
+		WHERE id = $1::uuid
+		RETURNING
+			id::text,
+			username,
+			status,
+			is_platform_staff,
+			COALESCE(platform_role, ''),
+			created_at,
+			updated_at
+	`, compromisedStatusExpr, revokeExpr)
+	compromised, err := scanUser(repo.db.QueryRow(ctx, compromisedQuery, input.CompromisedUserID.String(), input.UpdatedAt))
+	if err != nil {
+		return adminusecase.OwnerRecoveryRecordResult{}, mapAdminWriteError("remove compromised platform owner", err)
+	}
+	newOwner, err := scanUser(repo.db.QueryRow(ctx, `
+		UPDATE users
+		SET platform_role = 'owner',
+			is_platform_staff = true,
+			updated_at = $2
+		WHERE id = $1::uuid
+			AND status = 'active'
+		RETURNING
+			id::text,
+			username,
+			status,
+			is_platform_staff,
+			COALESCE(platform_role, ''),
+			created_at,
+			updated_at
+	`, input.NewOwnerID.String(), input.UpdatedAt))
+	if err != nil {
+		return adminusecase.OwnerRecoveryRecordResult{}, mapAdminWriteError("promote recovered platform owner", err)
+	}
+	return adminusecase.OwnerRecoveryRecordResult{
+		NewOwner:        newOwner,
+		CompromisedUser: compromised,
+	}, nil
+}
+
+func (repo *PostgresAdminRepository) ListCommunities(ctx context.Context, status string, searchQuery string, limit int, offset int) ([]adminusecase.Community, error) {
 	query := `
 		SELECT
 			id::text,
@@ -186,9 +566,24 @@ func (repo *PostgresAdminRepository) ListCommunities(ctx context.Context, status
 		FROM communities
 	`
 	args := []any{limit, offset}
+	where := make([]string, 0, 2)
 	if status != "all" {
-		query += " WHERE status = $3"
 		args = append(args, status)
+		where = append(where, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if searchQuery != "" {
+		args = append(args, "%"+escapeLikePattern(strings.ToLower(searchQuery))+"%")
+		placeholder := fmt.Sprintf("$%d", len(args))
+		where = append(where, fmt.Sprintf(`(
+			LOWER(slug) LIKE %[1]s ESCAPE '\'
+			OR LOWER(name) LIKE %[1]s ESCAPE '\'
+			OR LOWER(description) LIKE %[1]s ESCAPE '\'
+			OR id::text ILIKE %[1]s ESCAPE '\'
+			OR created_by::text ILIKE %[1]s ESCAPE '\'
+		)`, placeholder))
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
 	}
 	query += " ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2"
 
@@ -265,6 +660,86 @@ func (repo *PostgresAdminRepository) UpdateCommunityStatus(ctx context.Context, 
 		return adminusecase.Community{}, mapAdminWriteError("update admin community status", err)
 	}
 	return community, nil
+}
+
+func (repo *PostgresAdminRepository) TransferCommunityOwner(ctx context.Context, communityID communitydomain.CommunityID, newOwnerID userdomain.UserID, updatedAt time.Time) (adminusecase.CommunityOwnerChange, error) {
+	before, err := scanCommunityOwnerMember(repo.db.QueryRow(ctx, `
+		SELECT
+			users.id::text,
+			users.username,
+			community_memberships.role,
+			community_memberships.status,
+			community_memberships.updated_at
+		FROM community_memberships
+		INNER JOIN users ON users.id = community_memberships.user_id
+		WHERE community_memberships.community_id = $1::uuid
+			AND community_memberships.role = 'owner'
+			AND community_memberships.status = 'active'
+		LIMIT 1
+		FOR UPDATE OF community_memberships
+	`, communityID.String()))
+	if err != nil {
+		return adminusecase.CommunityOwnerChange{}, fmt.Errorf("find current community owner: %w", err)
+	}
+	if _, err := scanCommunityOwnerMember(repo.db.QueryRow(ctx, `
+		SELECT
+			id::text,
+			username,
+			'' AS role,
+			status,
+			updated_at
+		FROM users
+		WHERE id = $1::uuid
+			AND status = 'active'
+		LIMIT 1
+	`, newOwnerID.String())); err != nil {
+		return adminusecase.CommunityOwnerChange{}, fmt.Errorf("find new community owner: %w", err)
+	}
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE community_memberships
+		SET role = 'member',
+			updated_at = $2
+		WHERE community_id = $1::uuid
+			AND role = 'owner'
+			AND status = 'active'
+	`, communityID.String(), updatedAt); err != nil {
+		return adminusecase.CommunityOwnerChange{}, fmt.Errorf("demote current community owner: %w", err)
+	}
+	if _, err := repo.db.Exec(ctx, `
+		INSERT INTO community_memberships (
+			community_id,
+			user_id,
+			role,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, 'owner', 'active', $3, $3)
+		ON CONFLICT (community_id, user_id) DO UPDATE
+		SET role = 'owner',
+			status = 'active',
+			updated_at = EXCLUDED.updated_at
+	`, communityID.String(), newOwnerID.String(), updatedAt); err != nil {
+		return adminusecase.CommunityOwnerChange{}, mapAdminWriteError("upsert community owner", err)
+	}
+	after, err := scanCommunityOwnerMember(repo.db.QueryRow(ctx, `
+		SELECT
+			users.id::text,
+			users.username,
+			community_memberships.role,
+			community_memberships.status,
+			community_memberships.updated_at
+		FROM community_memberships
+		INNER JOIN users ON users.id = community_memberships.user_id
+		WHERE community_memberships.community_id = $1::uuid
+			AND community_memberships.user_id = $2::uuid
+			AND community_memberships.status = 'active'
+		LIMIT 1
+	`, communityID.String(), newOwnerID.String()))
+	if err != nil {
+		return adminusecase.CommunityOwnerChange{}, fmt.Errorf("find updated community owner: %w", err)
+	}
+	return adminusecase.CommunityOwnerChange{BeforeOwner: before, AfterOwner: after}, nil
 }
 
 func (repo *PostgresAdminRepository) ListEffects(ctx context.Context, active *bool, limit int, offset int) ([]adminusecase.Effect, error) {
@@ -441,6 +916,287 @@ func (repo *PostgresAdminRepository) SetSetting(ctx context.Context, key string,
 	return row, nil
 }
 
+func (repo *PostgresAdminRepository) ListPointTransactions(ctx context.Context, userID *userdomain.UserID, limit int, offset int) ([]adminusecase.PointTransaction, error) {
+	query := `
+		SELECT
+			id::text,
+			user_id::text,
+			delta,
+			balance_after,
+			reason,
+			source_type,
+			source_id,
+			created_at
+		FROM point_transactions
+	`
+	args := []any{limit, offset}
+	if userID != nil {
+		query += " WHERE user_id = $3::uuid"
+		args = append(args, userID.String())
+	}
+	query += " ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2"
+
+	rows, err := repo.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list admin point transactions: %w", err)
+	}
+	defer rows.Close()
+
+	transactions := make([]adminusecase.PointTransaction, 0)
+	for rows.Next() {
+		transaction, err := scanPointTransaction(rows)
+		if err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, transaction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate admin point transactions: %w", err)
+	}
+	return transactions, nil
+}
+
+func (repo *PostgresAdminRepository) AdjustUserPoints(ctx context.Context, input adminusecase.AdjustUserPointsRecordInput) (adminusecase.AdjustUserPointsRecordResult, error) {
+	if input.Delta == 0 {
+		return adminusecase.AdjustUserPointsRecordResult{}, apperr.New(apperr.CodeInvalidArgument, "point adjustment delta must not be zero")
+	}
+	if _, err := repo.db.Exec(ctx, `
+		INSERT INTO user_points (
+			user_id,
+			balance,
+			lifetime_earned,
+			lifetime_spent,
+			updated_at
+		)
+		VALUES ($1::uuid, 0, 0, 0, $2)
+		ON CONFLICT (user_id) DO NOTHING
+	`, input.UserID.String(), input.CreatedAt); err != nil {
+		return adminusecase.AdjustUserPointsRecordResult{}, mapAdminWriteError("ensure admin point account", err)
+	}
+
+	account, err := scanPointAccount(repo.db.QueryRow(ctx, `
+		SELECT
+			user_id::text,
+			balance,
+			lifetime_earned,
+			lifetime_spent,
+			updated_at
+		FROM user_points
+		WHERE user_id = $1::uuid
+		FOR UPDATE
+	`, input.UserID.String()))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.AdjustUserPointsRecordResult{}, apperr.New(apperr.CodeNotFound, "point account not found")
+		}
+		return adminusecase.AdjustUserPointsRecordResult{}, err
+	}
+
+	if account.Balance+input.Delta < 0 {
+		return adminusecase.AdjustUserPointsRecordResult{}, apperr.New(apperr.CodeForbidden, "insufficient points")
+	}
+
+	lifetimeEarnedDelta := 0
+	lifetimeSpentDelta := 0
+	if input.Delta > 0 {
+		lifetimeEarnedDelta = input.Delta
+	} else {
+		lifetimeSpentDelta = -input.Delta
+	}
+
+	updatedAccount, err := scanPointAccount(repo.db.QueryRow(ctx, `
+		UPDATE user_points
+		SET
+			balance = balance + $2,
+			lifetime_earned = lifetime_earned + $3,
+			lifetime_spent = lifetime_spent + $4,
+			updated_at = $5
+		WHERE user_id = $1::uuid
+		RETURNING
+			user_id::text,
+			balance,
+			lifetime_earned,
+			lifetime_spent,
+			updated_at
+	`, input.UserID.String(), input.Delta, lifetimeEarnedDelta, lifetimeSpentDelta, input.CreatedAt))
+	if err != nil {
+		return adminusecase.AdjustUserPointsRecordResult{}, mapAdminWriteError("adjust admin point account", err)
+	}
+
+	transaction, err := scanPointTransaction(repo.db.QueryRow(ctx, `
+		INSERT INTO point_transactions (
+			id,
+			user_id,
+			delta,
+			balance_after,
+			reason,
+			source_type,
+			source_id,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, 'admin_adjustment', $6, $7)
+		RETURNING
+			id::text,
+			user_id::text,
+			delta,
+			balance_after,
+			reason,
+			source_type,
+			source_id,
+			created_at
+	`, input.TransactionID, input.UserID.String(), input.Delta, updatedAccount.Balance, input.Reason, input.ActorID.String(), input.CreatedAt))
+	if err != nil {
+		return adminusecase.AdjustUserPointsRecordResult{}, mapAdminWriteError("insert admin point transaction", err)
+	}
+
+	return adminusecase.AdjustUserPointsRecordResult{
+		Account:     updatedAccount,
+		Transaction: transaction,
+	}, nil
+}
+
+func (repo *PostgresAdminRepository) CreateUserSanction(ctx context.Context, input adminusecase.CreateUserSanctionRecordInput) (adminusecase.UserSanction, error) {
+	sanction, err := scanUserSanction(repo.db.QueryRow(ctx, `
+		INSERT INTO user_sanctions (
+			id,
+			user_id,
+			type,
+			status,
+			reason,
+			created_by,
+			starts_at,
+			expires_at,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, 'active', $4, $5::uuid, $6, $7, $8, $8)
+		RETURNING
+			id::text,
+			user_id::text,
+			type,
+			status,
+			reason,
+			created_by::text,
+			starts_at,
+			expires_at,
+			revoked_by::text,
+			revoked_at,
+			created_at,
+			updated_at
+	`, input.ID, input.UserID.String(), input.Type, input.Reason, input.CreatedBy.String(), input.StartsAt, input.ExpiresAt, input.CreatedAt))
+	if err != nil {
+		return adminusecase.UserSanction{}, mapAdminWriteError("create user sanction", err)
+	}
+	return sanction, nil
+}
+
+func (repo *PostgresAdminRepository) ListUserSanctions(ctx context.Context, userID userdomain.UserID, limit int, offset int, now time.Time) ([]adminusecase.UserSanction, error) {
+	rows, err := repo.db.Query(ctx, `
+		SELECT
+			id::text,
+			user_id::text,
+			type,
+			CASE
+				WHEN status = 'active' AND expires_at IS NOT NULL AND expires_at <= $4 THEN 'expired'
+				ELSE status
+			END AS status,
+			reason,
+			created_by::text,
+			starts_at,
+			expires_at,
+			revoked_by::text,
+			revoked_at,
+			created_at,
+			updated_at
+		FROM user_sanctions
+		WHERE user_id = $1::uuid
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2
+		OFFSET $3
+	`, userID.String(), limit, offset, now)
+	if err != nil {
+		return nil, fmt.Errorf("list user sanctions: %w", err)
+	}
+	defer rows.Close()
+
+	sanctions := make([]adminusecase.UserSanction, 0)
+	for rows.Next() {
+		sanction, err := scanUserSanction(rows)
+		if err != nil {
+			return nil, err
+		}
+		sanctions = append(sanctions, sanction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user sanctions: %w", err)
+	}
+	return sanctions, nil
+}
+
+func (repo *PostgresAdminRepository) FindUserSanctionByID(ctx context.Context, sanctionID string, now time.Time) (adminusecase.UserSanction, error) {
+	sanction, err := scanUserSanction(repo.db.QueryRow(ctx, `
+		SELECT
+			id::text,
+			user_id::text,
+			type,
+			CASE
+				WHEN status = 'active' AND expires_at IS NOT NULL AND expires_at <= $2 THEN 'expired'
+				ELSE status
+			END AS status,
+			reason,
+			created_by::text,
+			starts_at,
+			expires_at,
+			revoked_by::text,
+			revoked_at,
+			created_at,
+			updated_at
+		FROM user_sanctions
+		WHERE id = $1::uuid
+		LIMIT 1
+	`, sanctionID, now))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.UserSanction{}, apperr.New(apperr.CodeNotFound, "user sanction not found")
+		}
+		return adminusecase.UserSanction{}, err
+	}
+	return sanction, nil
+}
+
+func (repo *PostgresAdminRepository) RevokeUserSanction(ctx context.Context, sanctionID string, actorID userdomain.UserID, revokedAt time.Time) (adminusecase.UserSanction, error) {
+	sanction, err := scanUserSanction(repo.db.QueryRow(ctx, `
+		UPDATE user_sanctions
+		SET status = 'revoked',
+			revoked_by = $2::uuid,
+			revoked_at = $3,
+			updated_at = $3
+		WHERE id = $1::uuid
+			AND status = 'active'
+			AND (expires_at IS NULL OR expires_at > $3)
+		RETURNING
+			id::text,
+			user_id::text,
+			type,
+			status,
+			reason,
+			created_by::text,
+			starts_at,
+			expires_at,
+			revoked_by::text,
+			revoked_at,
+			created_at,
+			updated_at
+	`, sanctionID, actorID.String(), revokedAt))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.UserSanction{}, apperr.New(apperr.CodeConflict, "user sanction is not active")
+		}
+		return adminusecase.UserSanction{}, mapAdminWriteError("revoke user sanction", err)
+	}
+	return sanction, nil
+}
+
 func (repo *PostgresAdminRepository) IsEnabled(ctx context.Context, key string) (bool, error) {
 	normalizedKey, err := settings.NormalizeKey(key)
 	if err != nil {
@@ -476,6 +1232,7 @@ func (repo *PostgresAdminRepository) CreateAuditLog(ctx context.Context, log adm
 		INSERT INTO admin_audit_logs (
 			id,
 			actor_id,
+			actor_ref,
 			action,
 			target_type,
 			target_id,
@@ -483,19 +1240,24 @@ func (repo *PostgresAdminRepository) CreateAuditLog(ctx context.Context, log adm
 			after_state,
 			created_at
 		)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
 	`
-	if _, err := repo.db.Exec(ctx, query, log.ID, log.ActorID, log.Action, log.TargetType, log.TargetID, string(beforeState), string(afterState), log.CreatedAt); err != nil {
+	var actorID *string
+	if parsed, err := uuid.Parse(strings.TrimSpace(log.ActorID)); err == nil {
+		value := parsed.String()
+		actorID = &value
+	}
+	if _, err := repo.db.Exec(ctx, query, log.ID, actorID, strings.TrimSpace(log.ActorID), log.Action, log.TargetType, log.TargetID, string(beforeState), string(afterState), log.CreatedAt); err != nil {
 		return mapAdminWriteError("create admin audit log", err)
 	}
 	return nil
 }
 
-func (repo *PostgresAdminRepository) ListAuditLogs(ctx context.Context, targetType string, targetID string, limit int, offset int) ([]adminusecase.AuditLog, error) {
+func (repo *PostgresAdminRepository) ListAuditLogs(ctx context.Context, targetType string, targetID string, searchQuery string, limit int, offset int) ([]adminusecase.AuditLog, error) {
 	query := `
 		SELECT
 			id::text,
-			actor_id::text,
+			COALESCE(actor_ref, actor_id::text),
 			action,
 			target_type,
 			target_id,
@@ -505,20 +1267,29 @@ func (repo *PostgresAdminRepository) ListAuditLogs(ctx context.Context, targetTy
 		FROM admin_audit_logs
 	`
 	args := []any{limit, offset}
-	where := ""
+	where := make([]string, 0, 3)
 	if targetType != "" {
-		where = " WHERE target_type = $3"
 		args = append(args, targetType)
+		where = append(where, fmt.Sprintf("target_type = $%d", len(args)))
 	}
 	if targetID != "" {
-		if where == "" {
-			where = " WHERE target_id = $" + fmt.Sprint(len(args)+1)
-		} else {
-			where += " AND target_id = $" + fmt.Sprint(len(args)+1)
-		}
 		args = append(args, targetID)
+		where = append(where, fmt.Sprintf("target_id = $%d", len(args)))
 	}
-	query += where + " ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2"
+	if searchQuery != "" {
+		args = append(args, "%"+escapeLikePattern(strings.ToLower(searchQuery))+"%")
+		placeholder := fmt.Sprintf("$%d", len(args))
+		where = append(where, fmt.Sprintf(`(
+			LOWER(action) LIKE %[1]s ESCAPE '\'
+			OR LOWER(target_type) LIKE %[1]s ESCAPE '\'
+			OR target_id ILIKE %[1]s ESCAPE '\'
+			OR COALESCE(actor_ref, actor_id::text) ILIKE %[1]s ESCAPE '\'
+		)`, placeholder))
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2"
 
 	rows, err := repo.db.Query(ctx, query, args...)
 	if err != nil {
@@ -551,10 +1322,43 @@ func scanUser(row rowScanner) (adminusecase.User, error) {
 		&user.Username,
 		&user.Status,
 		&user.IsPlatformStaff,
+		&user.PlatformRole,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
 	return user, err
+}
+
+func scanOwnerTransfer(row rowScanner) (adminusecase.OwnerTransfer, error) {
+	var transfer adminusecase.OwnerTransfer
+	var acceptedAt pgtype.Timestamptz
+	var cancelledAt pgtype.Timestamptz
+	if err := row.Scan(
+		&transfer.ID,
+		&transfer.Status,
+		&transfer.InitiatedByID,
+		&transfer.InitiatedByUsername,
+		&transfer.TargetUserID,
+		&transfer.TargetUsername,
+		&transfer.PreviousOwnerRole,
+		&transfer.Reason,
+		&transfer.CreatedAt,
+		&transfer.UpdatedAt,
+		&transfer.ExpiresAt,
+		&acceptedAt,
+		&cancelledAt,
+	); err != nil {
+		return adminusecase.OwnerTransfer{}, err
+	}
+	if acceptedAt.Valid {
+		value := acceptedAt.Time
+		transfer.AcceptedAt = &value
+	}
+	if cancelledAt.Valid {
+		value := cancelledAt.Time
+		transfer.CancelledAt = &value
+	}
+	return transfer, nil
 }
 
 func scanCommunity(row rowScanner) (adminusecase.Community, error) {
@@ -578,6 +1382,17 @@ func scanCommunity(row rowScanner) (adminusecase.Community, error) {
 		community.CreatedBy = createdBy.String
 	}
 	return community, nil
+}
+
+func scanCommunityOwnerMember(row rowScanner) (adminusecase.CommunityOwnerMember, error) {
+	var member adminusecase.CommunityOwnerMember
+	if err := row.Scan(&member.UserID, &member.Username, &member.Role, &member.Status, &member.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return adminusecase.CommunityOwnerMember{}, apperr.New(apperr.CodeNotFound, "community owner not found")
+		}
+		return adminusecase.CommunityOwnerMember{}, err
+	}
+	return member, nil
 }
 
 func scanEffect(row rowScanner) (adminusecase.Effect, error) {
@@ -611,6 +1426,68 @@ func scanSetting(row rowScanner) (adminusecase.Setting, error) {
 		setting.UpdatedBy = updatedBy.String
 	}
 	return setting, nil
+}
+
+func scanPointAccount(row rowScanner) (adminusecase.PointAccount, error) {
+	var account adminusecase.PointAccount
+	err := row.Scan(
+		&account.UserID,
+		&account.Balance,
+		&account.LifetimeEarned,
+		&account.LifetimeSpent,
+		&account.UpdatedAt,
+	)
+	return account, err
+}
+
+func scanPointTransaction(row rowScanner) (adminusecase.PointTransaction, error) {
+	var transaction adminusecase.PointTransaction
+	err := row.Scan(
+		&transaction.ID,
+		&transaction.UserID,
+		&transaction.Delta,
+		&transaction.BalanceAfter,
+		&transaction.Reason,
+		&transaction.SourceType,
+		&transaction.SourceID,
+		&transaction.CreatedAt,
+	)
+	return transaction, err
+}
+
+func scanUserSanction(row rowScanner) (adminusecase.UserSanction, error) {
+	var sanction adminusecase.UserSanction
+	var expiresAt pgtype.Timestamptz
+	var revokedBy pgtype.Text
+	var revokedAt pgtype.Timestamptz
+	if err := row.Scan(
+		&sanction.ID,
+		&sanction.UserID,
+		&sanction.Type,
+		&sanction.Status,
+		&sanction.Reason,
+		&sanction.CreatedBy,
+		&sanction.StartsAt,
+		&expiresAt,
+		&revokedBy,
+		&revokedAt,
+		&sanction.CreatedAt,
+		&sanction.UpdatedAt,
+	); err != nil {
+		return adminusecase.UserSanction{}, err
+	}
+	if expiresAt.Valid {
+		value := expiresAt.Time
+		sanction.ExpiresAt = &value
+	}
+	if revokedBy.Valid {
+		sanction.RevokedBy = revokedBy.String
+	}
+	if revokedAt.Valid {
+		value := revokedAt.Time
+		sanction.RevokedAt = &value
+	}
+	return sanction, nil
 }
 
 func scanAuditLog(row rowScanner) (adminusecase.AuditLog, error) {
@@ -648,6 +1525,65 @@ func scanAuditLog(row rowScanner) (adminusecase.AuditLog, error) {
 	return log, nil
 }
 
+func ownerTransferSelectSQL() string {
+	return `
+		SELECT
+			platform_owner_transfers.id::text,
+			CASE
+				WHEN platform_owner_transfers.status = 'pending'
+					AND platform_owner_transfers.expires_at <= $1 THEN 'expired'
+				ELSE platform_owner_transfers.status
+			END AS status,
+			platform_owner_transfers.initiated_by::text,
+			initiator.username,
+			platform_owner_transfers.target_user_id::text,
+			target.username,
+			COALESCE(platform_owner_transfers.previous_owner_role, ''),
+			platform_owner_transfers.reason,
+			platform_owner_transfers.created_at,
+			platform_owner_transfers.updated_at,
+			platform_owner_transfers.expires_at,
+			platform_owner_transfers.accepted_at,
+			platform_owner_transfers.cancelled_at
+		FROM platform_owner_transfers
+		INNER JOIN users AS initiator ON initiator.id = platform_owner_transfers.initiated_by
+		INNER JOIN users AS target ON target.id = platform_owner_transfers.target_user_id
+	`
+}
+
+func (repo *PostgresAdminRepository) expireOwnerTransfers(ctx context.Context, now time.Time) error {
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE platform_owner_transfers
+		SET status = 'expired',
+			updated_at = $1
+		WHERE status = 'pending'
+			AND expires_at <= $1
+	`, now); err != nil {
+		return mapAdminWriteError("expire owner transfers", err)
+	}
+	return nil
+}
+
+func lockOwnerTransferUsers(ctx context.Context, db postgresExecutor, firstUserID string, secondUserID string) error {
+	rows, err := db.Query(ctx, `
+		SELECT id
+		FROM users
+		WHERE id IN ($1::uuid, $2::uuid)
+			OR (status = 'active' AND platform_role = 'owner')
+		FOR UPDATE
+	`, firstUserID, secondUserID)
+	if err != nil {
+		return fmt.Errorf("lock owner transfer users: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate locked owner transfer users: %w", err)
+	}
+	return nil
+}
+
 func mapAdminWriteError(operation string, err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -661,4 +1597,12 @@ func mapAdminWriteError(operation string, err error) error {
 		}
 	}
 	return fmt.Errorf("%s: %w", operation, err)
+}
+
+func escapeLikePattern(value string) string {
+	return strings.NewReplacer(
+		"\\", "\\\\",
+		"%", "\\%",
+		"_", "\\_",
+	).Replace(value)
 }

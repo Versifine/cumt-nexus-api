@@ -125,6 +125,37 @@ func TestPostgresCommentRepositoryLoadMetadataByCommentIDsReturnsAuthorProfile(t
 	}
 }
 
+func TestPostgresCommentRepositoryListCommentEffectsByCommentIDs(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommentRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	applierID := insertTestUser(ctx, t, pool)
+	updateTestUserProfile(ctx, t, pool, applierID, "Alice", "https://example.com/alice.png", "Thanks")
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "comment-effect-"+randomSuffix())
+	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Comment effect post")
+	comment := mustComment(t, postID, authorID, nil, "Effect target", now)
+	if err := repo.Create(ctx, *comment); err != nil {
+		t.Fatalf("Create comment returned error: %v", err)
+	}
+	cleanupComment(ctx, t, pool, comment.ID())
+	effectID := insertTestEffect(ctx, t, pool)
+	insertTestCommentEffect(ctx, t, pool, comment.ID(), effectID, applierID, 10, now.Add(time.Minute))
+
+	effects, err := repo.ListCommentEffectsByCommentIDs(ctx, []commentdomain.CommentID{comment.ID()})
+	if err != nil {
+		t.Fatalf("ListCommentEffectsByCommentIDs returned error: %v", err)
+	}
+	got := effects[comment.ID()]
+	if len(got) != 1 {
+		t.Fatalf("expected one comment effect, got %#v", got)
+	}
+	if got[0].EffectID != effectID || got[0].Name != "Sparkle" || got[0].AnimationKey != "sparkle" || got[0].AppliedByUser.DisplayName != "Alice" || got[0].PointsSpent != 10 {
+		t.Fatalf("unexpected comment effect summary: %#v", got[0])
+	}
+}
+
 func TestPostgresCommentRepositoryListCommentsByCommunityForManagement(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresCommentRepository(pool)
@@ -341,7 +372,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireCommentSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "comment_votes", "comment_content_refs"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "comment_votes", "comment_content_refs", "effects", "comment_effects"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -521,6 +552,64 @@ func insertTestCommentVote(ctx context.Context, t *testing.T, pool *pgxpool.Pool
 				AND user_id = $2::uuid
 		`, commentID.String(), userID.String()); err != nil {
 			t.Fatalf("cleanup test comment vote comment=%q user=%q: %v", commentID.String(), userID.String(), err)
+		}
+	})
+}
+
+func insertTestEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+
+	effectID := "comment_repo_" + randomSuffix()
+	now := testNow()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO effects (
+			id,
+			name,
+			description,
+			cost_points,
+			asset_url,
+			animation_key,
+			is_active,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, 'Sparkle', 'Test sparkle effect.', 10, 'https://example.com/sparkle.png', 'sparkle', false, $2, $2)
+	`, effectID, now)
+	if err != nil {
+		t.Fatalf("insert test effect: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM effects WHERE id = $1`, effectID); err != nil {
+			t.Fatalf("cleanup test effect %q: %v", effectID, err)
+		}
+	})
+
+	return effectID
+}
+
+func insertTestCommentEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool, commentID commentdomain.CommentID, effectID string, userID userdomain.UserID, pointsSpent int, createdAt time.Time) {
+	t.Helper()
+
+	id := uuid.NewString()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO comment_effects (
+			id,
+			comment_id,
+			effect_id,
+			user_id,
+			points_spent,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6)
+	`, id, commentID.String(), effectID, userID.String(), pointsSpent, createdAt)
+	if err != nil {
+		t.Fatalf("insert test comment effect: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM comment_effects WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup test comment effect %q: %v", id, err)
 		}
 	})
 }

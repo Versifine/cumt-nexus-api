@@ -8,6 +8,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
@@ -20,6 +21,7 @@ type PostVoteUseCase struct {
 	posts         PostRepository
 	votes         PostVoteRepository
 	notifications NotificationPublisher
+	progression   XPRecorder
 	now           func() time.Time
 }
 
@@ -41,6 +43,14 @@ type NotificationPublisher interface {
 
 func (uc *PostVoteUseCase) SetNotificationPublisher(notifications NotificationPublisher) {
 	uc.notifications = notifications
+}
+
+type XPRecorder interface {
+	GrantXP(ctx context.Context, input progressionusecase.GrantXPInput) error
+}
+
+func (uc *PostVoteUseCase) SetXPRecorder(progression XPRecorder) {
+	uc.progression = progression
 }
 
 type SetPostVoteInput struct {
@@ -103,6 +113,11 @@ func (uc *PostVoteUseCase) SetPostVote(ctx context.Context, input SetPostVoteInp
 			return SetPostVoteResult{}, err
 		}
 	}
+	if post.AuthorID() != input.UserID && value == votedomain.VoteValueUp && (previousVote == nil || previousVote.Value() != votedomain.VoteValueUp) {
+		if err := uc.grantXP(ctx, post.AuthorID(), input.UserID, progressionusecase.XPSourcePostUpvote, post.ID().String()+":"+input.UserID.String()); err != nil {
+			return SetPostVoteResult{}, err
+		}
+	}
 
 	return SetPostVoteResult{
 		Vote: toPostVoteDTO(*vote),
@@ -117,6 +132,18 @@ func (uc *PostVoteUseCase) shouldNotifyPostUpvote(postAuthorID userdomain.UserID
 		return true
 	}
 	return previousVote.Value() != votedomain.VoteValueUp
+}
+
+func (uc *PostVoteUseCase) grantXP(ctx context.Context, userID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if uc.progression == nil || strings.TrimSpace(userID.String()) == "" {
+		return nil
+	}
+	return uc.progression.GrantXP(ctx, progressionusecase.GrantXPInput{
+		UserID:     userID,
+		ActorID:    actorID,
+		SourceType: sourceType,
+		SourceID:   sourceID,
+	})
 }
 
 func (uc *PostVoteUseCase) DeletePostVote(ctx context.Context, input DeletePostVoteInput) error {

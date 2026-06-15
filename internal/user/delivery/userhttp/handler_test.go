@@ -324,10 +324,14 @@ type fakeCurrentUserUseCase struct {
 }
 
 type fakePublicUserUseCase struct {
-	called bool
-	input  userusecase.GetPublicUserInput
-	result userusecase.GetPublicUserResult
-	err    error
+	called      bool
+	input       userusecase.GetPublicUserInput
+	followInput userusecase.FollowUserInput
+	deleteInput userusecase.DeleteUserFollowInput
+	listInput   userusecase.ListFollowedUsersInput
+	result      userusecase.GetPublicUserResult
+	listResult  userusecase.ListFollowedUsersResult
+	err         error
 }
 
 type fakeProfileUpdateUseCase struct {
@@ -341,6 +345,24 @@ func (f *fakePublicUserUseCase) GetPublicUser(ctx context.Context, input useruse
 	f.called = true
 	f.input = input
 	return f.result, f.err
+}
+
+func (f *fakePublicUserUseCase) FollowUser(ctx context.Context, input userusecase.FollowUserInput) (userusecase.FollowUserResult, error) {
+	f.called = true
+	f.followInput = input
+	return userusecase.FollowUserResult{}, f.err
+}
+
+func (f *fakePublicUserUseCase) DeleteUserFollow(ctx context.Context, input userusecase.DeleteUserFollowInput) (userusecase.DeleteUserFollowResult, error) {
+	f.called = true
+	f.deleteInput = input
+	return userusecase.DeleteUserFollowResult{}, f.err
+}
+
+func (f *fakePublicUserUseCase) ListFollowedUsers(ctx context.Context, input userusecase.ListFollowedUsersInput) (userusecase.ListFollowedUsersResult, error) {
+	f.called = true
+	f.listInput = input
+	return f.listResult, f.err
 }
 
 func (f *fakeCurrentUserUseCase) GetCurrentUser(ctx context.Context, input userusecase.CurrentUserInput) (userusecase.CurrentUserResult, error) {

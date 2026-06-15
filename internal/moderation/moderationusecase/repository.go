@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
@@ -39,6 +40,14 @@ type ReportedTargetRemovalRepository interface {
 
 type PlatformStaffRepository interface {
 	IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error)
+}
+
+type CommunityRepository interface {
+	FindBySlug(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error)
+}
+
+type CommunityRoleRepository interface {
+	FindActiveRolesByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]communitydomain.MembershipRole, error)
 }
 
 type PostRepository interface {

@@ -69,6 +69,52 @@ func validate(cfg *Config) error {
 	if cfg.Auth.AccessTokenTTL <= 0 {
 		errs = append(errs, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be > 0"))
 	}
+	if len(cfg.Auth.EmailAllowedDomains) == 0 {
+		errs = append(errs, fmt.Errorf("AUTH_EMAIL_ALLOWED_DOMAINS cannot be empty"))
+	}
+	for _, domain := range cfg.Auth.EmailAllowedDomains {
+		if strings.TrimSpace(domain) == "" || strings.Contains(domain, "@") {
+			errs = append(errs, fmt.Errorf("AUTH_EMAIL_ALLOWED_DOMAINS contains invalid domain"))
+		}
+	}
+	if cfg.Auth.EmailCodeTTL <= 0 {
+		errs = append(errs, fmt.Errorf("AUTH_EMAIL_CODE_TTL must be > 0"))
+	}
+	if cfg.Auth.EmailCodeResendInterval < 0 {
+		errs = append(errs, fmt.Errorf("AUTH_EMAIL_CODE_RESEND_INTERVAL must be >= 0"))
+	}
+	if cfg.Auth.EmailCodeMaxAttempts <= 0 {
+		errs = append(errs, fmt.Errorf("AUTH_EMAIL_CODE_MAX_ATTEMPTS must be > 0"))
+	}
+	if cfg.Auth.EmailCodeDailyLimit <= 0 {
+		errs = append(errs, fmt.Errorf("AUTH_EMAIL_CODE_DAILY_LIMIT must be > 0"))
+	}
+	if cfg.Auth.EmailCodeIPHourlyLimit <= 0 {
+		errs = append(errs, fmt.Errorf("AUTH_EMAIL_CODE_IP_HOURLY_LIMIT must be > 0"))
+	}
+	if cfg.Auth.EmailCodeLength < 4 || cfg.Auth.EmailCodeLength > 12 {
+		errs = append(errs, fmt.Errorf("AUTH_EMAIL_CODE_LENGTH must be in [4,12]"))
+	}
+	switch cfg.Mail.Provider {
+	case "log":
+	case "smtp":
+		if strings.TrimSpace(cfg.Mail.SMTP.Host) == "" {
+			errs = append(errs, fmt.Errorf("SMTP_HOST is required for smtp mail provider"))
+		}
+		if cfg.Mail.SMTP.Port <= 0 || cfg.Mail.SMTP.Port > 65535 {
+			errs = append(errs, fmt.Errorf("SMTP_PORT must be in [1,65535]"))
+		}
+		if strings.TrimSpace(cfg.Mail.SMTP.From) == "" {
+			errs = append(errs, fmt.Errorf("SMTP_FROM is required for smtp mail provider"))
+		}
+		switch cfg.Mail.SMTP.TLSMode {
+		case "starttls", "ssl", "none":
+		default:
+			errs = append(errs, fmt.Errorf("SMTP_TLS_MODE must be one of starttls/ssl/none"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("MAIL_PROVIDER must be one of log/smtp"))
+	}
 	switch cfg.Storage.Provider {
 	case "local":
 		if strings.TrimSpace(cfg.Storage.LocalRoot) == "" {

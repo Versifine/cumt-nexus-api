@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS community_owner_transfers_target_pending_idx;
+DROP INDEX IF EXISTS community_owner_transfers_one_pending_uq;
+DROP TABLE IF EXISTS community_owner_transfers;
+DROP INDEX IF EXISTS community_memberships_one_active_owner_uq;

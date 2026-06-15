@@ -13,6 +13,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/mention"
 	platformsettings "github.com/Versifine/cumt-nexus-api/internal/platform/settings"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 	"github.com/google/uuid"
@@ -45,6 +46,7 @@ type PostFeedSource string
 const (
 	PostFeedSourceAll         PostFeedSource = "all"
 	PostFeedSourceRecommended PostFeedSource = "recommended"
+	PostFeedSourceFollowing   PostFeedSource = "following"
 )
 
 type PostListTimeRange string
@@ -71,6 +73,7 @@ type PostUseCase struct {
 	attachments       AttachmentRepository
 	users             PublicUserFinder
 	notifications     NotificationPublisher
+	progression       XPRecorder
 	metadata          PostMetadataRepository
 	contentRefs       ContentRefRepository
 	settingsReader    platformsettings.Reader
@@ -154,27 +157,35 @@ type PublishPostResult struct {
 }
 
 type ListCommunityPostsResult struct {
-	Posts  []Post
-	Limit  int
-	Offset int
+	Posts      []Post
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type ListLatestPostsResult struct {
-	Posts  []Post
-	Limit  int
-	Offset int
+	Posts      []Post
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type ListUserPostsResult struct {
-	Posts  []Post
-	Limit  int
-	Offset int
+	Posts      []Post
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type ListSavedPostsResult struct {
-	Posts  []Post
-	Limit  int
-	Offset int
+	Posts      []Post
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type GetPostResult struct {
@@ -201,6 +212,11 @@ type Post struct {
 	Format            string
 	ContentRefs       []ContentRef
 	Status            string
+	IsLocked          bool
+	IsPinned          bool
+	IsNSFW            bool
+	IsSpoiler         bool
+	FlairText         string
 	Community         CommunitySummary
 	Author            UserSummary
 	UpvoteCount       int
@@ -274,9 +290,10 @@ type ViewerPermissions struct {
 }
 
 type CommunityViewerPermissions struct {
-	CanPost     bool
-	CanManage   bool
-	CanModerate bool
+	CanPost               bool
+	CanManage             bool
+	CanModerate           bool
+	PlatformOwnerOverride bool
 }
 
 type PostMetadata struct {
@@ -348,6 +365,14 @@ func (uc *PostUseCase) SetPublicUserFinder(users PublicUserFinder) {
 
 func (uc *PostUseCase) SetNotificationPublisher(notifications NotificationPublisher) {
 	uc.notifications = notifications
+}
+
+type XPRecorder interface {
+	GrantXP(ctx context.Context, input progressionusecase.GrantXPInput) error
+}
+
+func (uc *PostUseCase) SetXPRecorder(progression XPRecorder) {
+	uc.progression = progression
 }
 
 func (uc *PostUseCase) SetSettingsReader(settingsReader platformsettings.Reader) {
@@ -427,6 +452,9 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	if err := uc.notifyMentions(ctx, mention.ExtractUsernames(input.Body), input.AuthorID, "post", post.ID().String()); err != nil {
 		return PublishPostResult{}, err
 	}
+	if err := uc.grantXP(ctx, input.AuthorID, input.AuthorID, progressionusecase.XPSourcePostPublish, post.ID().String()); err != nil {
+		return PublishPostResult{}, err
+	}
 
 	return PublishPostResult{
 		Post: toPostDTO(*post, postVoteView{}, postSaveView{}, attachments, contentRefs, metadataViews[post.ID()], input.AuthorID),
@@ -459,15 +487,18 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 		return ListCommunityPostsResult{}, err
 	}
 
-	posts, err := uc.posts.ListVisibleByCommunity(ctx, communityID, sort, createdAfter, limit, offset)
+	posts, err := uc.posts.ListVisibleByCommunity(ctx, communityID, sort, createdAfter, limit+1, offset)
 	if err != nil {
 		return ListCommunityPostsResult{}, fmt.Errorf("list community posts: %w", err)
 	}
+	posts, hasMore := trimPostPage(posts, limit)
 
 	result := ListCommunityPostsResult{
-		Posts:  make([]Post, 0, len(posts)),
-		Limit:  limit,
-		Offset: offset,
+		Posts:      make([]Post, 0, len(posts)),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(posts),
+		HasMore:    hasMore,
 	}
 	voteViews, err := uc.loadVoteViews(ctx, posts, input.ViewerID)
 	if err != nil {
@@ -520,14 +551,21 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	createdAfter := postListCreatedAfter(timeRange, uc.now().UTC())
 
 	var posts []postdomain.Post
-	if source == PostFeedSourceRecommended {
-		posts, err = uc.posts.ListRecommendedInPublicCommunities(ctx, input.ViewerID, sort, createdAfter, limit, offset)
-	} else {
-		posts, err = uc.posts.ListVisibleInPublicCommunities(ctx, sort, createdAfter, limit, offset)
+	switch source {
+	case PostFeedSourceRecommended:
+		posts, err = uc.posts.ListRecommendedInPublicCommunities(ctx, input.ViewerID, sort, createdAfter, limit+1, offset)
+	case PostFeedSourceFollowing:
+		if strings.TrimSpace(input.ViewerID.String()) == "" {
+			return ListLatestPostsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+		}
+		posts, err = uc.posts.ListFollowingInPublicCommunities(ctx, input.ViewerID, sort, createdAfter, limit+1, offset)
+	default:
+		posts, err = uc.posts.ListVisibleInPublicCommunities(ctx, sort, createdAfter, limit+1, offset)
 	}
 	if err != nil {
 		return ListLatestPostsResult{}, fmt.Errorf("list latest posts: %w", err)
 	}
+	posts, hasMore := trimPostPage(posts, limit)
 
 	voteViews, err := uc.loadVoteViews(ctx, posts, input.ViewerID)
 	if err != nil {
@@ -547,9 +585,11 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	}
 
 	result := ListLatestPostsResult{
-		Posts:  make([]Post, 0, len(posts)),
-		Limit:  limit,
-		Offset: offset,
+		Posts:      make([]Post, 0, len(posts)),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(posts),
+		HasMore:    hasMore,
 	}
 	metadataViews, err := uc.loadMetadataViews(ctx, posts, input.ViewerID)
 	if err != nil {
@@ -581,10 +621,11 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 		return ListUserPostsResult{}, err
 	}
 
-	posts, err := uc.posts.ListVisibleByAuthorInPublicCommunities(ctx, author.ID(), sort, createdAfter, limit, offset)
+	posts, err := uc.posts.ListVisibleByAuthorInPublicCommunities(ctx, author.ID(), sort, createdAfter, limit+1, offset)
 	if err != nil {
 		return ListUserPostsResult{}, fmt.Errorf("list public user posts: %w", err)
 	}
+	posts, hasMore := trimPostPage(posts, limit)
 
 	voteViews, err := uc.loadVoteViews(ctx, posts, input.ViewerID)
 	if err != nil {
@@ -608,9 +649,11 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 	}
 
 	result := ListUserPostsResult{
-		Posts:  make([]Post, 0, len(posts)),
-		Limit:  limit,
-		Offset: offset,
+		Posts:      make([]Post, 0, len(posts)),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(posts),
+		HasMore:    hasMore,
 	}
 	for _, post := range posts {
 		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
@@ -667,11 +710,17 @@ func (uc *PostUseCase) SavePost(ctx context.Context, input SavePostInput) (SaveP
 	if err != nil {
 		return SavePostResult{}, err
 	}
-	if _, err := uc.posts.FindVisibleByID(ctx, postID); err != nil {
+	post, err := uc.posts.FindVisibleByID(ctx, postID)
+	if err != nil {
 		return SavePostResult{}, fmt.Errorf("find post for save: %w", err)
 	}
 	if err := uc.saves.SavePost(ctx, postID, input.UserID, uc.now().UTC()); err != nil {
 		return SavePostResult{}, fmt.Errorf("save post: %w", err)
+	}
+	if post.AuthorID() != input.UserID {
+		if err := uc.grantXP(ctx, post.AuthorID(), input.UserID, progressionusecase.XPSourcePostSave, post.ID().String()+":"+input.UserID.String()); err != nil {
+			return SavePostResult{}, err
+		}
 	}
 
 	return SavePostResult{}, nil
@@ -711,10 +760,11 @@ func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsI
 		return ListSavedPostsResult{}, err
 	}
 
-	posts, err := uc.saves.ListSavedVisiblePosts(ctx, input.UserID, limit, offset)
+	posts, err := uc.saves.ListSavedVisiblePosts(ctx, input.UserID, limit+1, offset)
 	if err != nil {
 		return ListSavedPostsResult{}, fmt.Errorf("list saved posts: %w", err)
 	}
+	posts, hasMore := trimPostPage(posts, limit)
 
 	voteViews, err := uc.loadVoteViews(ctx, posts, input.UserID)
 	if err != nil {
@@ -738,9 +788,11 @@ func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsI
 	}
 
 	result := ListSavedPostsResult{
-		Posts:  make([]Post, 0, len(posts)),
-		Limit:  limit,
-		Offset: offset,
+		Posts:      make([]Post, 0, len(posts)),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(posts),
+		HasMore:    hasMore,
 	}
 	for _, post := range posts {
 		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.UserID))
@@ -917,6 +969,13 @@ func normalizePagination(limit int, offset int) (int, int, error) {
 	return limit, offset, nil
 }
 
+func trimPostPage(posts []postdomain.Post, limit int) ([]postdomain.Post, bool) {
+	if len(posts) <= limit {
+		return posts, false
+	}
+	return posts[:limit], true
+}
+
 func normalizePostListSort(raw string) (PostListSort, error) {
 	return normalizePostListSortWithDefault(raw, PostListSortNew)
 }
@@ -940,7 +999,7 @@ func normalizePostFeedSource(raw string) (PostFeedSource, error) {
 		return PostFeedSourceAll, nil
 	}
 	switch source {
-	case PostFeedSourceAll, PostFeedSourceRecommended:
+	case PostFeedSourceAll, PostFeedSourceRecommended, PostFeedSourceFollowing:
 		return source, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "post feed source is invalid")
@@ -1032,7 +1091,7 @@ func ParseContentRefInputs(rawRefs []ContentRefInput) ([]ContentRef, error) {
 		}
 
 		refID := strings.TrimSpace(rawRef.RefID)
-		if refID == "" || len(refID) > MaxContentRefIDLength {
+		if refID == "" || len([]rune(refID)) > MaxContentRefIDLength {
 			return nil, apperr.New(apperr.CodeInvalidArgument, "content ref id is invalid")
 		}
 		if kind == ContentRefKindEmbed {
@@ -1316,6 +1375,18 @@ func (uc *PostUseCase) notifyMentions(ctx context.Context, usernames []userdomai
 	return nil
 }
 
+func (uc *PostUseCase) grantXP(ctx context.Context, userID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if uc.progression == nil || strings.TrimSpace(userID.String()) == "" {
+		return nil
+	}
+	return uc.progression.GrantXP(ctx, progressionusecase.GrantXPInput{
+		UserID:     userID,
+		ActorID:    actorID,
+		SourceType: sourceType,
+		SourceID:   sourceID,
+	})
+}
+
 func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveView, attachments []mediadomain.Attachment, contentRefs []ContentRef, metadata PostMetadata, viewerID userdomain.UserID) Post {
 	score := voteView.upvoteCount - voteView.downvoteCount
 	metadata = normalizePostMetadata(metadata)
@@ -1330,6 +1401,11 @@ func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveVie
 		Format:            PostFormat,
 		ContentRefs:       CloneContentRefs(contentRefs),
 		Status:            post.Status().String(),
+		IsLocked:          post.IsLocked(),
+		IsPinned:          post.IsPinned(),
+		IsNSFW:            post.IsNSFW(),
+		IsSpoiler:         post.IsSpoiler(),
+		FlairText:         post.FlairText(),
 		Community:         metadata.Community,
 		Author:            metadata.Author,
 		UpvoteCount:       voteView.upvoteCount,
@@ -1416,7 +1492,7 @@ func postViewerPermissions(post postdomain.Post, viewerID userdomain.UserID) Vie
 	}
 	isAuthor := post.AuthorID() == viewerID
 	return ViewerPermissions{
-		CanComment: true,
+		CanComment: !post.IsLocked(),
 		CanVote:    true,
 		CanReport:  true,
 		CanEdit:    isAuthor,

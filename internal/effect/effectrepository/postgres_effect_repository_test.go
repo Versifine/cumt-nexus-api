@@ -82,6 +82,20 @@ func TestPostgresEffectRepositoryCatalogPointsAndCommentEffect(t *testing.T) {
 	if transactionCount != 2 {
 		t.Fatalf("expected initial grant and comment effect transactions, got %d", transactionCount)
 	}
+
+	transactions, err := repo.ListPointTransactions(ctx, userID, 20, 0)
+	if err != nil {
+		t.Fatalf("ListPointTransactions returned error: %v", err)
+	}
+	if len(transactions) < 2 {
+		t.Fatalf("expected at least two point transactions, got %#v", transactions)
+	}
+	if transactions[0].Reason != "comment_effect" || transactions[0].Delta != -10 || transactions[0].BalanceAfter != 90 {
+		t.Fatalf("expected newest comment effect transaction first, got %#v", transactions[0])
+	}
+	if transactions[1].Reason != "initial_grant" || transactions[1].Delta != 100 || transactions[1].BalanceAfter != 100 {
+		t.Fatalf("expected initial grant transaction second, got %#v", transactions[1])
+	}
 }
 
 func TestPostgresEffectRepositoryRejectsInsufficientPoints(t *testing.T) {

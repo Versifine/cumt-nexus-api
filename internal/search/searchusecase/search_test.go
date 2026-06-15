@@ -14,6 +14,7 @@ func TestSearchDefaultsScopeAndPagination(t *testing.T) {
 	repository := &fakeRepository{
 		communities: []CommunityResult{{ID: "community-1", Name: "Campus Life"}},
 		posts:       []PostResult{{ID: "post-1", Title: "Campus notice"}},
+		users:       []UserResult{{ID: "user-1", Username: "campus_user"}},
 	}
 	uc := NewUseCase(repository)
 
@@ -31,8 +32,8 @@ func TestSearchDefaultsScopeAndPagination(t *testing.T) {
 	if result.Limit != DefaultSearchLimit || result.Offset != 0 {
 		t.Fatalf("unexpected pagination: %#v", result)
 	}
-	if !repository.communitiesCalled || !repository.postsCalled {
-		t.Fatal("expected both repositories to be called")
+	if !repository.communitiesCalled || !repository.postsCalled || !repository.usersCalled {
+		t.Fatal("expected all repositories to be called")
 	}
 }
 
@@ -75,6 +76,26 @@ func TestSearchSupportsPostScope(t *testing.T) {
 	}
 	if repository.communitiesCalled || !repository.postsCalled {
 		t.Fatalf("unexpected repository calls: communities=%v posts=%v", repository.communitiesCalled, repository.postsCalled)
+	}
+}
+
+func TestSearchSupportsUserScope(t *testing.T) {
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository)
+
+	result, err := uc.Search(context.Background(), SearchInput{
+		ActorID: userdomain.NewGeneratedUserID(),
+		Query:   "alice",
+		Scope:   "users",
+	})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if result.Scope != ScopeUsers.String() {
+		t.Fatalf("unexpected scope: %#v", result)
+	}
+	if repository.communitiesCalled || repository.postsCalled || !repository.usersCalled {
+		t.Fatalf("unexpected repository calls: communities=%v posts=%v users=%v", repository.communitiesCalled, repository.postsCalled, repository.usersCalled)
 	}
 }
 
@@ -136,10 +157,13 @@ func TestSearchPropagatesRepositoryError(t *testing.T) {
 type fakeRepository struct {
 	communitiesCalled bool
 	postsCalled       bool
+	usersCalled       bool
 	communities       []CommunityResult
 	posts             []PostResult
+	users             []UserResult
 	communitiesErr    error
 	postsErr          error
+	usersErr          error
 }
 
 func (f *fakeRepository) SearchCommunities(ctx context.Context, query string, limit int, offset int) ([]CommunityResult, error) {
@@ -150,6 +174,11 @@ func (f *fakeRepository) SearchCommunities(ctx context.Context, query string, li
 func (f *fakeRepository) SearchPosts(ctx context.Context, query string, limit int, offset int) ([]PostResult, error) {
 	f.postsCalled = true
 	return f.posts, f.postsErr
+}
+
+func (f *fakeRepository) SearchUsers(ctx context.Context, query string, limit int, offset int) ([]UserResult, error) {
+	f.usersCalled = true
+	return f.users, f.usersErr
 }
 
 func hasAppError(err error) bool {

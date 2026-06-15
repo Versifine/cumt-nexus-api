@@ -232,6 +232,40 @@ func TestRemoveCommentReturnsModerationAction(t *testing.T) {
 	}
 }
 
+func TestRemoveCommunityPostPassesSlugAndPostID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	actions := &fakeReportUseCase{
+		removeCommunityPostResult: moderationusecase.RemoveContentResult{
+			Action: newActionResult(moderationdomain.TargetTypePost.String(), "8f92e975-5323-4a58-bac1-1336b668183c", ""),
+		},
+	}
+	router := newModerationTestRouter(actions, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/moderation/posts/8f92e975-5323-4a58-bac1-1336b668183c/remove", bytes.NewBufferString(`{
+		"reason": "community policy"
+	}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !actions.removeCommunityPostCalled {
+		t.Fatal("expected RemoveCommunityPost to be called")
+	}
+	if actions.removeCommunityPostInput.ActorID != userID ||
+		actions.removeCommunityPostInput.CommunitySlug != "campus" ||
+		actions.removeCommunityPostInput.PostID != "8f92e975-5323-4a58-bac1-1336b668183c" ||
+		actions.removeCommunityPostInput.Reason != "community policy" {
+		t.Fatalf("unexpected community remove input: %#v", actions.removeCommunityPostInput)
+	}
+}
+
 func TestRemovePostRejectsInvalidRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -574,38 +608,46 @@ func TestRemoveReportedTargetPropagatesUseCaseError(t *testing.T) {
 }
 
 type fakeReportUseCase struct {
-	reportPostCalled           bool
-	reportCommentCalled        bool
-	removePostCalled           bool
-	removeCommentCalled        bool
-	listReportsCalled          bool
-	getReportCalled            bool
-	dismissReportCalled        bool
-	removeReportedTargetCalled bool
-	reportPostInput            moderationusecase.ReportPostInput
-	reportCommentInput         moderationusecase.ReportCommentInput
-	removePostInput            moderationusecase.RemovePostInput
-	removeCommentInput         moderationusecase.RemoveCommentInput
-	listReportsInput           moderationusecase.ListReportsInput
-	getReportInput             moderationusecase.GetReportInput
-	dismissReportInput         moderationusecase.DismissReportInput
-	removeReportedTargetInput  moderationusecase.RemoveReportedTargetInput
-	reportPostResult           moderationusecase.ReportContentResult
-	reportCommentResult        moderationusecase.ReportContentResult
-	removePostResult           moderationusecase.RemoveContentResult
-	removeCommentResult        moderationusecase.RemoveContentResult
-	listReportsResult          moderationusecase.ListReportsResult
-	getReportResult            moderationusecase.GetReportResult
-	dismissReportResult        moderationusecase.DismissReportResult
-	removeReportedTargetResult moderationusecase.RemoveReportedTargetResult
-	reportPostErr              error
-	reportCommentErr           error
-	removePostErr              error
-	removeCommentErr           error
-	listReportsErr             error
-	getReportErr               error
-	dismissReportErr           error
-	removeReportedTargetErr    error
+	reportPostCalled             bool
+	reportCommentCalled          bool
+	removePostCalled             bool
+	removeCommentCalled          bool
+	removeCommunityPostCalled    bool
+	removeCommunityCommentCalled bool
+	listReportsCalled            bool
+	getReportCalled              bool
+	dismissReportCalled          bool
+	removeReportedTargetCalled   bool
+	reportPostInput              moderationusecase.ReportPostInput
+	reportCommentInput           moderationusecase.ReportCommentInput
+	removePostInput              moderationusecase.RemovePostInput
+	removeCommentInput           moderationusecase.RemoveCommentInput
+	removeCommunityPostInput     moderationusecase.RemoveCommunityPostInput
+	removeCommunityCommentInput  moderationusecase.RemoveCommunityCommentInput
+	listReportsInput             moderationusecase.ListReportsInput
+	getReportInput               moderationusecase.GetReportInput
+	dismissReportInput           moderationusecase.DismissReportInput
+	removeReportedTargetInput    moderationusecase.RemoveReportedTargetInput
+	reportPostResult             moderationusecase.ReportContentResult
+	reportCommentResult          moderationusecase.ReportContentResult
+	removePostResult             moderationusecase.RemoveContentResult
+	removeCommentResult          moderationusecase.RemoveContentResult
+	removeCommunityPostResult    moderationusecase.RemoveContentResult
+	removeCommunityCommentResult moderationusecase.RemoveContentResult
+	listReportsResult            moderationusecase.ListReportsResult
+	getReportResult              moderationusecase.GetReportResult
+	dismissReportResult          moderationusecase.DismissReportResult
+	removeReportedTargetResult   moderationusecase.RemoveReportedTargetResult
+	reportPostErr                error
+	reportCommentErr             error
+	removePostErr                error
+	removeCommentErr             error
+	removeCommunityPostErr       error
+	removeCommunityCommentErr    error
+	listReportsErr               error
+	getReportErr                 error
+	dismissReportErr             error
+	removeReportedTargetErr      error
 }
 
 func (f *fakeReportUseCase) ReportPost(ctx context.Context, input moderationusecase.ReportPostInput) (moderationusecase.ReportContentResult, error) {
@@ -630,6 +672,18 @@ func (f *fakeReportUseCase) RemoveComment(ctx context.Context, input moderationu
 	f.removeCommentCalled = true
 	f.removeCommentInput = input
 	return f.removeCommentResult, f.removeCommentErr
+}
+
+func (f *fakeReportUseCase) RemoveCommunityPost(ctx context.Context, input moderationusecase.RemoveCommunityPostInput) (moderationusecase.RemoveContentResult, error) {
+	f.removeCommunityPostCalled = true
+	f.removeCommunityPostInput = input
+	return f.removeCommunityPostResult, f.removeCommunityPostErr
+}
+
+func (f *fakeReportUseCase) RemoveCommunityComment(ctx context.Context, input moderationusecase.RemoveCommunityCommentInput) (moderationusecase.RemoveContentResult, error) {
+	f.removeCommunityCommentCalled = true
+	f.removeCommunityCommentInput = input
+	return f.removeCommunityCommentResult, f.removeCommunityCommentErr
 }
 
 func (f *fakeReportUseCase) ListReports(ctx context.Context, input moderationusecase.ListReportsInput) (moderationusecase.ListReportsResult, error) {

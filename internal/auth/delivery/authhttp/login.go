@@ -1,8 +1,9 @@
 package authhttp
 
 type loginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Identifier string `json:"identifier"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
 }
 
 type loginResponse struct {

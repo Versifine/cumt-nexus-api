@@ -6,8 +6,14 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
+)
+
+const (
+	MaxCommunityNameRunes        = 60
+	MaxCommunityDescriptionRunes = 300
 )
 
 var communitySlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,31}$`)
@@ -57,12 +63,12 @@ func (slug CommunitySlug) String() string {
 type CommunityName string
 
 func NewCommunityName(raw string) (CommunityName, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "community name is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "community name", MaxCommunityNameRunes)
+	if err != nil {
+		return "", err
 	}
 
-	return CommunityName(raw), nil
+	return CommunityName(value), nil
 }
 
 func (name CommunityName) String() string {
@@ -71,8 +77,13 @@ func (name CommunityName) String() string {
 
 type CommunityDescription string
 
-func NewCommunityDescription(raw string) CommunityDescription {
-	return CommunityDescription(strings.TrimSpace(raw))
+func NewCommunityDescription(raw string) (CommunityDescription, error) {
+	value, err := textlimit.TrimmedOptionalMaxRunes(raw, "community description", MaxCommunityDescriptionRunes)
+	if err != nil {
+		return "", err
+	}
+
+	return CommunityDescription(value), nil
 }
 
 func (description CommunityDescription) String() string {

@@ -24,7 +24,7 @@ func TestListNotificationsDefaultsUnreadAndPagination(t *testing.T) {
 			if status != StatusFilterUnread {
 				t.Fatalf("expected unread status, got %q", status)
 			}
-			if limit != DefaultNotificationListLimit || offset != 0 {
+			if limit != DefaultNotificationListLimit+1 || offset != 0 {
 				t.Fatalf("expected default pagination, got %d/%d", limit, offset)
 			}
 			return []Notification{newNotification(actorID, now)}, nil
@@ -59,7 +59,7 @@ func TestListNotificationsSupportsStatusAndClampsLimit(t *testing.T) {
 			if status != StatusFilterAll {
 				t.Fatalf("expected all status, got %q", status)
 			}
-			if limit != MaxNotificationListLimit || offset != 3 {
+			if limit != MaxNotificationListLimit+1 || offset != 3 {
 				t.Fatalf("expected clamped pagination, got %d/%d", limit, offset)
 			}
 			return nil, nil

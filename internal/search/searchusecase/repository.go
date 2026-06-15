@@ -8,6 +8,7 @@ import (
 type Repository interface {
 	SearchCommunities(ctx context.Context, query string, limit int, offset int) ([]CommunityResult, error)
 	SearchPosts(ctx context.Context, query string, limit int, offset int) ([]PostResult, error)
+	SearchUsers(ctx context.Context, query string, limit int, offset int) ([]UserResult, error)
 }
 
 type CommunityResult struct {
@@ -32,4 +33,16 @@ type PostResult struct {
 	Status        string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+type UserResult struct {
+	ID          string
+	Username    string
+	DisplayName string
+	AvatarURL   string
+	Headline    string
+	BioExcerpt  string
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }

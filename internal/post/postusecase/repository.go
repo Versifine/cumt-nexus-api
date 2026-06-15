@@ -19,6 +19,7 @@ type PostRepository interface {
 	ListVisibleByCommunity(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	ListVisibleInPublicCommunities(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	ListRecommendedInPublicCommunities(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
+	ListFollowingInPublicCommunities(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 }
 

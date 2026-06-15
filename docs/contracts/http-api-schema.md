@@ -25,14 +25,35 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /healthz | none | `{"status":"ok"}` | 200 |
 | GET | /uploads/*filepath | none | static file | 200 |
 | POST | /api/v1/auth/register | `authhttp.registerRequest` | `authhttp.registerResponse` | 201 |
+| POST | /api/v1/auth/email-codes/register | `authhttp.emailCodeRequest` | `authhttp.emailCodeResponse` | 200 |
+| POST | /api/v1/auth/register-with-email | `authhttp.registerWithEmailRequest` | `authhttp.loginResponse` | 201 |
 | POST | /api/v1/auth/login | `authhttp.loginRequest` | `authhttp.loginResponse` | 200 |
+| POST | /api/v1/auth/email-codes/login | `authhttp.emailCodeRequest` | `authhttp.emailCodeResponse` | 200 |
+| POST | /api/v1/auth/login-with-email-code | `authhttp.loginWithEmailCodeRequest` | `authhttp.loginResponse` | 200 |
+| POST | /api/v1/auth/email-codes/password-reset | `authhttp.emailCodeRequest` | `authhttp.emailCodeResponse` | 200 |
+| POST | /api/v1/auth/password-reset | `authhttp.passwordResetRequest` | `authhttp.passwordUpdatedResponse` | 200 |
 | GET | /api/v1/me | none | `userhttp.currentUserResponse` | 200 |
 | PATCH | /api/v1/me/profile | `userhttp.updateProfileRequest` | `userhttp.updateProfileResponse` | 200 |
+| GET | /api/v1/me/security | none | `authhttp.accountSecurityResponse` | 200 |
+| POST | /api/v1/me/security/email-codes/change-email | `authhttp.changeEmailCodeRequest` | `authhttp.emailCodeResponse` | 200 |
+| POST | /api/v1/me/security/email-codes/delete-account | `authhttp.deleteAccountCodeRequest` | `authhttp.emailCodeResponse` | 200 |
+| PATCH | /api/v1/me/security/email | `authhttp.changeEmailRequest` | `authhttp.changeEmailResponse` | 200 |
+| PATCH | /api/v1/me/security/password | `authhttp.changePasswordRequest` | `authhttp.passwordUpdatedResponse` | 200 |
+| DELETE | /api/v1/me/account | `authhttp.deleteAccountRequest` | none | 204 |
+| POST | /api/v1/auth/logout-all | none | none | 204 |
 | GET | /api/v1/me/saved-posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/me/followed-communities | query | `communityhttp.listFollowedCommunitiesResponse` | 200 |
+| GET | /api/v1/me/followed-users | query | `userhttp.listFollowedUsersResponse` | 200 |
 | GET | /api/v1/me/points | none | `effecthttp.getMyPointsResponse` | 200 |
+| GET | /api/v1/me/point-transactions | query | `effecthttp.listMyPointTransactionsResponse` | 200 |
+| GET | /api/v1/me/progression | none | `progressionhttp.getMyProgressionResponse` | 200 |
+| GET | /api/v1/me/xp-events | query | `progressionhttp.listMyXPEventsResponse` | 200 |
+| GET | /api/v1/me/titles | query | `progressionhttp.listMyTitlesResponse` | 200 |
+| PATCH | /api/v1/me/title | `progressionhttp.setActiveTitleRequest` | `progressionhttp.setActiveTitleResponse` | 200 |
 | GET | /api/v1/users/:username | none | `userhttp.getPublicUserResponse` | 200 |
-| GET | /api/v1/communities | none | `communityhttp.listCommunitiesResponse` | 200 |
+| POST | /api/v1/users/:username/follow | none | none | 204 |
+| DELETE | /api/v1/users/:username/follow | none | none | 204 |
+| GET | /api/v1/communities | query | `communityhttp.listCommunitiesResponse` | 200 |
 | GET | /api/v1/communities/:slug | none | `communityhttp.getCommunityResponse` | 200 |
 | GET | /api/v1/communities/:slug/manage | none | `communityhttp.getCommunityManageContextResponse` | 200 |
 | GET | /api/v1/communities/:slug/manage/posts | query | `communityhttp.listCommunityManagePostsResponse` | 200 |
@@ -54,6 +75,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/community-applications/:id/reject | `communityhttp.rejectCommunityApplicationRequest` | `communityhttp.rejectCommunityApplicationResponse` | 200 |
 | GET | /api/v1/admin/users | query | `adminhttp.listAdminUsersResponse` | 200 |
 | PATCH | /api/v1/admin/users/:id | `adminhttp.updateAdminUserRequest` | `adminhttp.updateAdminUserResponse` | 200 |
+| GET | /api/v1/admin/owner-transfer | none | `adminhttp.ownerTransferResponse` | 200 |
+| POST | /api/v1/admin/owner-transfer | `adminhttp.createOwnerTransferRequest` | `adminhttp.ownerTransferResponse` | 201 |
+| DELETE | /api/v1/admin/owner-transfer/:transfer_id | none | `adminhttp.ownerTransferResponse` | 200 |
 | GET | /api/v1/admin/communities | query | `adminhttp.listAdminCommunitiesResponse` | 200 |
 | PATCH | /api/v1/admin/communities/:id | `adminhttp.updateAdminCommunityStatusRequest` | `adminhttp.updateAdminCommunityStatusResponse` | 200 |
 | GET | /api/v1/admin/effects | query | `adminhttp.listAdminEffectsResponse` | 200 |
@@ -61,6 +85,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/admin/settings | none | `adminhttp.listAdminSettingsResponse` | 200 |
 | PATCH | /api/v1/admin/settings/:key | `adminhttp.updateAdminSettingRequest` | `adminhttp.updateAdminSettingResponse` | 200 |
 | GET | /api/v1/admin/audit-logs | query | `adminhttp.listAdminAuditLogsResponse` | 200 |
+| GET | /api/v1/admin/point-transactions | query | `adminhttp.listAdminPointTransactionsResponse` | 200 |
+| POST | /api/v1/admin/users/:id/points/adjust | `adminhttp.adjustAdminUserPointsRequest` | `adminhttp.adjustAdminUserPointsResponse` | 200 |
+| POST | /api/v1/admin/users/:id/sanctions | `adminhttp.createAdminUserSanctionRequest` | `adminhttp.createAdminUserSanctionResponse` | 201 |
+| GET | /api/v1/admin/users/:id/sanctions | query | `adminhttp.listAdminUserSanctionsResponse` | 200 |
+| POST | /api/v1/admin/user-sanctions/:sanction_id/revoke | none | `adminhttp.revokeAdminUserSanctionResponse` | 200 |
+| GET | /api/v1/admin/titles | query | `progressionhttp.listAdminTitlesResponse` | 200 |
+| POST | /api/v1/admin/titles | `progressionhttp.createAdminTitleRequest` | `progressionhttp.createAdminTitleResponse` | 201 |
+| PATCH | /api/v1/admin/titles/:id | `progressionhttp.updateAdminTitleRequest` | `progressionhttp.updateAdminTitleResponse` | 200 |
+| GET | /api/v1/admin/users/:id/titles | query | `progressionhttp.listAdminUserTitleGrantsResponse` | 200 |
+| POST | /api/v1/admin/users/:id/titles | `progressionhttp.grantAdminUserTitleRequest` | `progressionhttp.grantAdminUserTitleResponse` | 201 |
+| DELETE | /api/v1/admin/users/:id/titles/:grant_id | none | `progressionhttp.revokeAdminUserTitleResponse` | 200 |
+| GET | /api/v1/owner-transfer/:transfer_id | none | `adminhttp.ownerTransferResponse` | 200 |
+| POST | /api/v1/owner-transfer/:transfer_id/accept | `adminhttp.acceptOwnerTransferRequest` | `adminhttp.ownerTransferResponse` | 200 |
 | POST | /api/v1/communities/:slug/posts | `posthttp.publishPostRequest` | `posthttp.publishPostResponse` | 201 |
 | GET | /api/v1/communities/:slug/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/posts | query | `posthttp.listCommunityPostsResponse` | 200 |
@@ -84,6 +121,45 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/comments/:id/reports | `moderationhttp.reportContentRequest` | `moderationhttp.reportContentResponse` | 201 |
 | POST | /api/v1/posts/:id/moderation/remove | `moderationhttp.reportContentRequest` | `moderationhttp.removeContentResponse` | 200 |
 | POST | /api/v1/comments/:id/moderation/remove | `moderationhttp.reportContentRequest` | `moderationhttp.removeContentResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/remove | `moderationhttp.reportContentRequest` | `moderationhttp.removeContentResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/comments/:id/remove | `moderationhttp.reportContentRequest` | `moderationhttp.removeContentResponse` | 200 |
+| GET | /api/v1/admin/mod-queues | query | `moderationhttp.modQueueResponse` | 200 |
+| POST | /api/v1/admin/mod-queues/actions | `moderationhttp.bulkActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| GET | /api/v1/communities/:slug/mod-queues | query | `moderationhttp.modQueueResponse` | 200 |
+| POST | /api/v1/communities/:slug/mod-queues/actions | `moderationhttp.bulkActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/approve | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/comments/:id/approve | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/spam | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/comments/:id/spam | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/reports/:id/ignore | none | `moderationhttp.reportContentResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/lock | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/pin | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/mark-nsfw | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/mark-spoiler | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/posts/:id/flair | `moderationhttp.singleActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| GET | /api/v1/communities/:slug/moderation/removal-reasons | none | `moderationhttp.templateListResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/removal-reasons | `moderationhttp.templateRequest` | `moderationhttp.templateResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/moderation/removal-reasons/:id | `moderationhttp.templateRequest` | `moderationhttp.templateResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/moderation/removal-reasons/:id | none | none | 204 |
+| POST | /api/v1/communities/:slug/moderation/removal-reasons/:id/apply | `moderationhttp.applyRemovalReasonRequest` | `moderationhttp.bulkActionResponse` | 200 |
+| GET | /api/v1/communities/:slug/moderation/saved-responses | none | `moderationhttp.templateListResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/saved-responses | `moderationhttp.templateRequest` | `moderationhttp.templateResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/moderation/saved-responses/:id | `moderationhttp.templateRequest` | `moderationhttp.templateResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/moderation/saved-responses/:id | none | none | 204 |
+| GET | /api/v1/communities/:slug/manage/banned-users | query | `moderationhttp.userStateListResponse` | 200 |
+| POST | /api/v1/communities/:slug/manage/banned-users | `moderationhttp.userStateRequest` | `moderationhttp.userStateResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/manage/banned-users/:user_id | none | none | 204 |
+| GET | /api/v1/communities/:slug/manage/muted-users | query | `moderationhttp.userStateListResponse` | 200 |
+| POST | /api/v1/communities/:slug/manage/muted-users | `moderationhttp.userStateRequest` | `moderationhttp.userStateResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/manage/muted-users/:user_id | none | none | 204 |
+| GET | /api/v1/communities/:slug/manage/approved-users | query | `moderationhttp.userStateListResponse` | 200 |
+| POST | /api/v1/communities/:slug/manage/approved-users | `moderationhttp.userStateRequest` | `moderationhttp.userStateResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/manage/approved-users/:user_id | none | none | 204 |
+| GET | /api/v1/communities/:slug/moderation/users/:user_id/profile | none | `moderationhttp.moderationUserProfileResponse` | 200 |
+| GET | /api/v1/communities/:slug/moderation/users/:user_id/notes | query | `moderationhttp.moderatorNotesResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/users/:user_id/notes | `moderationhttp.moderatorNoteRequest` | `moderationhttp.moderatorNoteMutationResponse` | 201 |
+| DELETE | /api/v1/communities/:slug/moderation/users/:user_id/notes/:note_id | none | none | 204 |
+| GET | /api/v1/communities/:slug/moderation/logs | query | `moderationhttp.modLogsResponse` | 200 |
 | GET | /api/v1/moderation/reports | query | `moderationhttp.listReportsResponse` | 200 |
 | GET | /api/v1/moderation/reports/:id | none | `moderationhttp.reportContentResponse` | 200 |
 | POST | /api/v1/moderation/reports/:id/dismiss | none | `moderationhttp.reportContentResponse` | 200 |
@@ -104,8 +180,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 
 | Schema | Required JSON fields |
 |---|---|
-| `authhttp.loginRequest` | `username`, `password` |
 | `authhttp.registerRequest` | `username`, `password` |
+| `adminhttp.adjustAdminUserPointsRequest` | `delta`, `reason` |
+| `adminhttp.createAdminUserSanctionRequest` | `type`, `duration`, `reason` |
+| `progressionhttp.createAdminTitleRequest` | `name` |
+| `progressionhttp.grantAdminUserTitleRequest` | `title_id` |
 | `adminhttp.updateAdminCommunityStatusRequest` | `status` |
 | `adminhttp.updateAdminEffectRequest` | `is_active` |
 | `adminhttp.updateAdminSettingRequest` | `enabled` |
@@ -120,6 +199,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `effecthttp.applyCommentEffectRequest` | `effect_id` |
 | `communityhttp.submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `moderationhttp.reportContentRequest` | `reason` |
+| `moderationhttp.bulkActionRequest` | `action` |
+| `moderationhttp.templateRequest` | `title` |
+| `moderationhttp.userStateRequest` | `user_id` |
+| `moderationhttp.moderatorNoteRequest` | `body` |
 | `posthttp.publishPostRequest` | `title`, `body` |
 | `posthttp.updatePostRequest` | `title`, `body` |
 | `votehttp.setPostVoteRequest` | `value` |
@@ -130,29 +213,45 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 |---|---|---|
 | `authhttp` | `registerRequest` | `username`, `password` |
 | `authhttp` | `registerResponse` | `access_token`, `token_type`, `expires_in`, `user` |
-| `authhttp` | `userResponse` | `id`, `username`, `status`, `created_at` |
-| `authhttp` | `loginRequest` | `username`, `password` |
+| `authhttp` | `userResponse` | `id`, `username`, `status`, `email`, `email_verified`, `created_at` |
+| `authhttp` | `loginRequest` | `identifier`, `username`, `password` |
 | `authhttp` | `loginResponse` | `access_token`, `token_type`, `expires_in`, `user` |
+| `authhttp` | `emailCodeRequest` | `email` |
+| `authhttp` | `emailCodeResponse` | `email`, `purpose`, `expires_in`, `resend_after` |
+| `authhttp` | `registerWithEmailRequest` | `email`, `code`, `username`, `password` |
+| `authhttp` | `loginWithEmailCodeRequest` | `email`, `code` |
+| `authhttp` | `passwordResetRequest` | `email`, `code`, `new_password` |
+| `authhttp` | `accountSecurityResponse` | `email`, `email_verified`, `email_verified_at`, `password_set`, `last_login_at`, `created_at` |
+| `authhttp` | `changeEmailCodeRequest` | `new_email` |
+| `authhttp` | `changeEmailRequest` | `new_email`, `code` |
+| `authhttp` | `changeEmailResponse` | `email`, `email_verified`, `email_verified_at` |
+| `authhttp` | `changePasswordRequest` | `current_password`, `new_password` |
+| `authhttp` | `passwordUpdatedResponse` | `updated` |
+| `authhttp` | `deleteAccountCodeRequest` | `email` |
+| `authhttp` | `deleteAccountRequest` | `code`, `current_password`, `confirmation` |
 | `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at` |
-| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `created_at` |
-| `userhttp` | `publicUserStatsResponse` | `post_count`, `comment_count` |
+| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `progression`, `viewer_is_following`, `created_at` |
+| `userhttp` | `publicUserProgressionResponse` | `level`, `level_name`, `xp_total`, `current_level_xp`, `next_level_xp`, `level_progress`, `active_title`, `titles_count` |
+| `userhttp` | `publicUserTitleResponse` | `grant_id`, `title_id`, `name`, `scope_type`, `scope_id` |
+| `userhttp` | `publicUserStatsResponse` | `post_count`, `comment_count`, `follower_count`, `following_count` |
 | `userhttp` | `getPublicUserResponse` | `user` |
+| `userhttp` | `listFollowedUsersResponse` | `users`, `limit`, `offset`, `next_offset`, `has_more` |
 | `userhttp` | `updateProfileRequest` | `display_name`, `avatar_url`, `banner_url`, `headline`, `bio` |
 | `userhttp` | `updateProfileResponse` | `user` |
-| `communityhttp` | `listCommunitiesResponse` | `communities` |
+| `communityhttp` | `listCommunitiesResponse` | `communities`, `limit`, `offset`, `next_offset`, `has_more` |
 | `communityhttp` | `getCommunityResponse` | `community` |
 | `communityhttp` | `getCommunityManageContextResponse` | `community` |
 | `communityhttp` | `getCommunityManageSettingsResponse` | `community`, `settings` |
 | `communityhttp` | `updateCommunityManageSettingsResponse` | `community`, `settings` |
-| `communityhttp` | `listFollowedCommunitiesResponse` | `communities`, `limit`, `offset` |
-| `communityhttp` | `listCommunityMembersResponse` | `community`, `members`, `limit`, `offset` |
+| `communityhttp` | `listFollowedCommunitiesResponse` | `communities`, `limit`, `offset`, `next_offset`, `has_more` |
+| `communityhttp` | `listCommunityMembersResponse` | `community`, `members`, `limit`, `offset`, `next_offset`, `has_more` |
 | `communityhttp` | `communityMemberResponse` | `user`, `role`, `status`, `created_at`, `updated_at` |
 | `communityhttp` | `communityMemberUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
-| `communityhttp` | `listCommunityManagePostsResponse` | `community`, `posts`, `status`, `limit`, `offset` |
+| `communityhttp` | `listCommunityManagePostsResponse` | `community`, `posts`, `status`, `limit`, `offset`, `next_offset`, `has_more` |
 | `communityhttp` | `communityManagePostResponse` | `id`, `community_id`, `author_id`, `title`, `body_excerpt`, `status`, `created_at`, `updated_at` |
-| `communityhttp` | `listCommunityManageCommentsResponse` | `community`, `comments`, `status`, `limit`, `offset` |
+| `communityhttp` | `listCommunityManageCommentsResponse` | `community`, `comments`, `status`, `limit`, `offset`, `next_offset`, `has_more` |
 | `communityhttp` | `communityManageCommentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body_excerpt`, `status`, `created_at`, `updated_at` |
-| `communityhttp` | `listCommunityManageReportsResponse` | `community`, `reports`, `status`, `limit`, `offset` |
+| `communityhttp` | `listCommunityManageReportsResponse` | `community`, `reports`, `status`, `limit`, `offset`, `next_offset`, `has_more` |
 | `communityhttp` | `communityManageReportResponse` | `id`, `target_type`, `post_id`, `comment_id`, `reporter_id`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `target_preview`, `created_at`, `updated_at` |
 | `communityhttp` | `communityManageReportTargetPreviewResponse` | `target_type`, `post_id`, `comment_id`, `author_id`, `status`, `title`, `body_excerpt`, `created_at`, `updated_at` |
 | `communityhttp` | `listCommunityRulesResponse` | `community`, `rules` |
@@ -165,23 +264,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `communityhttp` | `rejectCommunityApplicationRequest` | `reject_reason` |
 | `communityhttp` | `communityApplicationResponse` | `id`, `applicant_id`, `requested_slug`, `requested_name`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `reject_reason`, `created_at`, `updated_at` |
-| `communityhttp` | `listCommunityApplicationsResponse` | `applications`, `limit`, `offset` |
+| `communityhttp` | `listCommunityApplicationsResponse` | `applications`, `limit`, `offset`, `next_offset`, `has_more` |
 | `communityhttp` | `getCommunityApplicationResponse` | `application` |
 | `communityhttp` | `submitCommunityApplicationResponse` | `application` |
 | `communityhttp` | `approveCommunityApplicationResponse` | `application`, `community` |
 | `communityhttp` | `rejectCommunityApplicationResponse` | `application` |
 | `communityhttp` | `communityResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `kind`, `status`, `visibility`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions`, `created_at`, `updated_at` |
-| `communityhttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate` |
-| `adminhttp` | `adminUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at`, `updated_at` |
-| `adminhttp` | `listAdminUsersResponse` | `users`, `status`, `limit`, `offset` |
+| `communityhttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate`, `platform_owner_override` |
+| `adminhttp` | `adminUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `platform_role`, `created_at`, `updated_at` |
+| `adminhttp` | `listAdminUsersResponse` | `users`, `status`, `q`, `limit`, `offset`, `next_offset`, `has_more` |
 | `adminhttp` | `updateAdminUserRequest` | `status`, `is_platform_staff` |
 | `adminhttp` | `updateAdminUserResponse` | `user` |
+| `adminhttp` | `createOwnerTransferRequest` | `target_user_id`, `previous_owner_role`, `reason`, `current_password` |
+| `adminhttp` | `acceptOwnerTransferRequest` | `current_password` |
+| `adminhttp` | `ownerTransferResponse` | `transfer` |
+| `adminhttp` | `adminOwnerTransferResponse` | `id`, `status`, `initiated_by_id`, `initiated_by_username`, `target_user_id`, `target_username`, `previous_owner_role`, `reason`, `created_at`, `updated_at`, `expires_at`, `accepted_at`, `cancelled_at` |
 | `adminhttp` | `adminCommunityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_by`, `created_at`, `updated_at` |
-| `adminhttp` | `listAdminCommunitiesResponse` | `communities`, `status`, `limit`, `offset` |
+| `adminhttp` | `listAdminCommunitiesResponse` | `communities`, `status`, `q`, `limit`, `offset`, `next_offset`, `has_more` |
 | `adminhttp` | `updateAdminCommunityStatusRequest` | `status` |
 | `adminhttp` | `updateAdminCommunityStatusResponse` | `community` |
 | `adminhttp` | `adminEffectResponse` | `id`, `name`, `description`, `cost_points`, `asset_url`, `animation_key`, `is_active`, `created_at`, `updated_at` |
-| `adminhttp` | `listAdminEffectsResponse` | `effects`, `active`, `limit`, `offset` |
+| `adminhttp` | `listAdminEffectsResponse` | `effects`, `active`, `limit`, `offset`, `next_offset`, `has_more` |
 | `adminhttp` | `updateAdminEffectRequest` | `is_active` |
 | `adminhttp` | `updateAdminEffectResponse` | `effect` |
 | `adminhttp` | `adminSettingResponse` | `key`, `enabled`, `updated_by`, `updated_at` |
@@ -189,36 +292,47 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `adminhttp` | `updateAdminSettingRequest` | `enabled` |
 | `adminhttp` | `updateAdminSettingResponse` | `setting` |
 | `adminhttp` | `adminAuditLogResponse` | `id`, `actor_id`, `action`, `target_type`, `target_id`, `before`, `after`, `created_at` |
-| `adminhttp` | `listAdminAuditLogsResponse` | `audit_logs`, `limit`, `offset` |
+| `adminhttp` | `listAdminAuditLogsResponse` | `audit_logs`, `q`, `limit`, `offset`, `next_offset`, `has_more` |
+| `adminhttp` | `adminPointAccountResponse` | `user_id`, `balance`, `lifetime_earned`, `lifetime_spent`, `updated_at` |
+| `adminhttp` | `adminPointTransactionResponse` | `id`, `user_id`, `delta`, `balance_after`, `reason`, `source_type`, `source_id`, `created_at` |
+| `adminhttp` | `listAdminPointTransactionsResponse` | `transactions`, `limit`, `offset`, `next_offset`, `has_more` |
+| `adminhttp` | `adjustAdminUserPointsRequest` | `delta`, `reason` |
+| `adminhttp` | `adjustAdminUserPointsResponse` | `account`, `transaction` |
+| `adminhttp` | `adminUserSanctionResponse` | `id`, `user_id`, `type`, `status`, `reason`, `created_by`, `starts_at`, `expires_at`, `revoked_by`, `revoked_at`, `created_at`, `updated_at` |
+| `adminhttp` | `createAdminUserSanctionRequest` | `type`, `duration`, `reason` |
+| `adminhttp` | `createAdminUserSanctionResponse` | `sanction` |
+| `adminhttp` | `listAdminUserSanctionsResponse` | `sanctions`, `limit`, `offset`, `next_offset`, `has_more` |
+| `adminhttp` | `revokeAdminUserSanctionResponse` | `sanction` |
 | `posthttp` | `publishPostRequest` | `title`, `body`, `attachment_ids`, `content_refs` |
 | `posthttp` | `updatePostRequest` | `title`, `body`, `attachment_ids`, `content_refs` |
-| `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments` |
+| `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `is_locked`, `is_pinned`, `is_nsfw`, `is_spoiler`, `flair_text`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments` |
 | `posthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `posthttp` | `contentRefRequest` | `kind`, `ref_id` |
 | `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `posthttp` | `communitySummaryResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions` |
-| `posthttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate` |
+| `posthttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate`, `platform_owner_override` |
 | `posthttp` | `postPreviewResponse` | `kind`, `image` |
 | `posthttp` | `postPreviewImageResponse` | `url`, `width`, `height`, `mime_type`, `alt_text`, `size_bytes` |
 | `posthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
 | `posthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `posthttp` | `publishPostResponse` | `post` |
-| `posthttp` | `listCommunityPostsResponse` | `posts`, `limit`, `offset` |
+| `posthttp` | `listCommunityPostsResponse` | `posts`, `limit`, `offset`, `next_offset`, `has_more` |
 | `posthttp` | `getPostResponse` | `post` |
 | `commenthttp` | `publishCommentRequest` | `body`, `parent_id`, `attachment_ids`, `content_refs` |
 | `commenthttp` | `updateCommentRequest` | `body`, `attachment_ids`, `content_refs` |
 | `commenthttp` | `setCommentVoteRequest` | `value` |
-| `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `format`, `content_refs`, `author`, `status`, `depth`, `reply_count`, `has_more_replies`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `viewer_permissions`, `children`, `created_at`, `updated_at`, `attachments` |
+| `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `format`, `content_refs`, `author`, `status`, `depth`, `reply_count`, `has_more_replies`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `viewer_permissions`, `children`, `created_at`, `updated_at`, `attachments`, `effects` |
 | `commenthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `commenthttp` | `contentRefRequest` | `kind`, `ref_id` |
 | `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `commenthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
+| `commenthttp` | `commentEffectResponse` | `id`, `effect_id`, `name`, `asset_url`, `animation_key`, `applied_by_user`, `points_spent`, `created_at` |
 | `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `commenthttp` | `publishCommentResponse` | `comment` |
 | `commenthttp` | `commentVoteResponse` | `comment_id`, `user_id`, `value`, `created_at`, `updated_at` |
 | `commenthttp` | `setCommentVoteResponse` | `vote` |
-| `commenthttp` | `listPostCommentsResponse` | `comments`, `view`, `sort`, `limit`, `offset`, `max_depth` |
-| `commenthttp` | `listUserCommentsResponse` | `comments`, `limit`, `offset` |
+| `commenthttp` | `listPostCommentsResponse` | `comments`, `view`, `sort`, `limit`, `offset`, `next_offset`, `has_more`, `max_depth` |
+| `commenthttp` | `listUserCommentsResponse` | `comments`, `limit`, `offset`, `next_offset`, `has_more` |
 | `votehttp` | `setPostVoteRequest` | `value` |
 | `votehttp` | `postVoteResponse` | `post_id`, `user_id`, `value`, `created_at`, `updated_at` |
 | `votehttp` | `setPostVoteResponse` | `vote` |
@@ -226,14 +340,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp` | `contentReportResponse` | `id`, `target_type`, `post_id`, `comment_id`, `reporter_id`, `reason`, `status`, `reviewed_by`, `reviewed_at`, `target_preview`, `created_at`, `updated_at` |
 | `moderationhttp` | `reportTargetPreviewResponse` | `target_type`, `post_id`, `comment_id`, `author_id`, `status`, `title`, `body_excerpt`, `created_at`, `updated_at` |
 | `moderationhttp` | `reportContentResponse` | `report` |
-| `moderationhttp` | `listReportsResponse` | `reports`, `limit`, `offset` |
+| `moderationhttp` | `listReportsResponse` | `reports`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `moderationActionResponse` | `id`, `target_type`, `post_id`, `comment_id`, `actor_id`, `action`, `reason`, `created_at` |
 | `moderationhttp` | `removeContentResponse` | `action` |
-| `searchhttp` | `searchResponse` | `query`, `scope`, `limit`, `offset`, `communities`, `posts` |
+| `moderationhttp` | `modQueueResponse` | `items`, `queue`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `modQueueItemResponse` | `id`, `target_type`, `target_id`, `post_id`, `community_id`, `community_slug`, `author_id`, `report_count`, `queue`, `status`, `preview`, `created_at`, `updated_at` |
+| `moderationhttp` | `moderationTargetRequest` | `target_type`, `target_id` |
+| `moderationhttp` | `bulkActionRequest` | `action`, `target_type`, `target_ids`, `targets`, `reason`, `removal_reason_id`, `notify_author`, `confirm`, `value`, `flair_text` |
+| `moderationhttp` | `applyRemovalReasonRequest` | `target_type`, `target_ids`, `targets`, `reason`, `notify_author`, `confirm` |
+| `moderationhttp` | `singleActionRequest` | `reason`, `removal_reason_id`, `notify_author`, `confirm`, `value`, `flair_text` |
+| `moderationhttp` | `bulkActionResponse` | `results` |
+| `moderationhttp` | `bulkActionItemResponse` | `target_type`, `target_id`, `ok`, `action`, `error_code`, `error_message` |
+| `moderationhttp` | `templateListResponse` | `items` |
+| `moderationhttp` | `templateResponse` | `item` |
+| `moderationhttp` | `moderationTemplateResponse` | `id`, `community_id`, `title`, `body`, `rule_id`, `is_active`, `position`, `created_by`, `updated_by`, `created_at`, `updated_at` |
+| `moderationhttp` | `templateRequest` | `title`, `body`, `rule_id`, `position` |
+| `moderationhttp` | `userStateRequest` | `user_id`, `reason`, `expires_at` |
+| `moderationhttp` | `userStateListResponse` | `users`, `kind`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `userStateResponse` | `user` |
+| `moderationhttp` | `communityUserStateResponse` | `id`, `community_id`, `user_id`, `username`, `display_name`, `avatar_url`, `kind`, `reason`, `expires_at`, `created_by`, `updated_by`, `created_at`, `updated_at` |
+| `moderationhttp` | `moderationUserProfileResponse` | `user_id`, `username`, `display_name`, `avatar_url`, `headline`, `status`, `post_count`, `comment_count`, `report_count`, `removed_count`, `is_banned`, `is_muted`, `is_approved`, `recent_notes` |
+| `moderationhttp` | `moderatorNoteResponse` | `id`, `community_id`, `user_id`, `author_id`, `body`, `created_at` |
+| `moderationhttp` | `moderatorNotesResponse` | `notes`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `moderatorNoteRequest` | `body` |
+| `moderationhttp` | `moderatorNoteMutationResponse` | `note` |
+| `moderationhttp` | `modLogsResponse` | `logs`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `modLogResponse` | `id`, `community_id`, `actor_id`, `action`, `target_type`, `target_id`, `batch_id`, `before`, `after`, `metadata`, `created_at` |
+| `searchhttp` | `searchResponse` | `query`, `scope`, `limit`, `offset`, `next_offset`, `has_more`, `communities`, `posts`, `users` |
 | `searchhttp` | `searchCommunityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_at`, `updated_at` |
 | `searchhttp` | `searchPostResponse` | `id`, `community_id`, `community_slug`, `author_id`, `title`, `body_excerpt`, `status`, `created_at`, `updated_at` |
+| `searchhttp` | `searchUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `bio_excerpt`, `status`, `created_at`, `updated_at` |
 | `notificationhttp` | `notificationResponse` | `id`, `recipient_id`, `type`, `title`, `body`, `source_type`, `source_id`, `aggregate_count`, `last_actor_id`, `read_at`, `created_at`, `updated_at` |
-| `notificationhttp` | `listNotificationsResponse` | `notifications`, `category`, `status`, `limit`, `offset` |
+| `notificationhttp` | `listNotificationsResponse` | `notifications`, `category`, `status`, `limit`, `offset`, `next_offset`, `has_more` |
 | `notificationhttp` | `unreadSummaryResponse` | `total`, `replies`, `mentions`, `likes`, `system` |
 | `notificationhttp` | `markNotificationReadResponse` | `notification` |
 | `notificationhttp` | `markAllNotificationsReadResponse` | `updated_count`, `read_at` |
@@ -249,9 +387,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `effecthttp` | `listEffectsCatalogResponse` | `effects` |
 | `effecthttp` | `pointAccountResponse` | `user_id`, `balance`, `lifetime_earned`, `lifetime_spent`, `updated_at` |
 | `effecthttp` | `getMyPointsResponse` | `points` |
+| `effecthttp` | `pointTransactionResponse` | `id`, `user_id`, `delta`, `balance_after`, `reason`, `source_type`, `source_id`, `created_at` |
+| `effecthttp` | `listMyPointTransactionsResponse` | `transactions`, `limit`, `offset`, `next_offset`, `has_more` |
 | `effecthttp` | `applyCommentEffectRequest` | `effect_id` |
 | `effecthttp` | `commentEffectResponse` | `id`, `comment_id`, `effect_id`, `user_id`, `points_spent`, `created_at` |
 | `effecthttp` | `applyCommentEffectResponse` | `comment_effect`, `points` |
+| `progressionhttp` | `progressionResponse` | `user_id`, `xp_total`, `level`, `level_name`, `current_level_xp`, `next_level_xp`, `level_progress`, `active_title`, `titles_count`, `updated_at` |
+| `progressionhttp` | `getMyProgressionResponse` | `progression` |
+| `progressionhttp` | `xpEventResponse` | `id`, `user_id`, `delta`, `xp_total_after`, `reason`, `source_type`, `source_id`, `actor_id`, `created_at` |
+| `progressionhttp` | `listMyXPEventsResponse` | `events`, `limit`, `offset`, `next_offset`, `has_more` |
+| `progressionhttp` | `titleSummaryResponse` | `grant_id`, `title_id`, `name`, `scope_type`, `scope_id` |
+| `progressionhttp` | `titleResponse` | `id`, `name`, `description`, `scope_type`, `scope_id`, `is_active`, `created_by`, `created_at`, `updated_at` |
+| `progressionhttp` | `titleGrantResponse` | `id`, `user_id`, `title`, `granted_by`, `reason`, `expires_at`, `revoked_at`, `created_at` |
+| `progressionhttp` | `listMyTitlesResponse` | `titles`, `limit`, `offset`, `next_offset`, `has_more` |
+| `progressionhttp` | `setActiveTitleRequest` | `title_grant_id` |
+| `progressionhttp` | `setActiveTitleResponse` | `progression` |
+| `progressionhttp` | `listAdminTitlesResponse` | `titles`, `limit`, `offset`, `next_offset`, `has_more` |
+| `progressionhttp` | `createAdminTitleRequest` | `name`, `description`, `scope_type`, `scope_id` |
+| `progressionhttp` | `createAdminTitleResponse` | `title` |
+| `progressionhttp` | `updateAdminTitleRequest` | `name`, `description`, `is_active` |
+| `progressionhttp` | `updateAdminTitleResponse` | `title` |
+| `progressionhttp` | `listAdminUserTitleGrantsResponse` | `titles`, `limit`, `offset`, `next_offset`, `has_more` |
+| `progressionhttp` | `grantAdminUserTitleRequest` | `title_id`, `reason`, `expires_at` |
+| `progressionhttp` | `grantAdminUserTitleResponse` | `grant` |
+| `progressionhttp` | `revokeAdminUserTitleResponse` | `grant` |
 
 ## 不在本快照内
 
@@ -260,3 +419,39 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 - 不校验请求字段的完整业务规则，例如 slug 格式、分页最大值、投票值枚举和正文长度；“请求必填字段清单”只覆盖 handler struct tag 中显式存在的 `binding:"required"`。
 - 不校验错误响应消息全文。
 - 不定义前端路由、页面、状态管理或组件模型。
+
+## Stage 49 Community Member Governance Addendum
+
+### Route Schema Mappings
+
+| Method | Path | Request | Success | Status |
+|---|---|---|---|---|
+| POST | /api/v1/communities/:slug/manage/moderators | `communityhttp.writeCommunityModeratorRequest` | `communityhttp.communityMemberMutationResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/manage/moderators/:user_id | none | `communityhttp.communityMemberMutationResponse` | 200 |
+| POST | /api/v1/communities/:slug/manage/owner-transfer | `communityhttp.createCommunityOwnerTransferRequest` | `communityhttp.communityOwnerTransferMutationResponse` | 200 |
+| POST | /api/v1/communities/:slug/manage/owner-transfer/:transfer_id/accept | none | `communityhttp.communityOwnerTransferMutationResponse` | 200 |
+| POST | /api/v1/admin/communities/:id/owner | `adminhttp.updateAdminCommunityOwnerRequest` | `adminhttp.updateAdminCommunityOwnerResponse` | 200 |
+| PATCH | /api/v1/admin/users/:id/platform-role | `adminhttp.updateAdminUserPlatformRoleRequest` | `adminhttp.updateAdminUserPlatformRoleResponse` | 200 |
+
+### Required Fields
+
+| Schema | Required JSON fields |
+|---|---|
+| `communityhttp.writeCommunityModeratorRequest` | `username` |
+| `communityhttp.createCommunityOwnerTransferRequest` | `username` |
+| `adminhttp.updateAdminCommunityOwnerRequest` | `user_id` |
+
+### Handler JSON Schemas
+
+| Package | Go type | JSON fields |
+|---|---|---|
+| `communityhttp` | `writeCommunityModeratorRequest` | `username` |
+| `communityhttp` | `createCommunityOwnerTransferRequest` | `username` |
+| `communityhttp` | `communityMemberMutationResponse` | `community`, `member` |
+| `communityhttp` | `communityOwnerTransferResponse` | `id`, `community_id`, `from_user_id`, `to_user_id`, `status`, `created_at`, `updated_at`, `accepted_at` |
+| `communityhttp` | `communityOwnerTransferMutationResponse` | `community`, `transfer` |
+| `adminhttp` | `updateAdminCommunityOwnerRequest` | `user_id` |
+| `adminhttp` | `adminCommunityOwnerResponse` | `user_id`, `username`, `role`, `status`, `updated_at` |
+| `adminhttp` | `updateAdminCommunityOwnerResponse` | `community`, `owner` |
+| `adminhttp` | `updateAdminUserPlatformRoleRequest` | `role` |
+| `adminhttp` | `updateAdminUserPlatformRoleResponse` | `user` |

@@ -1,4 +1,4 @@
-﻿package communityhttp
+package communityhttp
 
 import (
 	"context"
@@ -35,6 +35,10 @@ type CommunityReadUseCase interface {
 	CreateCommunityRule(ctx context.Context, input communityusecase.CreateCommunityRuleInput) (communityusecase.CreateCommunityRuleResult, error)
 	UpdateCommunityRule(ctx context.Context, input communityusecase.UpdateCommunityRuleInput) (communityusecase.UpdateCommunityRuleResult, error)
 	DeleteCommunityRule(ctx context.Context, input communityusecase.DeleteCommunityRuleInput) (communityusecase.DeleteCommunityRuleResult, error)
+	AddCommunityModerator(ctx context.Context, input communityusecase.AddCommunityModeratorInput) (communityusecase.CommunityMemberMutationResult, error)
+	RemoveCommunityModerator(ctx context.Context, input communityusecase.RemoveCommunityModeratorInput) (communityusecase.CommunityMemberMutationResult, error)
+	CreateCommunityOwnerTransfer(ctx context.Context, input communityusecase.CreateCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error)
+	AcceptCommunityOwnerTransfer(ctx context.Context, input communityusecase.AcceptCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error)
 }
 
 type CommunityApplicationUseCase interface {
@@ -47,6 +51,10 @@ type CommunityApplicationUseCase interface {
 
 type listCommunitiesResponse struct {
 	Communities []communityResponse `json:"communities"`
+	Limit       int                 `json:"limit"`
+	Offset      int                 `json:"offset"`
+	NextOffset  int                 `json:"next_offset"`
+	HasMore     bool                `json:"has_more"`
 }
 
 type getCommunityResponse struct {
@@ -71,13 +79,17 @@ type listFollowedCommunitiesResponse struct {
 	Communities []communityResponse `json:"communities"`
 	Limit       int                 `json:"limit"`
 	Offset      int                 `json:"offset"`
+	NextOffset  int                 `json:"next_offset"`
+	HasMore     bool                `json:"has_more"`
 }
 
 type listCommunityMembersResponse struct {
-	Community communityResponse         `json:"community"`
-	Members   []communityMemberResponse `json:"members"`
-	Limit     int                       `json:"limit"`
-	Offset    int                       `json:"offset"`
+	Community  communityResponse         `json:"community"`
+	Members    []communityMemberResponse `json:"members"`
+	Limit      int                       `json:"limit"`
+	Offset     int                       `json:"offset"`
+	NextOffset int                       `json:"next_offset"`
+	HasMore    bool                      `json:"has_more"`
 }
 
 type communityMemberResponse struct {
@@ -98,11 +110,13 @@ type communityMemberUserResponse struct {
 }
 
 type listCommunityManagePostsResponse struct {
-	Community communityResponse             `json:"community"`
-	Posts     []communityManagePostResponse `json:"posts"`
-	Status    string                        `json:"status"`
-	Limit     int                           `json:"limit"`
-	Offset    int                           `json:"offset"`
+	Community  communityResponse             `json:"community"`
+	Posts      []communityManagePostResponse `json:"posts"`
+	Status     string                        `json:"status"`
+	Limit      int                           `json:"limit"`
+	Offset     int                           `json:"offset"`
+	NextOffset int                           `json:"next_offset"`
+	HasMore    bool                          `json:"has_more"`
 }
 
 type communityManagePostResponse struct {
@@ -117,11 +131,13 @@ type communityManagePostResponse struct {
 }
 
 type listCommunityManageCommentsResponse struct {
-	Community communityResponse                `json:"community"`
-	Comments  []communityManageCommentResponse `json:"comments"`
-	Status    string                           `json:"status"`
-	Limit     int                              `json:"limit"`
-	Offset    int                              `json:"offset"`
+	Community  communityResponse                `json:"community"`
+	Comments   []communityManageCommentResponse `json:"comments"`
+	Status     string                           `json:"status"`
+	Limit      int                              `json:"limit"`
+	Offset     int                              `json:"offset"`
+	NextOffset int                              `json:"next_offset"`
+	HasMore    bool                             `json:"has_more"`
 }
 
 type communityManageCommentResponse struct {
@@ -136,11 +152,13 @@ type communityManageCommentResponse struct {
 }
 
 type listCommunityManageReportsResponse struct {
-	Community communityResponse               `json:"community"`
-	Reports   []communityManageReportResponse `json:"reports"`
-	Status    string                          `json:"status"`
-	Limit     int                             `json:"limit"`
-	Offset    int                             `json:"offset"`
+	Community  communityResponse               `json:"community"`
+	Reports    []communityManageReportResponse `json:"reports"`
+	Status     string                          `json:"status"`
+	Limit      int                             `json:"limit"`
+	Offset     int                             `json:"offset"`
+	NextOffset int                             `json:"next_offset"`
+	HasMore    bool                            `json:"has_more"`
 }
 
 type communityManageReportResponse struct {
@@ -210,6 +228,35 @@ type updateCommunityManageSettingsRequest struct {
 	Description string `json:"description"`
 }
 
+type writeCommunityModeratorRequest struct {
+	Username string `json:"username" binding:"required"`
+}
+
+type createCommunityOwnerTransferRequest struct {
+	Username string `json:"username" binding:"required"`
+}
+
+type communityMemberMutationResponse struct {
+	Community communityResponse       `json:"community"`
+	Member    communityMemberResponse `json:"member"`
+}
+
+type communityOwnerTransferResponse struct {
+	ID          string     `json:"id"`
+	CommunityID string     `json:"community_id"`
+	FromUserID  string     `json:"from_user_id"`
+	ToUserID    string     `json:"to_user_id"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	AcceptedAt  *time.Time `json:"accepted_at"`
+}
+
+type communityOwnerTransferMutationResponse struct {
+	Community communityResponse              `json:"community"`
+	Transfer  communityOwnerTransferResponse `json:"transfer"`
+}
+
 type writeCommunityRuleRequest struct {
 	Title    string `json:"title" binding:"required"`
 	Body     string `json:"body"`
@@ -244,6 +291,8 @@ type listCommunityApplicationsResponse struct {
 	Applications []communityApplicationResponse `json:"applications"`
 	Limit        int                            `json:"limit"`
 	Offset       int                            `json:"offset"`
+	NextOffset   int                            `json:"next_offset"`
+	HasMore      bool                           `json:"has_more"`
 }
 
 type getCommunityApplicationResponse struct {
@@ -283,9 +332,10 @@ type communityResponse struct {
 }
 
 type communityViewerPermissionsResponse struct {
-	CanPost     bool `json:"can_post"`
-	CanManage   bool `json:"can_manage"`
-	CanModerate bool `json:"can_moderate"`
+	CanPost               bool `json:"can_post"`
+	CanManage             bool `json:"can_manage"`
+	CanModerate           bool `json:"can_moderate"`
+	PlatformOwnerOverride bool `json:"platform_owner_override"`
 }
 
 func NewHandler(communities CommunityReadUseCase, applications CommunityApplicationUseCase) *Handler {
@@ -326,6 +376,10 @@ func RegisterManageRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities/:slug/manage/comments", handler.ListCommunityManageComments)
 	group.GET("/communities/:slug/manage/reports", handler.ListCommunityManageReports)
 	group.GET("/communities/:slug/manage/members", handler.ListCommunityMembers)
+	group.POST("/communities/:slug/manage/moderators", handler.AddCommunityModerator)
+	group.DELETE("/communities/:slug/manage/moderators/:user_id", handler.RemoveCommunityModerator)
+	group.POST("/communities/:slug/manage/owner-transfer", handler.CreateCommunityOwnerTransfer)
+	group.POST("/communities/:slug/manage/owner-transfer/:transfer_id/accept", handler.AcceptCommunityOwnerTransfer)
 	group.GET("/communities/:slug/manage/settings", handler.GetCommunityManageSettings)
 	group.PATCH("/communities/:slug/manage/settings", handler.UpdateCommunityManageSettings)
 	group.GET("/communities/:slug/manage/rules", handler.ListCommunityRules)
@@ -336,9 +390,23 @@ func RegisterManageRoutes(group *gin.RouterGroup, handler *Handler) {
 
 func (h *Handler) ListCommunities(c *gin.Context) {
 	userID, _ := authcontext.CurrentUserID(c.Request.Context())
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
 
 	result, err := h.communities.ListCommunities(c.Request.Context(), communityusecase.ListCommunitiesInput{
 		ViewerID: userID,
+		Limit:    limit,
+		Offset:   offset,
 	})
 	if err != nil {
 		_ = c.Error(err)
@@ -348,6 +416,10 @@ func (h *Handler) ListCommunities(c *gin.Context) {
 
 	response := listCommunitiesResponse{
 		Communities: make([]communityResponse, 0, len(result.Communities)),
+		Limit:       result.Limit,
+		Offset:      result.Offset,
+		NextOffset:  result.NextOffset,
+		HasMore:     result.HasMore,
 	}
 	for _, community := range result.Communities {
 		response.Communities = append(response.Communities, toCommunityResponse(community))
@@ -450,6 +522,8 @@ func (h *Handler) ListFollowedCommunities(c *gin.Context) {
 		Communities: make([]communityResponse, 0, len(result.Communities)),
 		Limit:       result.Limit,
 		Offset:      result.Offset,
+		NextOffset:  result.NextOffset,
+		HasMore:     result.HasMore,
 	}
 	for _, community := range result.Communities {
 		response.Communities = append(response.Communities, toCommunityResponse(community))
@@ -514,16 +588,122 @@ func (h *Handler) ListCommunityMembers(c *gin.Context) {
 	}
 
 	response := listCommunityMembersResponse{
-		Community: toCommunityResponse(result.Community),
-		Members:   make([]communityMemberResponse, 0, len(result.Members)),
-		Limit:     result.Limit,
-		Offset:    result.Offset,
+		Community:  toCommunityResponse(result.Community),
+		Members:    make([]communityMemberResponse, 0, len(result.Members)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, member := range result.Members {
 		response.Members = append(response.Members, toCommunityMemberResponse(member))
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) AddCommunityModerator(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	var req writeCommunityModeratorRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid community moderator request"))
+		c.Abort()
+		return
+	}
+	result, err := h.communities.AddCommunityModerator(c.Request.Context(), communityusecase.AddCommunityModeratorInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		Username: req.Username,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityMemberMutationResponse{
+		Community: toCommunityResponse(result.Community),
+		Member:    toCommunityMemberResponse(result.Member),
+	})
+}
+
+func (h *Handler) RemoveCommunityModerator(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	result, err := h.communities.RemoveCommunityModerator(c.Request.Context(), communityusecase.RemoveCommunityModeratorInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		UserID:   c.Param("user_id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityMemberMutationResponse{
+		Community: toCommunityResponse(result.Community),
+		Member:    toCommunityMemberResponse(result.Member),
+	})
+}
+
+func (h *Handler) CreateCommunityOwnerTransfer(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	var req createCommunityOwnerTransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid community owner transfer request"))
+		c.Abort()
+		return
+	}
+	result, err := h.communities.CreateCommunityOwnerTransfer(c.Request.Context(), communityusecase.CreateCommunityOwnerTransferInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+		Username: req.Username,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityOwnerTransferMutationResponse{
+		Community: toCommunityResponse(result.Community),
+		Transfer:  toCommunityOwnerTransferResponse(result.Transfer),
+	})
+}
+
+func (h *Handler) AcceptCommunityOwnerTransfer(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	result, err := h.communities.AcceptCommunityOwnerTransfer(c.Request.Context(), communityusecase.AcceptCommunityOwnerTransferInput{
+		Slug:       c.Param("slug"),
+		ViewerID:   userID,
+		TransferID: c.Param("transfer_id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityOwnerTransferMutationResponse{
+		Community: toCommunityResponse(result.Community),
+		Transfer:  toCommunityOwnerTransferResponse(result.Transfer),
+	})
 }
 
 func (h *Handler) ListCommunityManagePosts(c *gin.Context) {
@@ -560,11 +740,13 @@ func (h *Handler) ListCommunityManagePosts(c *gin.Context) {
 	}
 
 	response := listCommunityManagePostsResponse{
-		Community: toCommunityResponse(result.Community),
-		Posts:     make([]communityManagePostResponse, 0, len(result.Posts)),
-		Status:    result.Status,
-		Limit:     result.Limit,
-		Offset:    result.Offset,
+		Community:  toCommunityResponse(result.Community),
+		Posts:      make([]communityManagePostResponse, 0, len(result.Posts)),
+		Status:     result.Status,
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, post := range result.Posts {
 		response.Posts = append(response.Posts, toCommunityManagePostResponse(post))
@@ -606,11 +788,13 @@ func (h *Handler) ListCommunityManageComments(c *gin.Context) {
 	}
 
 	response := listCommunityManageCommentsResponse{
-		Community: toCommunityResponse(result.Community),
-		Comments:  make([]communityManageCommentResponse, 0, len(result.Comments)),
-		Status:    result.Status,
-		Limit:     result.Limit,
-		Offset:    result.Offset,
+		Community:  toCommunityResponse(result.Community),
+		Comments:   make([]communityManageCommentResponse, 0, len(result.Comments)),
+		Status:     result.Status,
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, comment := range result.Comments {
 		response.Comments = append(response.Comments, toCommunityManageCommentResponse(comment))
@@ -652,11 +836,13 @@ func (h *Handler) ListCommunityManageReports(c *gin.Context) {
 	}
 
 	response := listCommunityManageReportsResponse{
-		Community: toCommunityResponse(result.Community),
-		Reports:   make([]communityManageReportResponse, 0, len(result.Reports)),
-		Status:    result.Status,
-		Limit:     result.Limit,
-		Offset:    result.Offset,
+		Community:  toCommunityResponse(result.Community),
+		Reports:    make([]communityManageReportResponse, 0, len(result.Reports)),
+		Status:     result.Status,
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, report := range result.Reports {
 		response.Reports = append(response.Reports, toCommunityManageReportResponse(report))
@@ -909,6 +1095,8 @@ func (h *Handler) ListCommunityApplications(c *gin.Context) {
 		Applications: make([]communityApplicationResponse, 0, len(result.Applications)),
 		Limit:        result.Limit,
 		Offset:       result.Offset,
+		NextOffset:   result.NextOffset,
+		HasMore:      result.HasMore,
 	}
 	for _, application := range result.Applications {
 		response.Applications = append(response.Applications, toCommunityApplicationResponse(application))
@@ -1023,9 +1211,10 @@ func toCommunityResponse(community communityusecase.Community) communityResponse
 		ViewerIsFollowing: community.ViewerIsFollowing,
 		ViewerRole:        community.ViewerRole,
 		ViewerPermissions: communityViewerPermissionsResponse{
-			CanPost:     community.ViewerPermissions.CanPost,
-			CanManage:   community.ViewerPermissions.CanManage,
-			CanModerate: community.ViewerPermissions.CanModerate,
+			CanPost:               community.ViewerPermissions.CanPost,
+			CanManage:             community.ViewerPermissions.CanManage,
+			CanModerate:           community.ViewerPermissions.CanModerate,
+			PlatformOwnerOverride: community.ViewerPermissions.PlatformOwnerOverride,
 		},
 		CreatedAt: community.CreatedAt,
 		UpdatedAt: community.UpdatedAt,
@@ -1094,6 +1283,19 @@ func toCommunityMemberResponse(member communityusecase.CommunityMember) communit
 		Status:    member.Status,
 		CreatedAt: member.CreatedAt,
 		UpdatedAt: member.UpdatedAt,
+	}
+}
+
+func toCommunityOwnerTransferResponse(transfer communityusecase.CommunityOwnerTransfer) communityOwnerTransferResponse {
+	return communityOwnerTransferResponse{
+		ID:          transfer.ID,
+		CommunityID: transfer.CommunityID,
+		FromUserID:  transfer.FromUserID,
+		ToUserID:    transfer.ToUserID,
+		Status:      transfer.Status,
+		CreatedAt:   transfer.CreatedAt,
+		UpdatedAt:   transfer.UpdatedAt,
+		AcceptedAt:  transfer.AcceptedAt,
 	}
 }
 

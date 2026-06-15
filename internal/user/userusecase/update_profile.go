@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -20,6 +21,8 @@ type ProfileRepository interface {
 	UpdateProfile(ctx context.Context, user userdomain.User) error
 	CountVisiblePostsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error)
 	CountVisibleCommentsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error)
+	CountFollowers(ctx context.Context, userID userdomain.UserID) (int, error)
+	CountFollowing(ctx context.Context, userID userdomain.UserID) (int, error)
 }
 
 type UpdateProfileInput struct {
@@ -116,8 +119,24 @@ func (uc *UpdateProfileUseCase) UpdateProfile(ctx context.Context, input UpdateP
 	if err != nil {
 		return UpdateProfileResult{}, fmt.Errorf("count public user comments: %w", err)
 	}
+	followerCount, err := uc.users.CountFollowers(ctx, user.ID())
+	if err != nil {
+		return UpdateProfileResult{}, fmt.Errorf("count user followers: %w", err)
+	}
+	followingCount, err := uc.users.CountFollowing(ctx, user.ID())
+	if err != nil {
+		return UpdateProfileResult{}, fmt.Errorf("count followed users: %w", err)
+	}
 
 	return UpdateProfileResult{
-		User: buildPublicUser(user, postCount, commentCount),
+		User: buildPublicUser(
+			user,
+			postCount,
+			commentCount,
+			followerCount,
+			followingCount,
+			false,
+			progressionusecase.BuildProgression(progressionusecase.ProgressionRecord{UserID: user.ID().String()}),
+		),
 	}, nil
 }

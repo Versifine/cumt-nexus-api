@@ -1,4 +1,4 @@
-﻿package communityusecase
+package communityusecase
 
 import (
 	"context"
@@ -34,15 +34,20 @@ type CommunityReadUseCase struct {
 	stats          CommunityStatsRepository
 	follows        CommunityFollowRepository
 	memberships    CommunityMembershipReadRepository
+	membershipOps  CommunityMembershipRepository
 	managePosts    CommunityManagePostRepository
 	manageComments CommunityManageCommentRepository
 	manageReports  CommunityManageReportRepository
 	rules          CommunityRuleRepository
+	platformOwners PlatformOwnerRepository
+	transactions   CommunityTransactionManager
 	now            func() time.Time
 }
 
 type ListCommunitiesInput struct {
 	ViewerID userdomain.UserID
+	Limit    int
+	Offset   int
 }
 
 type GetCommunityInput struct {
@@ -149,12 +154,18 @@ type DeleteCommunityRuleInput struct {
 
 type ListCommunitiesResult struct {
 	Communities []Community
+	Limit       int
+	Offset      int
+	NextOffset  int
+	HasMore     bool
 }
 
 type ListFollowedCommunitiesResult struct {
 	Communities []Community
 	Limit       int
 	Offset      int
+	NextOffset  int
+	HasMore     bool
 }
 
 type GetCommunityResult struct {
@@ -174,34 +185,42 @@ type GetCommunityManageContextResult struct {
 }
 
 type ListCommunityMembersResult struct {
-	Community Community
-	Members   []CommunityMember
-	Limit     int
-	Offset    int
+	Community  Community
+	Members    []CommunityMember
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type ListCommunityManagePostsResult struct {
-	Community Community
-	Posts     []CommunityManagePost
-	Status    string
-	Limit     int
-	Offset    int
+	Community  Community
+	Posts      []CommunityManagePost
+	Status     string
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type ListCommunityManageCommentsResult struct {
-	Community Community
-	Comments  []CommunityManageComment
-	Status    string
-	Limit     int
-	Offset    int
+	Community  Community
+	Comments   []CommunityManageComment
+	Status     string
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type ListCommunityManageReportsResult struct {
-	Community Community
-	Reports   []CommunityManageReport
-	Status    string
-	Limit     int
-	Offset    int
+	Community  Community
+	Reports    []CommunityManageReport
+	Status     string
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type GetCommunityManageSettingsResult struct {
@@ -337,9 +356,10 @@ type CommunityStats struct {
 }
 
 type ViewerPermissions struct {
-	CanPost     bool
-	CanManage   bool
-	CanModerate bool
+	CanPost               bool
+	CanManage             bool
+	CanModerate           bool
+	PlatformOwnerOverride bool
 }
 
 func NewPublicCommunityBootstrapUseCase(communities CommunityRepository, now func() time.Time) *PublicCommunityBootstrapUseCase {
@@ -375,6 +395,14 @@ func NewCommunityReadUseCase(communities CommunityRepository) *CommunityReadUseC
 
 func (uc *CommunityReadUseCase) SetMembershipReader(memberships CommunityMembershipReadRepository) {
 	uc.memberships = memberships
+	if ops, ok := memberships.(CommunityMembershipRepository); ok {
+		uc.membershipOps = ops
+	}
+}
+
+func (uc *CommunityReadUseCase) SetMembershipRepository(memberships CommunityMembershipRepository) {
+	uc.memberships = memberships
+	uc.membershipOps = memberships
 }
 
 func (uc *CommunityReadUseCase) SetManageContentReaders(posts CommunityManagePostRepository, comments CommunityManageCommentRepository, reports CommunityManageReportRepository) {
@@ -389,6 +417,14 @@ func (uc *CommunityReadUseCase) SetRuleRepository(rules CommunityRuleRepository)
 
 func (uc *CommunityReadUseCase) SetSettingsRepository(settings CommunitySettingsRepository) {
 	uc.settings = settings
+}
+
+func (uc *CommunityReadUseCase) SetPlatformOwnerRepository(platformOwners PlatformOwnerRepository) {
+	uc.platformOwners = platformOwners
+}
+
+func (uc *CommunityReadUseCase) SetTransactionManager(transactions CommunityTransactionManager) {
+	uc.transactions = transactions
 }
 
 func (uc *PublicCommunityBootstrapUseCase) EnsurePublicCommunity(ctx context.Context) error {
@@ -410,11 +446,15 @@ func (uc *PublicCommunityBootstrapUseCase) EnsurePublicCommunity(ctx context.Con
 	if err != nil {
 		return err
 	}
+	description, err := communitydomain.NewCommunityDescription(publicCommunityDescription)
+	if err != nil {
+		return err
+	}
 	community, err := communitydomain.NewSystemCommunity(
 		communitydomain.NewGeneratedCommunityID(),
 		slug,
 		name,
-		communitydomain.NewCommunityDescription(publicCommunityDescription),
+		description,
 		now,
 	)
 	if err != nil {
@@ -441,13 +481,22 @@ func (uc *PublicCommunityBootstrapUseCase) validatePublicCommunityAfterConflict(
 }
 
 func (uc *CommunityReadUseCase) ListCommunities(ctx context.Context, input ListCommunitiesInput) (ListCommunitiesResult, error) {
-	communities, err := uc.communities.ListActivePublic(ctx)
+	limit, offset, err := normalizeCommunityListPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListCommunitiesResult{}, err
+	}
+	communities, err := uc.communities.ListActivePublic(ctx, limit+1, offset)
 	if err != nil {
 		return ListCommunitiesResult{}, fmt.Errorf("list active public communities: %w", err)
 	}
+	communities, hasMore := trimCommunityPage(communities, limit)
 
 	result := ListCommunitiesResult{
 		Communities: make([]Community, 0, len(communities)),
+		Limit:       limit,
+		Offset:      offset,
+		NextOffset:  nextOffset(offset, len(communities)),
+		HasMore:     hasMore,
 	}
 	stats, err := uc.loadCommunityStats(ctx, communities)
 	if err != nil {
@@ -549,10 +598,11 @@ func (uc *CommunityReadUseCase) ListFollowedCommunities(ctx context.Context, inp
 		return ListFollowedCommunitiesResult{}, err
 	}
 
-	communities, err := uc.follows.ListFollowedActivePublic(ctx, input.UserID, limit, offset)
+	communities, err := uc.follows.ListFollowedActivePublic(ctx, input.UserID, limit+1, offset)
 	if err != nil {
 		return ListFollowedCommunitiesResult{}, fmt.Errorf("list followed communities: %w", err)
 	}
+	communities, hasMore := trimCommunityPage(communities, limit)
 	stats, err := uc.loadCommunityStats(ctx, communities)
 	if err != nil {
 		return ListFollowedCommunitiesResult{}, err
@@ -570,6 +620,8 @@ func (uc *CommunityReadUseCase) ListFollowedCommunities(ctx context.Context, inp
 		Communities: make([]Community, 0, len(communities)),
 		Limit:       limit,
 		Offset:      offset,
+		NextOffset:  nextOffset(offset, len(communities)),
+		HasMore:     hasMore,
 	}
 	for _, community := range communities {
 		result.Communities = append(result.Communities, toCommunityDTO(community, stats[community.ID()], followViews[community.ID()], roleViews[community.ID()], input.UserID))
@@ -623,16 +675,19 @@ func (uc *CommunityReadUseCase) ListCommunityMembers(ctx context.Context, input 
 	if err != nil {
 		return ListCommunityMembersResult{}, err
 	}
-	members, err := uc.memberships.ListActiveMembers(ctx, community.ID(), limit, offset)
+	members, err := uc.memberships.ListActiveMembers(ctx, community.ID(), limit+1, offset)
 	if err != nil {
 		return ListCommunityMembersResult{}, fmt.Errorf("list community members: %w", err)
 	}
+	members, hasMore := trimCommunityMembersPage(members, limit)
 
 	return ListCommunityMembersResult{
-		Community: toCommunityDTO(*community, stats[community.ID()], followViews[community.ID()], roleView, input.ViewerID),
-		Members:   members,
-		Limit:     limit,
-		Offset:    offset,
+		Community:  toCommunityDTO(*community, stats[community.ID()], followViews[community.ID()], roleView, input.ViewerID),
+		Members:    members,
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: nextOffset(offset, len(members)),
+		HasMore:    hasMore,
 	}, nil
 }
 
@@ -659,17 +714,20 @@ func (uc *CommunityReadUseCase) ListCommunityManagePosts(ctx context.Context, in
 	if err != nil {
 		return ListCommunityManagePostsResult{}, err
 	}
-	posts, err := uc.managePosts.ListPostsByCommunityForManagement(ctx, community.ID(), status, limit, offset)
+	posts, err := uc.managePosts.ListPostsByCommunityForManagement(ctx, community.ID(), status, limit+1, offset)
 	if err != nil {
 		return ListCommunityManagePostsResult{}, fmt.Errorf("list community manage posts: %w", err)
 	}
+	posts, hasMore := trimPostsPage(posts, limit)
 
 	result := ListCommunityManagePostsResult{
-		Community: communityDTO,
-		Posts:     make([]CommunityManagePost, 0, len(posts)),
-		Status:    statusLabel,
-		Limit:     limit,
-		Offset:    offset,
+		Community:  communityDTO,
+		Posts:      make([]CommunityManagePost, 0, len(posts)),
+		Status:     statusLabel,
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: nextOffset(offset, len(posts)),
+		HasMore:    hasMore,
 	}
 	for _, post := range posts {
 		result.Posts = append(result.Posts, toCommunityManagePostDTO(post))
@@ -700,17 +758,20 @@ func (uc *CommunityReadUseCase) ListCommunityManageComments(ctx context.Context,
 	if err != nil {
 		return ListCommunityManageCommentsResult{}, err
 	}
-	comments, err := uc.manageComments.ListCommentsByCommunityForManagement(ctx, community.ID(), status, limit, offset)
+	comments, err := uc.manageComments.ListCommentsByCommunityForManagement(ctx, community.ID(), status, limit+1, offset)
 	if err != nil {
 		return ListCommunityManageCommentsResult{}, fmt.Errorf("list community manage comments: %w", err)
 	}
+	comments, hasMore := trimCommentsPage(comments, limit)
 
 	result := ListCommunityManageCommentsResult{
-		Community: communityDTO,
-		Comments:  make([]CommunityManageComment, 0, len(comments)),
-		Status:    statusLabel,
-		Limit:     limit,
-		Offset:    offset,
+		Community:  communityDTO,
+		Comments:   make([]CommunityManageComment, 0, len(comments)),
+		Status:     statusLabel,
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: nextOffset(offset, len(comments)),
+		HasMore:    hasMore,
 	}
 	for _, comment := range comments {
 		result.Comments = append(result.Comments, toCommunityManageCommentDTO(comment))
@@ -741,17 +802,20 @@ func (uc *CommunityReadUseCase) ListCommunityManageReports(ctx context.Context, 
 	if err != nil {
 		return ListCommunityManageReportsResult{}, err
 	}
-	records, err := uc.manageReports.ListReportsByCommunityForManagement(ctx, community.ID(), status, limit, offset)
+	records, err := uc.manageReports.ListReportsByCommunityForManagement(ctx, community.ID(), status, limit+1, offset)
 	if err != nil {
 		return ListCommunityManageReportsResult{}, fmt.Errorf("list community manage reports: %w", err)
 	}
+	records, hasMore := trimReportRecordsPage(records, limit)
 
 	result := ListCommunityManageReportsResult{
-		Community: communityDTO,
-		Reports:   make([]CommunityManageReport, 0, len(records)),
-		Status:    status.String(),
-		Limit:     limit,
-		Offset:    offset,
+		Community:  communityDTO,
+		Reports:    make([]CommunityManageReport, 0, len(records)),
+		Status:     status.String(),
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: nextOffset(offset, len(records)),
+		HasMore:    hasMore,
 	}
 	for _, record := range records {
 		result.Reports = append(result.Reports, toCommunityManageReportDTO(record))
@@ -785,7 +849,7 @@ func (uc *CommunityReadUseCase) UpdateCommunityManageSettings(ctx context.Contex
 	if err != nil {
 		return UpdateCommunityManageSettingsResult{}, err
 	}
-	if roleView.role != communitydomain.MembershipRoleOwner {
+	if !canManageCommunity(roleView) {
 		return UpdateCommunityManageSettingsResult{}, apperr.New(apperr.CodeForbidden, "community owner required")
 	}
 	if uc.settings == nil {
@@ -795,7 +859,10 @@ func (uc *CommunityReadUseCase) UpdateCommunityManageSettings(ctx context.Contex
 	if err != nil {
 		return UpdateCommunityManageSettingsResult{}, err
 	}
-	description := communitydomain.NewCommunityDescription(input.Description)
+	description, err := communitydomain.NewCommunityDescription(input.Description)
+	if err != nil {
+		return UpdateCommunityManageSettingsResult{}, err
+	}
 	if err := community.UpdateDetails(name, description, uc.now().UTC()); err != nil {
 		return UpdateCommunityManageSettingsResult{}, err
 	}
@@ -856,12 +923,16 @@ func (uc *CommunityReadUseCase) CreateCommunityRule(ctx context.Context, input C
 	if err != nil {
 		return CreateCommunityRuleResult{}, err
 	}
+	body, err := communitydomain.NewCommunityRuleBody(input.Body)
+	if err != nil {
+		return CreateCommunityRuleResult{}, err
+	}
 	position, err := communitydomain.NewCommunityRulePosition(input.Position)
 	if err != nil {
 		return CreateCommunityRuleResult{}, err
 	}
 	now := uc.now().UTC()
-	rule, err := communitydomain.NewCommunityRule(communitydomain.NewGeneratedCommunityRuleID(), community.ID(), title, communitydomain.NewCommunityRuleBody(input.Body), position, input.ViewerID, now)
+	rule, err := communitydomain.NewCommunityRule(communitydomain.NewGeneratedCommunityRuleID(), community.ID(), title, body, position, input.ViewerID, now)
 	if err != nil {
 		return CreateCommunityRuleResult{}, err
 	}
@@ -904,11 +975,15 @@ func (uc *CommunityReadUseCase) UpdateCommunityRule(ctx context.Context, input U
 	if err != nil {
 		return UpdateCommunityRuleResult{}, err
 	}
+	body, err := communitydomain.NewCommunityRuleBody(input.Body)
+	if err != nil {
+		return UpdateCommunityRuleResult{}, err
+	}
 	position, err := communitydomain.NewCommunityRulePosition(input.Position)
 	if err != nil {
 		return UpdateCommunityRuleResult{}, err
 	}
-	if err := rule.Update(title, communitydomain.NewCommunityRuleBody(input.Body), position, input.ViewerID, uc.now().UTC()); err != nil {
+	if err := rule.Update(title, body, position, input.ViewerID, uc.now().UTC()); err != nil {
 		return UpdateCommunityRuleResult{}, err
 	}
 	if err := uc.rules.UpdateRule(ctx, *rule); err != nil {
@@ -1026,7 +1101,8 @@ type communityFollowView struct {
 }
 
 type communityRoleView struct {
-	role communitydomain.MembershipRole
+	role                  communitydomain.MembershipRole
+	platformOwnerOverride bool
 }
 
 func (uc *CommunityReadUseCase) loadCommunityFollowViews(ctx context.Context, communities []communitydomain.Community, viewerID userdomain.UserID) (map[communitydomain.CommunityID]communityFollowView, error) {
@@ -1051,7 +1127,7 @@ func (uc *CommunityReadUseCase) loadCommunityFollowViews(ctx context.Context, co
 
 func (uc *CommunityReadUseCase) loadCommunityRoleViews(ctx context.Context, communities []communitydomain.Community, viewerID userdomain.UserID) (map[communitydomain.CommunityID]communityRoleView, error) {
 	views := make(map[communitydomain.CommunityID]communityRoleView, len(communities))
-	if len(communities) == 0 || uc.memberships == nil || isBlankUserID(viewerID) {
+	if len(communities) == 0 || isBlankUserID(viewerID) {
 		return views, nil
 	}
 
@@ -1059,12 +1135,27 @@ func (uc *CommunityReadUseCase) loadCommunityRoleViews(ctx context.Context, comm
 	for _, community := range communities {
 		communityIDs = append(communityIDs, community.ID())
 	}
-	roles, err := uc.memberships.FindActiveRolesByUser(ctx, communityIDs, viewerID)
-	if err != nil {
-		return nil, fmt.Errorf("find community roles by viewer: %w", err)
+	if uc.memberships != nil {
+		roles, err := uc.memberships.FindActiveRolesByUser(ctx, communityIDs, viewerID)
+		if err != nil {
+			return nil, fmt.Errorf("find community roles by viewer: %w", err)
+		}
+		for communityID, role := range roles {
+			views[communityID] = communityRoleView{role: role}
+		}
 	}
-	for communityID, role := range roles {
-		views[communityID] = communityRoleView{role: role}
+	if uc.platformOwners != nil {
+		isOwner, err := uc.platformOwners.IsPlatformOwner(ctx, viewerID)
+		if err != nil {
+			return nil, fmt.Errorf("check platform owner override: %w", err)
+		}
+		if isOwner {
+			for _, communityID := range communityIDs {
+				view := views[communityID]
+				view.platformOwnerOverride = true
+				views[communityID] = view
+			}
+		}
 	}
 	return views, nil
 }
@@ -1097,7 +1188,7 @@ func (uc *CommunityReadUseCase) findReadableCommunityBySlug(ctx context.Context,
 }
 
 func (uc *CommunityReadUseCase) findManageableCommunityBySlug(ctx context.Context, rawSlug string, viewerID userdomain.UserID) (*communitydomain.Community, communityRoleView, error) {
-	if uc.memberships == nil {
+	if uc.memberships == nil && uc.platformOwners == nil {
 		return nil, communityRoleView{}, apperr.New(apperr.CodeInternal, "community memberships are not configured")
 	}
 	community, err := uc.findReadableCommunityBySlug(ctx, rawSlug)
@@ -1109,7 +1200,7 @@ func (uc *CommunityReadUseCase) findManageableCommunityBySlug(ctx context.Contex
 		return nil, communityRoleView{}, err
 	}
 	roleView := roleViews[community.ID()]
-	if !canModerateCommunity(roleView.role) {
+	if !canModerateCommunity(roleView) {
 		return nil, communityRoleView{}, apperr.New(apperr.CodeForbidden, "community moderator required")
 	}
 	return community, roleView, nil
@@ -1129,6 +1220,45 @@ func normalizeCommunityListPagination(limit int, offset int) (int, int, error) {
 		limit = maxCommunityListLimit
 	}
 	return limit, offset, nil
+}
+
+func nextOffset(offset int, itemCount int) int {
+	return offset + itemCount
+}
+
+func trimCommunityPage(items []communitydomain.Community, limit int) ([]communitydomain.Community, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
+}
+
+func trimCommunityMembersPage(items []CommunityMember, limit int) ([]CommunityMember, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
+}
+
+func trimPostsPage(items []postdomain.Post, limit int) ([]postdomain.Post, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
+}
+
+func trimCommentsPage(items []commentdomain.Comment, limit int) ([]commentdomain.Comment, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
+}
+
+func trimReportRecordsPage(items []moderationusecase.ContentReportRecord, limit int) ([]moderationusecase.ContentReportRecord, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
 }
 
 func parseManagePostStatus(raw string) (*postdomain.PostStatus, string, error) {
@@ -1176,7 +1306,7 @@ func toCommunityDTO(community communitydomain.Community, stats CommunityStats, f
 		PostCount:         stats.PostCount,
 		ViewerIsFollowing: followView.isFollowing,
 		ViewerRole:        roleView.role.String(),
-		ViewerPermissions: communityViewerPermissions(community, roleView.role, viewerID),
+		ViewerPermissions: communityViewerPermissions(community, roleView, viewerID),
 		CreatedAt:         community.CreatedAt(),
 		UpdatedAt:         community.UpdatedAt(),
 	}
@@ -1204,19 +1334,24 @@ func toCommunityRuleDTO(rule communitydomain.CommunityRule) CommunityRule {
 	}
 }
 
-func communityViewerPermissions(community communitydomain.Community, role communitydomain.MembershipRole, viewerID userdomain.UserID) ViewerPermissions {
+func communityViewerPermissions(community communitydomain.Community, roleView communityRoleView, viewerID userdomain.UserID) ViewerPermissions {
 	if isBlankUserID(viewerID) {
 		return ViewerPermissions{}
 	}
 	return ViewerPermissions{
-		CanPost:     isPostableCommunity(&community),
-		CanManage:   role == communitydomain.MembershipRoleOwner,
-		CanModerate: canModerateCommunity(role),
+		CanPost:               isPostableCommunity(&community),
+		CanManage:             canManageCommunity(roleView),
+		CanModerate:           canModerateCommunity(roleView),
+		PlatformOwnerOverride: roleView.platformOwnerOverride,
 	}
 }
 
-func canModerateCommunity(role communitydomain.MembershipRole) bool {
-	return role == communitydomain.MembershipRoleOwner || role == communitydomain.MembershipRoleModerator
+func canManageCommunity(roleView communityRoleView) bool {
+	return roleView.platformOwnerOverride || roleView.role == communitydomain.MembershipRoleOwner
+}
+
+func canModerateCommunity(roleView communityRoleView) bool {
+	return canManageCommunity(roleView) || roleView.role == communitydomain.MembershipRoleModerator
 }
 
 func toCommunityManagePostDTO(post postdomain.Post) CommunityManagePost {

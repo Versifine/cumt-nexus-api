@@ -7,6 +7,7 @@ type UserStatus string
 const (
 	active   UserStatus = "active"
 	disabled UserStatus = "disabled"
+	deleted  UserStatus = "deleted"
 )
 
 func (us UserStatus) String() string {
@@ -19,6 +20,8 @@ func NewUserStatus(status string) (UserStatus, error) {
 		return active, nil
 	case "disabled":
 		return disabled, nil
+	case "deleted":
+		return deleted, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "invalid user status")
 	}

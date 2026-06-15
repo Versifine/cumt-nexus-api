@@ -137,6 +137,52 @@ func TestGetMyPointsRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestListMyPointTransactionsReturnsTransactions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	usecase := &fakeUseCase{
+		transactionsResult: effectusecase.ListMyPointTransactionsResult{
+			Transactions: []effectusecase.PointTransaction{{
+				ID:           "1f37d0f3-f559-4ee0-ae11-f60f258a1c9a",
+				UserID:       userID.String(),
+				Delta:        -10,
+				BalanceAfter: 90,
+				Reason:       "comment_effect",
+				SourceType:   "comment_effect",
+				SourceID:     "0df8a5e8-a7d5-47c5-9c24-05c9c1f4df36",
+				CreatedAt:    now,
+			}},
+			Limit:      20,
+			Offset:     5,
+			NextOffset: 6,
+			HasMore:    true,
+		},
+	}
+	router := newEffectTestRouter(usecase, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/point-transactions?limit=20&offset=5", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !usecase.transactionsCalled || usecase.transactionsInput.ActorID != userID || usecase.transactionsInput.Limit != 20 || usecase.transactionsInput.Offset != 5 {
+		t.Fatalf("unexpected transactions input: %#v", usecase.transactionsInput)
+	}
+	var response listMyPointTransactionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Transactions) != 1 || response.Transactions[0].Delta != -10 || response.NextOffset != 6 || !response.HasMore {
+		t.Fatalf("unexpected transactions response: %#v", response)
+	}
+}
+
 func TestApplyCommentEffectReturnsResult(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -218,6 +264,11 @@ type fakeUseCase struct {
 	pointsResult effectusecase.GetMyPointsResult
 	pointsErr    error
 
+	transactionsCalled bool
+	transactionsInput  effectusecase.ListMyPointTransactionsInput
+	transactionsResult effectusecase.ListMyPointTransactionsResult
+	transactionsErr    error
+
 	applyCalled bool
 	applyInput  effectusecase.ApplyCommentEffectInput
 	applyResult effectusecase.ApplyCommentEffectResult
@@ -235,6 +286,13 @@ func (f *fakeUseCase) GetMyPoints(ctx context.Context, input effectusecase.GetMy
 	f.pointsCalled = true
 	f.pointsInput = input
 	return f.pointsResult, f.pointsErr
+}
+
+func (f *fakeUseCase) ListMyPointTransactions(ctx context.Context, input effectusecase.ListMyPointTransactionsInput) (effectusecase.ListMyPointTransactionsResult, error) {
+	_ = ctx
+	f.transactionsCalled = true
+	f.transactionsInput = input
+	return f.transactionsResult, f.transactionsErr
 }
 
 func (f *fakeUseCase) ApplyCommentEffect(ctx context.Context, input effectusecase.ApplyCommentEffectInput) (effectusecase.ApplyCommentEffectResult, error) {

@@ -241,6 +241,43 @@ func TestPublishCommentRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestPublishCommentRejectsLockedPost(t *testing.T) {
+	now := time.Now().UTC()
+	basePost := mustPost(t, now)
+	lockedPost, err := postdomain.RehydratePostWithModerationState(
+		basePost.ID(),
+		basePost.CommunityID(),
+		basePost.AuthorID(),
+		basePost.Title(),
+		basePost.Body(),
+		basePost.Status(),
+		true,
+		false,
+		false,
+		false,
+		"",
+		basePost.CreatedAt(),
+		basePost.UpdatedAt(),
+	)
+	if err != nil {
+		t.Fatalf("RehydratePostWithModerationState returned error: %v", err)
+	}
+	uc := NewCommentUseCase(&fakeCommentRepository{}, &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return lockedPost, nil
+		},
+	}, time.Now)
+
+	_, err = uc.PublishComment(context.Background(), PublishCommentInput{
+		PostID:   lockedPost.ID().String(),
+		AuthorID: userdomain.NewGeneratedUserID(),
+		Body:     "Body",
+	})
+	if !hasAppCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict for locked post, got %v", err)
+	}
+}
+
 func TestPublishCommentRejectsParentFromDifferentPost(t *testing.T) {
 	post := mustPost(t, time.Now().UTC())
 	otherPost := mustPost(t, time.Now().UTC())
@@ -412,7 +449,7 @@ func TestListPostCommentsNormalizesPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPostComments returned error: %v", err)
 	}
-	if gotLimit != MaxCommentListLimit || result.Limit != MaxCommentListLimit {
+	if gotLimit != MaxCommentListLimit+1 || result.Limit != MaxCommentListLimit {
 		t.Fatalf("expected clamped limit %d, got repo=%d result=%d", MaxCommentListLimit, gotLimit, result.Limit)
 	}
 	if gotOffset != 5 || result.Offset != 5 {
@@ -492,6 +529,58 @@ func TestListPostCommentsReturnsVoteView(t *testing.T) {
 	}
 	if !comments.summarizeVotesCalled || !comments.findVotesCalled {
 		t.Fatal("expected comment vote summary and viewer lookups")
+	}
+}
+
+func TestListPostCommentsReturnsCommentEffects(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	applierID := userdomain.NewGeneratedUserID()
+	comment := mustComment(t, post.ID(), userdomain.NewGeneratedUserID(), nil, "Body", now)
+	comments := &fakeCommentRepository{
+		listVisibleByPostFunc: func(ctx context.Context, postID postdomain.PostID, limit int, offset int) ([]commentdomain.Comment, error) {
+			return []commentdomain.Comment{*comment}, nil
+		},
+		commentEffects: map[commentdomain.CommentID][]CommentEffectSummary{
+			comment.ID(): {{
+				ID:           "d9f1ff4d-8a69-4f0c-8c24-8f3b0b8994b4",
+				EffectID:     "sparkle",
+				Name:         "Sparkle",
+				AssetURL:     "https://example.com/sparkle.png",
+				AnimationKey: "sparkle",
+				AppliedByUser: postusecase.UserSummary{
+					ID:          applierID.String(),
+					Username:    "alice",
+					DisplayName: "Alice",
+					Badges:      []string{},
+				},
+				PointsSpent: 10,
+				CreatedAt:   now,
+			}},
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	uc := NewCommentUseCase(comments, posts, time.Now)
+
+	result, err := uc.ListPostComments(context.Background(), ListPostCommentsInput{
+		PostID: post.ID().String(),
+	})
+	if err != nil {
+		t.Fatalf("ListPostComments returned error: %v", err)
+	}
+	if !comments.listCommentEffectsCalled {
+		t.Fatal("expected comment effects to be loaded")
+	}
+	if len(result.Comments) != 1 || len(result.Comments[0].Effects) != 1 {
+		t.Fatalf("expected one comment effect, got %#v", result.Comments)
+	}
+	effect := result.Comments[0].Effects[0]
+	if effect.EffectID != "sparkle" || effect.Name != "Sparkle" || effect.AppliedByUser.Username != "alice" || effect.PointsSpent != 10 {
+		t.Fatalf("unexpected comment effect: %#v", effect)
 	}
 }
 
@@ -1109,10 +1198,12 @@ type fakeCommentRepository struct {
 	deleteVoteCalled          bool
 	summarizeVotesCalled      bool
 	findVotesCalled           bool
+	listCommentEffectsCalled  bool
 	replaceContentRefsCalled  bool
 	listContentRefsCalled     bool
 	voteSummaries             map[commentdomain.CommentID]votedomain.CommentVoteSummary
 	myVotes                   map[commentdomain.CommentID]votedomain.VoteValue
+	commentEffects            map[commentdomain.CommentID][]CommentEffectSummary
 }
 
 type fakeAttachmentRepository struct {
@@ -1224,6 +1315,14 @@ func (f *fakeCommentRepository) SummarizeCommentVotesByIDs(ctx context.Context, 
 		return map[commentdomain.CommentID]votedomain.CommentVoteSummary{}, nil
 	}
 	return f.voteSummaries, nil
+}
+
+func (f *fakeCommentRepository) ListCommentEffectsByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]CommentEffectSummary, error) {
+	f.listCommentEffectsCalled = true
+	if f.commentEffects == nil {
+		return map[commentdomain.CommentID][]CommentEffectSummary{}, nil
+	}
+	return f.commentEffects, nil
 }
 
 func (f *fakeCommentRepository) ReplaceCommentContentRefs(ctx context.Context, commentID commentdomain.CommentID, refs []postusecase.ContentRef, now time.Time) error {

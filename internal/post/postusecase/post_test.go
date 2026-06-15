@@ -351,7 +351,7 @@ func TestListCommunityPostsNormalizesPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCommunityPosts returned error: %v", err)
 	}
-	if gotLimit != MaxPostListLimit || result.Limit != MaxPostListLimit {
+	if gotLimit != MaxPostListLimit+1 || result.Limit != MaxPostListLimit {
 		t.Fatalf("expected clamped limit %d, got repo=%d result=%d", MaxPostListLimit, gotLimit, result.Limit)
 	}
 	if gotOffset != 5 || result.Offset != 5 {
@@ -478,7 +478,7 @@ func TestListLatestPostsReturnsVoteView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListLatestPosts returned error: %v", err)
 	}
-	if gotLimit != MaxPostListLimit || result.Limit != MaxPostListLimit {
+	if gotLimit != MaxPostListLimit+1 || result.Limit != MaxPostListLimit {
 		t.Fatalf("expected clamped limit %d, got repo=%d result=%d", MaxPostListLimit, gotLimit, result.Limit)
 	}
 	if gotOffset != 3 || result.Offset != 3 {
@@ -622,6 +622,69 @@ func TestListLatestPostsRecommendedPassesExplicitSort(t *testing.T) {
 	}
 	if gotSort != PostListSortBest {
 		t.Fatalf("expected explicit recommended sort %q, got %q", PostListSortBest, gotSort)
+	}
+}
+
+func TestListLatestPostsFollowingRequiresViewerAndUsesFollowingRepository(t *testing.T) {
+	viewerID := userdomain.NewGeneratedUserID()
+	post := mustPost(t, communitydomain.NewGeneratedCommunityID(), userdomain.NewGeneratedUserID(), "Following", time.Now().UTC())
+	var gotViewerID userdomain.UserID
+	var gotSort PostListSort
+	var gotLimit int
+	var gotOffset int
+	posts := &fakePostRepository{
+		listFollowingInPublicCommunitiesFunc: func(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+			gotViewerID = viewerID
+			gotSort = sort
+			gotLimit = limit
+			gotOffset = offset
+			return []postdomain.Post{*post}, nil
+		},
+		listVisibleInPublicCommunitiesFunc: func(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+			t.Fatal("following source should not use generic public list")
+			return nil, nil
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now)
+
+	result, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{
+		ViewerID: viewerID,
+		Source:   "following",
+		Limit:    20,
+		Offset:   5,
+	})
+	if err != nil {
+		t.Fatalf("ListLatestPosts returned error: %v", err)
+	}
+	if gotViewerID != viewerID {
+		t.Fatalf("expected viewer %q, got %q", viewerID.String(), gotViewerID.String())
+	}
+	if gotSort != PostListSortNew {
+		t.Fatalf("expected following default sort %q, got %q", PostListSortNew, gotSort)
+	}
+	if gotLimit != 21 || gotOffset != 5 {
+		t.Fatalf("expected repo pagination limit=21 offset=5, got limit=%d offset=%d", gotLimit, gotOffset)
+	}
+	if result.Limit != 20 || result.Offset != 5 || result.NextOffset != 6 || result.HasMore {
+		t.Fatalf("unexpected pagination result: %#v", result)
+	}
+	if len(result.Posts) != 1 || result.Posts[0].ID != post.ID().String() {
+		t.Fatalf("unexpected following posts: %#v", result.Posts)
+	}
+}
+
+func TestListLatestPostsFollowingRejectsAnonymousViewer(t *testing.T) {
+	posts := &fakePostRepository{
+		listFollowingInPublicCommunitiesFunc: func(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+			t.Fatal("following source should require authentication before repository access")
+			return nil, nil
+		},
+	}
+	uc := NewPostUseCase(posts, &fakeCommunityPolicy{}, time.Now)
+
+	_, err := uc.ListLatestPosts(context.Background(), ListLatestPostsInput{Source: "following"})
+	if !hasAppCode(err, apperr.CodeUnauthenticated) {
+		t.Fatalf("expected unauthenticated for anonymous following feed, got %v", err)
 	}
 }
 
@@ -1059,6 +1122,7 @@ type fakePostRepository struct {
 	listVisibleByCommunityFunc             func(ctx context.Context, communityID communitydomain.CommunityID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	listVisibleInPublicCommunitiesFunc     func(ctx context.Context, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	listRecommendedInPublicCommunitiesFunc func(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
+	listFollowingInPublicCommunitiesFunc   func(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	listVisibleByAuthorFunc                func(ctx context.Context, authorID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error)
 	savePostFunc                           func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID, now time.Time) error
 	deletePostSaveFunc                     func(ctx context.Context, postID postdomain.PostID, userID userdomain.UserID) error
@@ -1121,6 +1185,13 @@ func (f *fakePostRepository) ListVisibleInPublicCommunities(ctx context.Context,
 func (f *fakePostRepository) ListRecommendedInPublicCommunities(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	if f.listRecommendedInPublicCommunitiesFunc != nil {
 		return f.listRecommendedInPublicCommunitiesFunc(ctx, viewerID, sort, createdAfter, limit, offset)
+	}
+	return nil, nil
+}
+
+func (f *fakePostRepository) ListFollowingInPublicCommunities(ctx context.Context, viewerID userdomain.UserID, sort PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+	if f.listFollowingInPublicCommunitiesFunc != nil {
+		return f.listFollowingInPublicCommunitiesFunc(ctx, viewerID, sort, createdAfter, limit, offset)
 	}
 	return nil, nil
 }

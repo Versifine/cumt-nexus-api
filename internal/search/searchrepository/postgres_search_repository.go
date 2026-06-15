@@ -24,7 +24,11 @@ func NewPostgresSearchRepository(pool *pgxpool.Pool) *PostgresSearchRepository {
 func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, query string, limit int, offset int) ([]searchusecase.CommunityResult, error) {
 	const sql = `
 		WITH search_query AS (
-			SELECT websearch_to_tsquery('simple', $1) AS query
+			SELECT
+				websearch_to_tsquery('simple', $1) AS query,
+				lower($1) AS term,
+				escape_like_query(lower($1)) || '%' AS prefix_pattern,
+				'%' || escape_like_query(lower($1)) || '%' AS contains_pattern
 		),
 		ranked_communities AS (
 			SELECT
@@ -38,6 +42,16 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 				communities.created_at,
 				communities.updated_at,
 				ts_rank_cd(community_search.document, search_query.query) AS rank_score,
+				CASE
+					WHEN lower(communities.slug) = search_query.term THEN 120
+					WHEN lower(communities.name) = search_query.term THEN 110
+					WHEN lower(communities.slug) LIKE search_query.prefix_pattern ESCAPE '\' THEN 95
+					WHEN lower(communities.name) LIKE search_query.prefix_pattern ESCAPE '\' THEN 90
+					WHEN lower(communities.slug) LIKE search_query.contains_pattern ESCAPE '\' THEN 75
+					WHEN lower(communities.name) LIKE search_query.contains_pattern ESCAPE '\' THEN 70
+					WHEN lower(communities.description) LIKE search_query.contains_pattern ESCAPE '\' THEN 35
+					ELSE 0
+				END AS match_score,
 				1.0 / (1.0 + GREATEST(EXTRACT(EPOCH FROM (NOW() - communities.updated_at)), 0) / 604800.0) AS recency_score
 			FROM communities
 			CROSS JOIN search_query
@@ -48,7 +62,12 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 			) AS community_search
 			WHERE communities.status = 'active'
 				AND communities.visibility = 'public'
-				AND community_search.document @@ search_query.query
+				AND (
+					community_search.document @@ search_query.query
+					OR lower(communities.slug) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(communities.name) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(communities.description) LIKE search_query.contains_pattern ESCAPE '\'
+				)
 		)
 		SELECT
 			id::text,
@@ -61,7 +80,7 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 			created_at,
 			updated_at
 		FROM ranked_communities
-		ORDER BY rank_score DESC, recency_score DESC, updated_at DESC, id ASC
+		ORDER BY match_score DESC, rank_score DESC, recency_score DESC, updated_at DESC, id ASC
 		LIMIT $2
 		OFFSET $3
 	`
@@ -99,7 +118,11 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query string, limit int, offset int) ([]searchusecase.PostResult, error) {
 	const sql = `
 		WITH search_query AS (
-			SELECT websearch_to_tsquery('simple', $1) AS query
+			SELECT
+				websearch_to_tsquery('simple', $1) AS query,
+				lower($1) AS term,
+				escape_like_query(lower($1)) || '%' AS prefix_pattern,
+				'%' || escape_like_query(lower($1)) || '%' AS contains_pattern
 		),
 		ranked_posts AS (
 			SELECT
@@ -113,6 +136,19 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 				posts.created_at,
 				posts.updated_at,
 				ts_rank_cd(post_search.document, search_query.query) AS rank_score,
+				CASE
+					WHEN lower(posts.title) = search_query.term THEN 130
+					WHEN lower(posts.title) LIKE search_query.prefix_pattern ESCAPE '\' THEN 110
+					WHEN lower(posts.title) LIKE search_query.contains_pattern ESCAPE '\' THEN 90
+					WHEN lower(communities.slug) = search_query.term THEN 85
+					WHEN lower(communities.name) = search_query.term THEN 80
+					WHEN lower(communities.slug) LIKE search_query.prefix_pattern ESCAPE '\' THEN 75
+					WHEN lower(communities.name) LIKE search_query.prefix_pattern ESCAPE '\' THEN 70
+					WHEN lower(communities.slug) LIKE search_query.contains_pattern ESCAPE '\' THEN 60
+					WHEN lower(communities.name) LIKE search_query.contains_pattern ESCAPE '\' THEN 55
+					WHEN lower(posts.body) LIKE search_query.contains_pattern ESCAPE '\' THEN 30
+					ELSE 0
+				END AS match_score,
 				1.0 / (1.0 + GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)), 0) / 604800.0) AS recency_score
 			FROM posts
 			INNER JOIN communities ON communities.id = posts.community_id
@@ -134,6 +170,10 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 				AND (
 					post_search.post_document @@ search_query.query
 					OR post_search.community_document @@ search_query.query
+					OR lower(posts.title) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(posts.body) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(communities.slug) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(communities.name) LIKE search_query.contains_pattern ESCAPE '\'
 				)
 		)
 		SELECT
@@ -147,7 +187,7 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 			created_at,
 			updated_at
 		FROM ranked_posts
-		ORDER BY rank_score DESC, recency_score DESC, created_at DESC, id DESC
+		ORDER BY match_score DESC, rank_score DESC, recency_score DESC, created_at DESC, id DESC
 		LIMIT $2
 		OFFSET $3
 	`
@@ -175,7 +215,7 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 		); err != nil {
 			return nil, err
 		}
-		result.BodyExcerpt = excerptBody(body)
+		result.BodyExcerpt = excerptText(body, 160)
 		results = append(results, result)
 	}
 	if err := rows.Err(); err != nil {
@@ -184,8 +224,96 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 	return results, nil
 }
 
-func excerptBody(raw string) string {
-	const maxRunes = 160
+func (repo *PostgresSearchRepository) SearchUsers(ctx context.Context, query string, limit int, offset int) ([]searchusecase.UserResult, error) {
+	const sql = `
+		WITH search_query AS (
+			SELECT
+				lower($1) AS term,
+				escape_like_query(lower($1)) || '%' AS prefix_pattern,
+				'%' || escape_like_query(lower($1)) || '%' AS contains_pattern
+		),
+		ranked_users AS (
+			SELECT
+				users.id,
+				users.username,
+				COALESCE(NULLIF(users.display_name, ''), users.username) AS display_name,
+				users.avatar_url,
+				users.headline,
+				users.bio,
+				users.status,
+				users.created_at,
+				users.updated_at,
+				CASE
+					WHEN lower(users.username) = search_query.term THEN 130
+					WHEN lower(users.display_name) = search_query.term THEN 120
+					WHEN lower(users.username) LIKE search_query.prefix_pattern ESCAPE '\' THEN 100
+					WHEN lower(users.display_name) LIKE search_query.prefix_pattern ESCAPE '\' THEN 95
+					WHEN lower(users.username) LIKE search_query.contains_pattern ESCAPE '\' THEN 75
+					WHEN lower(users.display_name) LIKE search_query.contains_pattern ESCAPE '\' THEN 70
+					WHEN lower(users.headline) LIKE search_query.contains_pattern ESCAPE '\' THEN 45
+					WHEN lower(users.bio) LIKE search_query.contains_pattern ESCAPE '\' THEN 25
+					ELSE 0
+				END AS match_score,
+				1.0 / (1.0 + GREATEST(EXTRACT(EPOCH FROM (NOW() - users.updated_at)), 0) / 604800.0) AS recency_score
+			FROM users
+			CROSS JOIN search_query
+			WHERE users.status = 'active'
+				AND (
+					lower(users.username) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(users.display_name) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(users.headline) LIKE search_query.contains_pattern ESCAPE '\'
+					OR lower(users.bio) LIKE search_query.contains_pattern ESCAPE '\'
+				)
+		)
+		SELECT
+			id::text,
+			username,
+			display_name,
+			avatar_url,
+			headline,
+			bio,
+			status,
+			created_at,
+			updated_at
+		FROM ranked_users
+		ORDER BY match_score DESC, recency_score DESC, updated_at DESC, id ASC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, sql, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("search users: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]searchusecase.UserResult, 0)
+	for rows.Next() {
+		var result searchusecase.UserResult
+		var bio string
+		if err := rows.Scan(
+			&result.ID,
+			&result.Username,
+			&result.DisplayName,
+			&result.AvatarURL,
+			&result.Headline,
+			&bio,
+			&result.Status,
+			&result.CreatedAt,
+			&result.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		result.BioExcerpt = excerptText(bio, 160)
+		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user search results: %w", err)
+	}
+	return results, nil
+}
+
+func excerptText(raw string, maxRunes int) string {
 	trimmed := strings.TrimSpace(raw)
 	runes := []rune(trimmed)
 	if len(runes) <= maxRunes {

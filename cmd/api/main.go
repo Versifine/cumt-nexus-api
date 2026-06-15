@@ -14,7 +14,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/admin/adminrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/admin/adminusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/admin/delivery/adminhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/authcode"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authpassword"
+	"github.com/Versifine/cumt-nexus-api/internal/auth/authrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authtoken"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/authusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/auth/delivery/authhttp"
@@ -30,6 +32,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/effect/delivery/effecthttp"
 	"github.com/Versifine/cumt-nexus-api/internal/effect/effectrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/effect/effectusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/mail"
 	"github.com/Versifine/cumt-nexus-api/internal/media/delivery/mediahttp"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediarepository"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediausecase"
@@ -46,6 +49,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/post/delivery/posthttp"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/delivery/progressionhttp"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionrepository"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/search/delivery/searchhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/search/searchrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/search/searchusecase"
@@ -87,6 +93,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	defer db.Close(pool)
 	log.Info("database connected")
 	userRepo := userrepository.NewPostgresUserRepository(pool)
+	authRepo := authrepository.NewPostgresAuthRepository(pool)
 	communityRepo := communityrepository.NewPostgresCommunityRepository(pool)
 	communityApplicationRepo := communityrepository.NewPostgresApplicationRepository(pool)
 	platformStaffRepo := communityrepository.NewPostgresPlatformStaffRepository(pool)
@@ -100,6 +107,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	mediaRepo := mediarepository.NewPostgresMediaRepository(pool)
 	effectRepo := effectrepository.NewPostgresEffectRepository(pool)
 	adminRepo := adminrepository.NewPostgresAdminRepository(pool)
+	progressionRepo := progressionrepository.NewPostgresProgressionRepository(pool)
 	contentRefRepo := contentrefrepository.NewPostgresContentRefRepository(pool)
 	objectStorage, err := storage.NewObjectStorage(ctx, cfg.Storage)
 	if err != nil {
@@ -107,14 +115,43 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	}
 	passwordHasher := authpassword.NewBcryptHasher()
 	tokenIssuer := authtoken.NewJWTIssuer(cfg.Auth.TokenSecret, cfg.App.Name, cfg.Auth.AccessTokenTTL)
+	emailSender, err := mail.NewSender(cfg.Mail, log)
+	if err != nil {
+		return fmt.Errorf("create mail sender: %w", err)
+	}
 	registerUC := authusecase.NewRegisterUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
-	loginUC := authusecase.NewLoginUserCase(userRepo, passwordHasher, tokenIssuer, time.Now)
+	loginUC := authusecase.NewLoginUserCase(authRepo, passwordHasher, tokenIssuer, time.Now)
+	securityUC := authusecase.NewSecurityUseCase(
+		authRepo,
+		passwordHasher,
+		passwordHasher,
+		tokenIssuer,
+		authcode.NewGenerator(),
+		authcode.NewHasher(cfg.Auth.TokenSecret),
+		emailSender,
+		authusecase.EmailCodePolicy{
+			AllowedDomains: cfg.Auth.EmailAllowedDomains,
+			TTL:            cfg.Auth.EmailCodeTTL,
+			ResendInterval: cfg.Auth.EmailCodeResendInterval,
+			MaxAttempts:    cfg.Auth.EmailCodeMaxAttempts,
+			DailyLimit:     cfg.Auth.EmailCodeDailyLimit,
+			IPHourlyLimit:  cfg.Auth.EmailCodeIPHourlyLimit,
+			CodeLength:     cfg.Auth.EmailCodeLength,
+		},
+		time.Now,
+	)
 	currentUserUC := userusecase.NewCurrentUserUseCase(userRepo, platformStaffRepo)
 	publicUserUC := userusecase.NewPublicUserUseCase(userRepo)
 	updateProfileUC := userusecase.NewUpdateProfileUseCase(userRepo, time.Now)
+	progressionUC := progressionusecase.NewUseCase(progressionRepo, time.Now)
+	loginUC.SetXPRecorder(progressionUC)
+	securityUC.SetXPRecorder(progressionUC)
+	publicUserUC.SetProgressionReader(progressionUC)
 	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
 	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
-	communityReadUC.SetMembershipReader(communityrepository.NewPostgresMembershipRepository(pool))
+	communityReadUC.SetMembershipRepository(communityrepository.NewPostgresMembershipRepository(pool))
+	communityReadUC.SetPlatformOwnerRepository(platformStaffRepo)
+	communityReadUC.SetTransactionManager(communityTxManager)
 	communityReadUC.SetManageContentReaders(postRepo, commentRepo, moderationRepo)
 	communityApplicationUC := communityusecase.NewCommunityApplicationUseCase(
 		communityRepo,
@@ -128,15 +165,34 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	commentUC := commentusecase.NewCommentUseCaseWithAttachments(commentRepo, postRepo, mediaRepo, cfg.Upload.ImageMaxCountPerComment, time.Now)
 	commentUC.SetPublicUserFinder(userRepo)
 	voteUC := voteusecase.NewPostVoteUseCase(postRepo, voteRepo, time.Now)
+	postUC.SetXPRecorder(progressionUC)
+	commentUC.SetXPRecorder(progressionUC)
+	voteUC.SetXPRecorder(progressionUC)
 	reportUC := moderationusecase.NewReportUseCase(moderationRepo, postRepo, commentRepo, time.Now)
-	removeUC := moderationusecase.NewRemoveUseCase(moderationRepo, platformStaffRepo, time.Now)
+	removeUC := moderationusecase.NewRemoveUseCase(
+		moderationRepo,
+		platformStaffRepo,
+		communityRepo,
+		communityrepository.NewPostgresMembershipRepository(pool),
+		postRepo,
+		commentRepo,
+		time.Now,
+	)
 	consoleUC := moderationusecase.NewConsoleUseCase(moderationRepo, moderationRepo, moderationRepo, platformStaffRepo, time.Now)
+	moderationToolsUC := moderationusecase.NewToolsUseCase(
+		moderationRepo,
+		platformStaffRepo,
+		communityRepo,
+		communityrepository.NewPostgresMembershipRepository(pool),
+		time.Now,
+	)
 	searchUC := searchusecase.NewUseCase(searchRepo)
 	notificationUC := notificationusecase.NewUseCase(notificationRepo, time.Now)
 	commentUC.SetNotificationPublisher(notificationUC)
 	postUC.SetNotificationPublisher(notificationUC)
 	voteUC.SetNotificationPublisher(notificationUC)
 	registerUC.SetSettingsReader(adminRepo)
+	securityUC.SetSettingsReader(adminRepo)
 	postUC.SetSettingsReader(adminRepo)
 	commentUC.SetSettingsReader(adminRepo)
 	mediaUC := mediausecase.NewUseCase(mediaRepo, objectStorage, mediausecase.UploadLimits{
@@ -146,10 +202,12 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	contentRefUC := contentrefusecase.NewUseCase(contentRefRepo)
 	effectUC := effectusecase.NewUseCase(effectRepo, commentRepo, time.Now)
 	adminUC := adminusecase.NewUseCase(adminRepo, time.Now)
+	adminUC.SetPasswordComparer(passwordHasher)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
 	authHandler := authhttp.NewHandler(registerUC, loginUC)
+	authHandler.SetSecurityUseCase(securityUC)
 	userHandler := userhttp.NewHandler(currentUserUC, publicUserUC)
 	userHandler.SetProfileUpdater(updateProfileUC)
 	communityHandler := communityhttp.NewHandler(communityReadUC, communityApplicationUC)
@@ -157,12 +215,14 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	commentHandler := commenthttp.NewHandler(commentUC)
 	voteHandler := votehttp.NewHandler(voteUC)
 	moderationHandler := moderationhttp.NewHandler(reportUC, removeUC, consoleUC)
+	moderationHandler.SetToolsUseCase(moderationToolsUC)
 	searchHandler := searchhttp.NewHandler(searchUC)
 	notificationHandler := notificationhttp.NewHandler(notificationUC)
 	mediaHandler := mediahttp.NewHandler(mediaUC)
 	contentRefHandler := contentrefhttp.NewHandler(contentRefUC)
 	effectHandler := effecthttp.NewHandler(effectUC)
 	adminHandler := adminhttp.NewHandler(adminUC)
+	progressionHandler := progressionhttp.NewHandler(progressionUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	if cfg.Storage.Provider == "local" {
@@ -171,7 +231,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	apiV1 := router.Group("/api/v1")
 	authhttp.RegisterRoutes(apiV1.Group("/auth"), authHandler)
 	publicReadV1 := apiV1.Group("")
-	publicReadV1.Use(authhttp.OptionalAuth(tokenIssuer))
+	publicReadV1.Use(authhttp.OptionalAuth(tokenIssuer, authRepo))
 	userhttp.RegisterPublicRoutes(publicReadV1, userHandler)
 	communityhttp.RegisterReadRoutes(publicReadV1, communityHandler)
 	posthttp.RegisterReadRoutes(publicReadV1, postHandler)
@@ -179,8 +239,9 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	searchhttp.RegisterRoutes(publicReadV1, searchHandler)
 	effecthttp.RegisterPublicRoutes(publicReadV1, effectHandler)
 	protectedV1 := apiV1.Group("")
-	protectedV1.Use(authhttp.RequireAuth(tokenIssuer))
+	protectedV1.Use(authhttp.RequireAuth(tokenIssuer, authRepo))
 	userhttp.RegisterRoutes(protectedV1, userHandler)
+	authhttp.RegisterSecurityRoutes(protectedV1, authHandler)
 	communityhttp.RegisterApplicationRoutes(protectedV1, communityHandler)
 	communityhttp.RegisterFollowRoutes(protectedV1, communityHandler)
 	communityhttp.RegisterManageRoutes(protectedV1, communityHandler)
@@ -193,6 +254,8 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	contentrefhttp.RegisterRoutes(protectedV1, contentRefHandler)
 	effecthttp.RegisterRoutes(protectedV1, effectHandler)
 	adminhttp.RegisterRoutes(protectedV1, adminHandler)
+	progressionhttp.RegisterRoutes(protectedV1, progressionHandler)
+	progressionhttp.RegisterAdminRoutes(protectedV1, progressionHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)

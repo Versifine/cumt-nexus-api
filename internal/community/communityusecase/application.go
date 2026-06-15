@@ -57,6 +57,8 @@ type ListCommunityApplicationsResult struct {
 	Applications []CommunityApplication
 	Limit        int
 	Offset       int
+	NextOffset   int
+	HasMore      bool
 }
 
 type GetCommunityApplicationResult struct {
@@ -164,15 +166,18 @@ func (uc *CommunityApplicationUseCase) ListCommunityApplications(ctx context.Con
 		return ListCommunityApplicationsResult{}, err
 	}
 
-	applications, err := uc.applications.ListByStatus(ctx, status, limit, offset)
+	applications, err := uc.applications.ListByStatus(ctx, status, limit+1, offset)
 	if err != nil {
 		return ListCommunityApplicationsResult{}, fmt.Errorf("list community applications: %w", err)
 	}
+	applications, hasMore := trimCommunityApplicationsPage(applications, limit)
 
 	result := ListCommunityApplicationsResult{
 		Applications: make([]CommunityApplication, 0, len(applications)),
 		Limit:        limit,
 		Offset:       offset,
+		NextOffset:   offset + len(applications),
+		HasMore:      hasMore,
 	}
 	for _, application := range applications {
 		result.Applications = append(result.Applications, toCommunityApplicationDTO(application))
@@ -222,12 +227,16 @@ func (uc *CommunityApplicationUseCase) ApproveCommunityApplication(ctx context.C
 		if err := application.Approve(input.ReviewerID, reviewedAt); err != nil {
 			return err
 		}
+		description, err := communitydomain.NewCommunityDescription("")
+		if err != nil {
+			return err
+		}
 
 		community, err := communitydomain.NewUserCreatedCommunity(
 			communitydomain.NewGeneratedCommunityID(),
 			application.RequestedSlug(),
 			application.RequestedName(),
-			communitydomain.NewCommunityDescription(""),
+			description,
 			application.ApplicantID(),
 			reviewedAt,
 		)
@@ -363,6 +372,13 @@ func normalizeCommunityApplicationPagination(limit int, offset int) (int, int, e
 		limit = maxCommunityApplicationListLimit
 	}
 	return limit, offset, nil
+}
+
+func trimCommunityApplicationsPage(items []communitydomain.CommunityApplication, limit int) ([]communitydomain.CommunityApplication, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
 }
 
 func toCommunityApplicationDTO(application communitydomain.CommunityApplication) CommunityApplication {

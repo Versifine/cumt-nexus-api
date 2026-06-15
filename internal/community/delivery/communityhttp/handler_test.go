@@ -587,6 +587,158 @@ func TestDeleteCommunityRuleReturnsNoContent(t *testing.T) {
 	}
 }
 
+func TestAddCommunityModeratorParsesBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	userID := userdomain.NewGeneratedUserID()
+	memberID := userdomain.NewGeneratedUserID().String()
+	communities := &fakeCommunityReadUseCase{
+		addModeratorResult: communityusecase.CommunityMemberMutationResult{
+			Community: newCommunityResult("campus", now),
+			Member: communityusecase.CommunityMember{
+				UserID:    memberID,
+				Username:  "alice",
+				Role:      "moderator",
+				Status:    "active",
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/manage/moderators", bytes.NewBufferString(`{"username":"alice"}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.addModeratorCalled {
+		t.Fatal("expected AddCommunityModerator to be called")
+	}
+	if communities.addModeratorInput.Slug != "campus" || communities.addModeratorInput.ViewerID != userID || communities.addModeratorInput.Username != "alice" {
+		t.Fatalf("unexpected add moderator input: %#v", communities.addModeratorInput)
+	}
+
+	var response communityMemberMutationResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Member.User.ID != memberID || response.Member.Role != "moderator" {
+		t.Fatalf("unexpected member response: %#v", response.Member)
+	}
+}
+
+func TestRemoveCommunityModeratorPassesPathParams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	userID := userdomain.NewGeneratedUserID()
+	memberID := userdomain.NewGeneratedUserID().String()
+	communities := &fakeCommunityReadUseCase{
+		removeModeratorResult: communityusecase.CommunityMemberMutationResult{
+			Community: newCommunityResult("campus", now),
+			Member: communityusecase.CommunityMember{
+				UserID:    memberID,
+				Username:  "alice",
+				Role:      "member",
+				Status:    "active",
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/communities/campus/manage/moderators/"+memberID, nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.removeModeratorCalled {
+		t.Fatal("expected RemoveCommunityModerator to be called")
+	}
+	if communities.removeModeratorInput.Slug != "campus" || communities.removeModeratorInput.ViewerID != userID || communities.removeModeratorInput.UserID != memberID {
+		t.Fatalf("unexpected remove moderator input: %#v", communities.removeModeratorInput)
+	}
+}
+
+func TestCommunityOwnerTransferRoutesPassInputs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	userID := userdomain.NewGeneratedUserID()
+	transferID := "8f92e975-5323-4a58-bac1-1336b668183c"
+	communities := &fakeCommunityReadUseCase{
+		createTransferResult: communityusecase.CommunityOwnerTransferResult{
+			Community: newCommunityResult("campus", now),
+			Transfer: communityusecase.CommunityOwnerTransfer{
+				ID:          transferID,
+				CommunityID: userdomain.NewGeneratedUserID().String(),
+				FromUserID:  userID.String(),
+				ToUserID:    userdomain.NewGeneratedUserID().String(),
+				Status:      "pending",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			},
+		},
+		acceptTransferResult: communityusecase.CommunityOwnerTransferResult{
+			Community: newCommunityResult("campus", now),
+			Transfer: communityusecase.CommunityOwnerTransfer{
+				ID:          transferID,
+				CommunityID: userdomain.NewGeneratedUserID().String(),
+				FromUserID:  userdomain.NewGeneratedUserID().String(),
+				ToUserID:    userID.String(),
+				Status:      "accepted",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+				AcceptedAt:  &now,
+			},
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	createRecorder := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/manage/owner-transfer", bytes.NewBufferString(`{"username":"bob"}`))
+	createRequest.Header.Set("Authorization", "Bearer valid-token")
+	createRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(createRecorder, createRequest)
+
+	if createRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, createRecorder.Code, createRecorder.Body.String())
+	}
+	if !communities.createTransferCalled {
+		t.Fatal("expected CreateCommunityOwnerTransfer to be called")
+	}
+	if communities.createTransferInput.Slug != "campus" || communities.createTransferInput.ViewerID != userID || communities.createTransferInput.Username != "bob" {
+		t.Fatalf("unexpected create transfer input: %#v", communities.createTransferInput)
+	}
+
+	acceptRecorder := httptest.NewRecorder()
+	acceptRequest := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/manage/owner-transfer/"+transferID+"/accept", nil)
+	acceptRequest.Header.Set("Authorization", "Bearer valid-token")
+	router.ServeHTTP(acceptRecorder, acceptRequest)
+
+	if acceptRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, acceptRecorder.Code, acceptRecorder.Body.String())
+	}
+	if !communities.acceptTransferCalled {
+		t.Fatal("expected AcceptCommunityOwnerTransfer to be called")
+	}
+	if communities.acceptTransferInput.Slug != "campus" || communities.acceptTransferInput.ViewerID != userID || communities.acceptTransferInput.TransferID != transferID {
+		t.Fatalf("unexpected accept transfer input: %#v", communities.acceptTransferInput)
+	}
+}
+
 func TestCommunityManageRoutesRequireAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -644,7 +796,7 @@ func TestCommunityRoutesRejectInvalidAuth(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	}
 	assertCommunityErrorCode(t, recorder, apperr.CodeUnauthenticated)
-	if communities.listCalled || communities.getCalled || communities.manageCalled || communities.listMembersCalled || communities.listManagePostsCalled || communities.listManageCommentsCalled || communities.listManageReportsCalled || communities.getSettingsCalled || communities.updateSettingsCalled || communities.listRulesCalled || communities.createRuleCalled || communities.updateRuleCalled || communities.deleteRuleCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
+	if communities.listCalled || communities.getCalled || communities.manageCalled || communities.listMembersCalled || communities.addModeratorCalled || communities.removeModeratorCalled || communities.createTransferCalled || communities.acceptTransferCalled || communities.listManagePostsCalled || communities.listManageCommentsCalled || communities.listManageReportsCalled || communities.getSettingsCalled || communities.updateSettingsCalled || communities.listRulesCalled || communities.createRuleCalled || communities.updateRuleCalled || communities.deleteRuleCalled || applications.submitCalled || applications.listCalled || applications.getCalled || applications.approveCalled || applications.rejectCalled {
 		t.Fatal("community usecase should not be called for invalid auth")
 	}
 }
@@ -978,6 +1130,10 @@ type fakeCommunityReadUseCase struct {
 	createRuleCalled         bool
 	updateRuleCalled         bool
 	deleteRuleCalled         bool
+	addModeratorCalled       bool
+	removeModeratorCalled    bool
+	createTransferCalled     bool
+	acceptTransferCalled     bool
 	listInput                communityusecase.ListCommunitiesInput
 	getInput                 communityusecase.GetCommunityInput
 	followInput              communityusecase.FollowCommunityInput
@@ -994,6 +1150,10 @@ type fakeCommunityReadUseCase struct {
 	createRuleInput          communityusecase.CreateCommunityRuleInput
 	updateRuleInput          communityusecase.UpdateCommunityRuleInput
 	deleteRuleInput          communityusecase.DeleteCommunityRuleInput
+	addModeratorInput        communityusecase.AddCommunityModeratorInput
+	removeModeratorInput     communityusecase.RemoveCommunityModeratorInput
+	createTransferInput      communityusecase.CreateCommunityOwnerTransferInput
+	acceptTransferInput      communityusecase.AcceptCommunityOwnerTransferInput
 	listResult               communityusecase.ListCommunitiesResult
 	getResult                communityusecase.GetCommunityResult
 	followResult             communityusecase.FollowCommunityResult
@@ -1010,6 +1170,10 @@ type fakeCommunityReadUseCase struct {
 	createRuleResult         communityusecase.CreateCommunityRuleResult
 	updateRuleResult         communityusecase.UpdateCommunityRuleResult
 	deleteRuleResult         communityusecase.DeleteCommunityRuleResult
+	addModeratorResult       communityusecase.CommunityMemberMutationResult
+	removeModeratorResult    communityusecase.CommunityMemberMutationResult
+	createTransferResult     communityusecase.CommunityOwnerTransferResult
+	acceptTransferResult     communityusecase.CommunityOwnerTransferResult
 	listErr                  error
 	getErr                   error
 	followErr                error
@@ -1026,6 +1190,10 @@ type fakeCommunityReadUseCase struct {
 	createRuleErr            error
 	updateRuleErr            error
 	deleteRuleErr            error
+	addModeratorErr          error
+	removeModeratorErr       error
+	createTransferErr        error
+	acceptTransferErr        error
 }
 
 func (f *fakeCommunityReadUseCase) ListCommunities(ctx context.Context, input communityusecase.ListCommunitiesInput) (communityusecase.ListCommunitiesResult, error) {
@@ -1122,6 +1290,30 @@ func (f *fakeCommunityReadUseCase) DeleteCommunityRule(ctx context.Context, inpu
 	f.deleteRuleCalled = true
 	f.deleteRuleInput = input
 	return f.deleteRuleResult, f.deleteRuleErr
+}
+
+func (f *fakeCommunityReadUseCase) AddCommunityModerator(ctx context.Context, input communityusecase.AddCommunityModeratorInput) (communityusecase.CommunityMemberMutationResult, error) {
+	f.addModeratorCalled = true
+	f.addModeratorInput = input
+	return f.addModeratorResult, f.addModeratorErr
+}
+
+func (f *fakeCommunityReadUseCase) RemoveCommunityModerator(ctx context.Context, input communityusecase.RemoveCommunityModeratorInput) (communityusecase.CommunityMemberMutationResult, error) {
+	f.removeModeratorCalled = true
+	f.removeModeratorInput = input
+	return f.removeModeratorResult, f.removeModeratorErr
+}
+
+func (f *fakeCommunityReadUseCase) CreateCommunityOwnerTransfer(ctx context.Context, input communityusecase.CreateCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error) {
+	f.createTransferCalled = true
+	f.createTransferInput = input
+	return f.createTransferResult, f.createTransferErr
+}
+
+func (f *fakeCommunityReadUseCase) AcceptCommunityOwnerTransfer(ctx context.Context, input communityusecase.AcceptCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error) {
+	f.acceptTransferCalled = true
+	f.acceptTransferInput = input
+	return f.acceptTransferResult, f.acceptTransferErr
 }
 
 type fakeCommunityApplicationUseCase struct {

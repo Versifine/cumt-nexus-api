@@ -151,8 +151,18 @@ func validConfig() Config {
 			Format: "json",
 		},
 		Auth: AuthConfig{
-			TokenSecret:    "secret",
-			AccessTokenTTL: 24 * time.Hour,
+			TokenSecret:             "secret",
+			AccessTokenTTL:          24 * time.Hour,
+			EmailAllowedDomains:     []string{"cumt.edu.cn"},
+			EmailCodeTTL:            10 * time.Minute,
+			EmailCodeResendInterval: time.Minute,
+			EmailCodeMaxAttempts:    5,
+			EmailCodeDailyLimit:     10,
+			EmailCodeIPHourlyLimit:  30,
+			EmailCodeLength:         6,
+		},
+		Mail: MailConfig{
+			Provider: "log",
 		},
 		Storage: ObjectStorageConfig{
 			Provider:       "local",

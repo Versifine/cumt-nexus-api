@@ -89,43 +89,46 @@ func TestLoginReturnsOK(t *testing.T) {
 func TestLoginInvalidRequestReturnsInvalidArgument(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name string
-		body string
-	}{
-		{
-			name: "malformed json",
-			body: `{"username": "alice",`,
-		},
-		{
-			name: "missing username",
-			body: `{"password": "password123"}`,
-		},
-		{
-			name: "missing password",
-			body: `{"username": "alice"}`,
-		},
+	login := &fakeLoginUseCase{}
+	router := newLoginTestRouter(login)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username": "alice",`))
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
 	}
+	assertErrorResponse(t, recorder, string(apperr.CodeInvalidArgument), "invalid login request")
+	if login.called {
+		t.Fatal("login usecase should not be called for invalid request")
+	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			login := &fakeLoginUseCase{}
-			router := newLoginTestRouter(login)
+func TestLoginPassesIdentifierRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(tt.body))
-			request.Header.Set("Content-Type", "application/json")
+	login := &fakeLoginUseCase{
+		err: apperr.New(apperr.CodeInvalidArgument, "identifier is required"),
+	}
+	router := newLoginTestRouter(login)
 
-			router.ServeHTTP(recorder, request)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"identifier":"alice","password":"password123"}`))
+	request.Header.Set("Content-Type", "application/json")
 
-			if recorder.Code != http.StatusBadRequest {
-				t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
-			}
-			assertErrorResponse(t, recorder, string(apperr.CodeInvalidArgument), "invalid login request")
-			if login.called {
-				t.Fatal("login usecase should not be called for invalid request")
-			}
-		})
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	if !login.called {
+		t.Fatal("expected login usecase to be called")
+	}
+	if login.input.Identifier != "alice" || login.input.Password != "password123" {
+		t.Fatalf("unexpected login input: %#v", login.input)
 	}
 }
 

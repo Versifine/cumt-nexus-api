@@ -73,6 +73,42 @@ func TestGetMyPointsRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestListMyPointTransactionsReturnsPaginatedTransactions(t *testing.T) {
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{
+		transactions: []PointTransaction{
+			{ID: "1f37d0f3-f559-4ee0-ae11-f60f258a1c9a", UserID: userID.String(), Delta: 5, BalanceAfter: 105, Reason: "daily_visit", SourceType: "daily_activity", SourceID: "2026-06-14", CreatedAt: now},
+			{ID: "27c03541-295e-4852-b801-c8ac6ad7911c", UserID: userID.String(), Delta: -10, BalanceAfter: 95, Reason: "comment_effect", SourceType: "comment_effect", SourceID: "effect-1", CreatedAt: now.Add(-time.Minute)},
+		},
+	}
+	uc := NewUseCase(repository, &fakeCommentReader{}, time.Now)
+
+	result, err := uc.ListMyPointTransactions(context.Background(), ListMyPointTransactionsInput{
+		ActorID: userID,
+		Limit:   1,
+		Offset:  3,
+	})
+	if err != nil {
+		t.Fatalf("ListMyPointTransactions returned error: %v", err)
+	}
+	if !repository.listTransactionsCalled || repository.listTransactionsUserID != userID || repository.listTransactionsLimit != 2 || repository.listTransactionsOffset != 3 {
+		t.Fatalf("unexpected repository call: %#v", repository)
+	}
+	if len(result.Transactions) != 1 || !result.HasMore || result.NextOffset != 4 {
+		t.Fatalf("unexpected paginated result: %#v", result)
+	}
+}
+
+func TestListMyPointTransactionsRequiresAuth(t *testing.T) {
+	uc := NewUseCase(&fakeRepository{}, &fakeCommentReader{}, time.Now)
+
+	_, err := uc.ListMyPointTransactions(context.Background(), ListMyPointTransactionsInput{})
+	if !apperr.IsCode(err, apperr.CodeUnauthenticated) {
+		t.Fatalf("expected unauthenticated, got %v", err)
+	}
+}
+
 func TestApplyCommentEffectValidatesCommentAndDeductsPoints(t *testing.T) {
 	userID := userdomain.NewGeneratedUserID()
 	commentID := commentdomain.NewGeneratedCommentID()
@@ -191,6 +227,13 @@ type fakeRepository struct {
 	points          PointAccount
 	getPointsErr    error
 
+	listTransactionsCalled bool
+	listTransactionsUserID userdomain.UserID
+	listTransactionsLimit  int
+	listTransactionsOffset int
+	transactions           []PointTransaction
+	listTransactionsErr    error
+
 	applyInput  ApplyCommentEffectRecordInput
 	applyResult ApplyCommentEffectRecordResult
 	applyErr    error
@@ -215,6 +258,15 @@ func (f *fakeRepository) GetOrCreatePointAccount(ctx context.Context, userID use
 	f.getPointsUserID = userID
 	f.initialBalance = initialBalance
 	return f.points, f.getPointsErr
+}
+
+func (f *fakeRepository) ListPointTransactions(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]PointTransaction, error) {
+	_ = ctx
+	f.listTransactionsCalled = true
+	f.listTransactionsUserID = userID
+	f.listTransactionsLimit = limit
+	f.listTransactionsOffset = offset
+	return f.transactions, f.listTransactionsErr
 }
 
 func (f *fakeRepository) ApplyCommentEffect(ctx context.Context, input ApplyCommentEffectRecordInput) (ApplyCommentEffectRecordResult, error) {

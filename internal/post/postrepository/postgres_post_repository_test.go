@@ -185,6 +185,43 @@ func TestPostgresPostRepositoryListVisibleInPublicCommunities(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryListFollowingInPublicCommunities(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	viewerID := insertTestUser(ctx, t, pool)
+	followedCommunityID := insertTestCommunity(ctx, t, pool, authorID, "followed-"+randomSuffix())
+	unfollowedCommunityID := insertTestCommunity(ctx, t, pool, authorID, "unfollowed-"+randomSuffix())
+	insertTestCommunityFollow(ctx, t, pool, followedCommunityID, viewerID)
+
+	followedPost := mustPost(t, followedCommunityID, authorID, "Followed latest", now.Add(time.Minute))
+	unfollowedPost := mustPost(t, unfollowedCommunityID, authorID, "Unfollowed latest", now.Add(2*time.Minute))
+	for _, post := range []*postdomain.Post{followedPost, unfollowedPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+
+	posts, err := repo.ListFollowingInPublicCommunities(ctx, viewerID, postusecase.PostListSortNew, nil, 20, 0)
+	if err != nil {
+		t.Fatalf("ListFollowingInPublicCommunities returned error: %v", err)
+	}
+
+	var gotIDs []postdomain.PostID
+	for _, post := range posts {
+		switch post.ID() {
+		case followedPost.ID(), unfollowedPost.ID():
+			gotIDs = append(gotIDs, post.ID())
+		}
+	}
+	if len(gotIDs) != 1 || gotIDs[0] != followedPost.ID() {
+		t.Fatalf("expected only followed community post, got %#v", gotIDs)
+	}
+}
+
 func TestPostgresPostRepositoryListVisibleInPublicCommunitiesCreatedAfter(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)

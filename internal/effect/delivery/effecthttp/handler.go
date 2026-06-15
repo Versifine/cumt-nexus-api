@@ -3,6 +3,8 @@ package effecthttp
 import (
 	"context"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
@@ -18,6 +20,7 @@ type Handler struct {
 type UseCase interface {
 	ListEffectsCatalog(ctx context.Context) (effectusecase.ListEffectsCatalogResult, error)
 	GetMyPoints(ctx context.Context, input effectusecase.GetMyPointsInput) (effectusecase.GetMyPointsResult, error)
+	ListMyPointTransactions(ctx context.Context, input effectusecase.ListMyPointTransactionsInput) (effectusecase.ListMyPointTransactionsResult, error)
 	ApplyCommentEffect(ctx context.Context, input effectusecase.ApplyCommentEffectInput) (effectusecase.ApplyCommentEffectResult, error)
 }
 
@@ -47,6 +50,25 @@ type pointAccountResponse struct {
 
 type getMyPointsResponse struct {
 	Points pointAccountResponse `json:"points"`
+}
+
+type pointTransactionResponse struct {
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	Delta        int       `json:"delta"`
+	BalanceAfter int       `json:"balance_after"`
+	Reason       string    `json:"reason"`
+	SourceType   string    `json:"source_type"`
+	SourceID     string    `json:"source_id"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type listMyPointTransactionsResponse struct {
+	Transactions []pointTransactionResponse `json:"transactions"`
+	Limit        int                        `json:"limit"`
+	Offset       int                        `json:"offset"`
+	NextOffset   int                        `json:"next_offset"`
+	HasMore      bool                       `json:"has_more"`
 }
 
 type applyCommentEffectRequest struct {
@@ -79,6 +101,7 @@ func RegisterPublicRoutes(group *gin.RouterGroup, handler *Handler) {
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/me/points", handler.GetMyPoints)
+	group.GET("/me/point-transactions", handler.ListMyPointTransactions)
 	group.POST("/comments/:id/effects", handler.ApplyCommentEffect)
 }
 
@@ -121,6 +144,51 @@ func (h *Handler) GetMyPoints(c *gin.Context) {
 	})
 }
 
+func (h *Handler) ListMyPointTransactions(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.effects.ListMyPointTransactions(c.Request.Context(), effectusecase.ListMyPointTransactionsInput{
+		ActorID: userID,
+		Limit:   limit,
+		Offset:  offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listMyPointTransactionsResponse{
+		Transactions: make([]pointTransactionResponse, 0, len(result.Transactions)),
+		Limit:        result.Limit,
+		Offset:       result.Offset,
+		NextOffset:   result.NextOffset,
+		HasMore:      result.HasMore,
+	}
+	for _, transaction := range result.Transactions {
+		response.Transactions = append(response.Transactions, toPointTransactionResponse(transaction))
+	}
+	c.JSON(http.StatusOK, response)
+}
+
 func (h *Handler) ApplyCommentEffect(c *gin.Context) {
 	userID, ok := authcontext.CurrentUserID(c.Request.Context())
 	if !ok {
@@ -153,6 +221,18 @@ func (h *Handler) ApplyCommentEffect(c *gin.Context) {
 	})
 }
 
+func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, apperr.New(apperr.CodeInvalidArgument, "invalid "+key+" query")
+	}
+	return value, nil
+}
+
 func toEffectResponse(effect effectusecase.Effect) effectResponse {
 	return effectResponse{
 		ID:           effect.ID,
@@ -174,6 +254,19 @@ func toPointAccountResponse(points effectusecase.PointAccount) pointAccountRespo
 		LifetimeEarned: points.LifetimeEarned,
 		LifetimeSpent:  points.LifetimeSpent,
 		UpdatedAt:      points.UpdatedAt,
+	}
+}
+
+func toPointTransactionResponse(transaction effectusecase.PointTransaction) pointTransactionResponse {
+	return pointTransactionResponse{
+		ID:           transaction.ID,
+		UserID:       transaction.UserID,
+		Delta:        transaction.Delta,
+		BalanceAfter: transaction.BalanceAfter,
+		Reason:       transaction.Reason,
+		SourceType:   transaction.SourceType,
+		SourceID:     transaction.SourceID,
+		CreatedAt:    transaction.CreatedAt,
 	}
 }
 

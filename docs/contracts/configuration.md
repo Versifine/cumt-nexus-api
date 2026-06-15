@@ -76,6 +76,25 @@ go test ./internal/platform/config -run TestLoad -v
 | --- | --- | --- | --- |
 | `AUTH_TOKEN_SECRET` | 是 | 无 | JWT 签名密钥 |
 | `AUTH_ACCESS_TOKEN_TTL` | 否 | `24h` | access token 有效期 |
+| `AUTH_EMAIL_ALLOWED_DOMAINS` | 否 | `cumt.edu.cn,mail.cumt.edu.cn` | 允许发送验证码和绑定的邮箱域名，逗号分隔 |
+| `AUTH_EMAIL_CODE_TTL` | 否 | `10m` | 邮箱验证码有效期 |
+| `AUTH_EMAIL_CODE_RESEND_INTERVAL` | 否 | `1m` | 同一邮箱同一用途重复发送验证码的最小间隔 |
+| `AUTH_EMAIL_CODE_MAX_ATTEMPTS` | 否 | `5` | 单个验证码最大校验失败次数 |
+| `AUTH_EMAIL_CODE_DAILY_LIMIT` | 否 | `10` | 同一邮箱同一用途 24 小时最大发送次数 |
+| `AUTH_EMAIL_CODE_IP_HOURLY_LIMIT` | 否 | `30` | 同一 IP 1 小时最大验证码发送次数 |
+| `AUTH_EMAIL_CODE_LENGTH` | 否 | `6` | 验证码数字长度，范围 4 到 12 |
+
+### Mail
+
+| 变量 | 必需 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `MAIL_PROVIDER` | 否 | `log` | `log/smtp`；本地默认把验证码写入服务端日志 |
+| `SMTP_HOST` | 否 | 无 | SMTP host；`MAIL_PROVIDER=smtp` 时必填 |
+| `SMTP_PORT` | 否 | `587` | SMTP port |
+| `SMTP_USERNAME` | 否 | 无 | SMTP 用户名 |
+| `SMTP_PASSWORD` | 否 | 无 | SMTP 密码 |
+| `SMTP_FROM` | 否 | 无 | 发件人地址；`MAIL_PROVIDER=smtp` 时必填 |
+| `SMTP_TLS_MODE` | 否 | `starttls` | `starttls/ssl/none` |
 
 ### Object Storage
 

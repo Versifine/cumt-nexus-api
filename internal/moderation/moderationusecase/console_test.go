@@ -29,7 +29,7 @@ func TestConsoleListReportsDefaultsPendingAndNormalizesPagination(t *testing.T) 
 			if status != moderationdomain.ReportStatusPending {
 				t.Fatalf("expected pending status, got %q", status)
 			}
-			if limit != 20 || offset != 0 {
+			if limit != 21 || offset != 0 {
 				t.Fatalf("expected default limit/offset, got %d/%d", limit, offset)
 			}
 			return []ContentReportRecord{{Report: *report, TargetPreview: preview}}, nil
@@ -61,7 +61,7 @@ func TestConsoleListReportsSupportsStatusAndClampsLimit(t *testing.T) {
 			if status != moderationdomain.ReportStatusResolved {
 				t.Fatalf("expected resolved status, got %q", status)
 			}
-			if limit != 50 || offset != 3 {
+			if limit != 51 || offset != 3 {
 				t.Fatalf("expected clamped limit and offset, got %d/%d", limit, offset)
 			}
 			return nil, nil

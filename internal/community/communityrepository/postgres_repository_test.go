@@ -53,7 +53,7 @@ func TestPostgresCommunityRepositoryCreateFindListAndConflict(t *testing.T) {
 	}
 	cleanupCommunity(ctx, t, pool, suspendedCommunity.ID())
 
-	communities, err := repo.ListActivePublic(ctx)
+	communities, err := repo.ListActivePublic(ctx, 20, 0)
 	if err != nil {
 		t.Fatalf("ListActivePublic returned error: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestPostgresCommunityRepositoryUpdateDetails(t *testing.T) {
 	cleanupCommunity(ctx, t, pool, community.ID())
 
 	updatedAt := now.Add(time.Hour)
-	if err := community.UpdateDetails(mustCommunityName(t, "Updated Community"), communitydomain.NewCommunityDescription("updated description"), updatedAt); err != nil {
+	if err := community.UpdateDetails(mustCommunityName(t, "Updated Community"), mustCommunityDescription(t, "updated description"), updatedAt); err != nil {
 		t.Fatalf("UpdateDetails domain returned error: %v", err)
 	}
 	if err := repo.UpdateDetails(ctx, *community); err != nil {
@@ -293,7 +293,7 @@ func TestPostgresCommunityRepositoryRuleCRUD(t *testing.T) {
 		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
 	}
 	updatedAt := now.Add(2 * time.Hour)
-	if err := firstRule.Update(updatedTitle, communitydomain.NewCommunityRuleBody("updated body"), updatedPosition, updaterID, updatedAt); err != nil {
+	if err := firstRule.Update(updatedTitle, mustCommunityRuleBody(t, "updated body"), updatedPosition, updaterID, updatedAt); err != nil {
 		t.Fatalf("Update domain returned error: %v", err)
 	}
 	if err := repo.UpdateRule(ctx, *firstRule); err != nil {
@@ -470,7 +470,7 @@ func TestPostgresCommunityTransactionManagerApprovesApplicationWithCommunityAndO
 			communitydomain.NewGeneratedCommunityID(),
 			lockedApplication.RequestedSlug(),
 			lockedApplication.RequestedName(),
-			communitydomain.NewCommunityDescription(""),
+			mustCommunityDescription(t, ""),
 			lockedApplication.ApplicantID(),
 			reviewedAt,
 		)
@@ -549,7 +549,7 @@ func TestPostgresCommunityTransactionManagerRollsBackApprovalWhenCommunityCreate
 			communitydomain.NewGeneratedCommunityID(),
 			lockedApplication.RequestedSlug(),
 			lockedApplication.RequestedName(),
-			communitydomain.NewCommunityDescription(""),
+			mustCommunityDescription(t, ""),
 			lockedApplication.ApplicantID(),
 			reviewedAt,
 		)
@@ -800,6 +800,26 @@ func mustCommunityName(t *testing.T, raw string) communitydomain.CommunityName {
 	return name
 }
 
+func mustCommunityDescription(t *testing.T, raw string) communitydomain.CommunityDescription {
+	t.Helper()
+
+	description, err := communitydomain.NewCommunityDescription(raw)
+	if err != nil {
+		t.Fatalf("NewCommunityDescription returned error: %v", err)
+	}
+	return description
+}
+
+func mustCommunityRuleBody(t *testing.T, raw string) communitydomain.CommunityRuleBody {
+	t.Helper()
+
+	body, err := communitydomain.NewCommunityRuleBody(raw)
+	if err != nil {
+		t.Fatalf("NewCommunityRuleBody returned error: %v", err)
+	}
+	return body
+}
+
 func mustSystemCommunity(t *testing.T, slug communitydomain.CommunitySlug, now time.Time) *communitydomain.Community {
 	t.Helper()
 
@@ -807,7 +827,7 @@ func mustSystemCommunity(t *testing.T, slug communitydomain.CommunitySlug, now t
 		communitydomain.NewGeneratedCommunityID(),
 		slug,
 		mustCommunityName(t, "Test Community "+slug.String()),
-		communitydomain.NewCommunityDescription("test community"),
+		mustCommunityDescription(t, "test community"),
 		now,
 	)
 	if err != nil {
@@ -823,7 +843,7 @@ func mustCommunity(t *testing.T, slug communitydomain.CommunitySlug, status comm
 		communitydomain.NewGeneratedCommunityID(),
 		slug,
 		mustCommunityName(t, "Test Community "+slug.String()),
-		communitydomain.NewCommunityDescription("test community"),
+		mustCommunityDescription(t, "test community"),
 		communitydomain.CommunityKindSystem,
 		status,
 		communitydomain.CommunityVisibilityPublic,
@@ -844,7 +864,7 @@ func mustUserCreatedCommunity(t *testing.T, slug communitydomain.CommunitySlug, 
 		communitydomain.NewGeneratedCommunityID(),
 		slug,
 		mustCommunityName(t, "Test Community "+slug.String()),
-		communitydomain.NewCommunityDescription("test community"),
+		mustCommunityDescription(t, "test community"),
 		createdBy,
 		now,
 	)
@@ -908,7 +928,7 @@ func mustCommunityRule(t *testing.T, communityID communitydomain.CommunityID, ac
 		communitydomain.NewGeneratedCommunityRuleID(),
 		communityID,
 		title,
-		communitydomain.NewCommunityRuleBody(rawBody),
+		mustCommunityRuleBody(t, rawBody),
 		rulePosition,
 		actorID,
 		now,

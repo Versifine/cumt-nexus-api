@@ -5,8 +5,14 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
+)
+
+const (
+	MaxCommunityRuleTitleRunes = 80
+	MaxCommunityRuleBodyRunes  = 500
 )
 
 type CommunityRuleID string
@@ -34,11 +40,11 @@ func (id CommunityRuleID) String() string {
 type CommunityRuleTitle string
 
 func NewCommunityRuleTitle(raw string) (CommunityRuleTitle, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "community rule title is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "community rule title", MaxCommunityRuleTitleRunes)
+	if err != nil {
+		return "", err
 	}
-	return CommunityRuleTitle(raw), nil
+	return CommunityRuleTitle(value), nil
 }
 
 func (title CommunityRuleTitle) String() string {
@@ -47,8 +53,12 @@ func (title CommunityRuleTitle) String() string {
 
 type CommunityRuleBody string
 
-func NewCommunityRuleBody(raw string) CommunityRuleBody {
-	return CommunityRuleBody(strings.TrimSpace(raw))
+func NewCommunityRuleBody(raw string) (CommunityRuleBody, error) {
+	value, err := textlimit.TrimmedOptionalMaxRunes(raw, "community rule body", MaxCommunityRuleBodyRunes)
+	if err != nil {
+		return "", err
+	}
+	return CommunityRuleBody(value), nil
 }
 
 func (body CommunityRuleBody) String() string {

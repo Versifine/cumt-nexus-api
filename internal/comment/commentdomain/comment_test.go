@@ -2,6 +2,7 @@ package commentdomain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,12 +30,16 @@ func TestCommentValues(t *testing.T) {
 	if _, err := NewCommentBody(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for blank body, got %v", err)
 	}
+	if _, err := NewCommentBody(strings.Repeat("a", MaxCommentBodyRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long body, got %v", err)
+	}
 
 	assertCommentStatus(t, "visible", CommentStatusVisible)
 	assertCommentStatus(t, "removed", CommentStatusRemoved)
 	assertCommentStatus(t, "deleted", CommentStatusDeleted)
 	assertCommentStatus(t, "locked", CommentStatusLocked)
 	assertCommentStatus(t, "hidden", CommentStatusHidden)
+	assertCommentStatus(t, "spam", CommentStatusSpam)
 	if _, err := NewCommentStatus("draft"); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for invalid status, got %v", err)
 	}

@@ -90,6 +90,13 @@ function Convert-GoDefaultExpression {
             'Hour' { return "$($n)h" }
         }
     }
+    if ($value -match '^time\.(?<unit>Second|Minute|Hour)$') {
+        switch ($Matches['unit']) {
+            'Second' { return '1s' }
+            'Minute' { return '1m' }
+            'Hour' { return '1h' }
+        }
+    }
     if ($value -match '^(?<a>\d+)\s*\*\s*(?<b>\d+)\s*\*\s*(?<c>\d+)$') {
         return [string]([int]$Matches['a'] * [int]$Matches['b'] * [int]$Matches['c'])
     }
@@ -125,7 +132,7 @@ foreach ($match in [regex]::Matches($loadContent, 'requiredString\("(?<key>[A-Z0
 }
 
 $defaultPatterns = @(
-    '(?:stringDefault|stringListDefault|intDefault|boolDefault|durationDefault)\("(?<key>[A-Z0-9_]+)",\s*(?<default>[^,\r\n\)]+)'
+    '(?:stringDefault|stringListDefault|intDefault|boolDefault|durationDefault)\("(?<key>[A-Z0-9_]+)",\s*(?<default>"[^"]*"|[^,\r\n\)]+)'
 )
 
 foreach ($pattern in $defaultPatterns) {

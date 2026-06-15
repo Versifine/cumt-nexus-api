@@ -43,6 +43,21 @@ func Load() (*Config, error) {
 
 	cfg.Auth.TokenSecret = requiredString("AUTH_TOKEN_SECRET", &errs)
 	cfg.Auth.AccessTokenTTL = durationDefault("AUTH_ACCESS_TOKEN_TTL", 24*time.Hour, &errs)
+	cfg.Auth.EmailAllowedDomains = splitStringList(stringDefault("AUTH_EMAIL_ALLOWED_DOMAINS", "cumt.edu.cn,mail.cumt.edu.cn"))
+	cfg.Auth.EmailCodeTTL = durationDefault("AUTH_EMAIL_CODE_TTL", 10*time.Minute, &errs)
+	cfg.Auth.EmailCodeResendInterval = durationDefault("AUTH_EMAIL_CODE_RESEND_INTERVAL", time.Minute, &errs)
+	cfg.Auth.EmailCodeMaxAttempts = intDefault("AUTH_EMAIL_CODE_MAX_ATTEMPTS", 5, &errs)
+	cfg.Auth.EmailCodeDailyLimit = intDefault("AUTH_EMAIL_CODE_DAILY_LIMIT", 10, &errs)
+	cfg.Auth.EmailCodeIPHourlyLimit = intDefault("AUTH_EMAIL_CODE_IP_HOURLY_LIMIT", 30, &errs)
+	cfg.Auth.EmailCodeLength = intDefault("AUTH_EMAIL_CODE_LENGTH", 6, &errs)
+
+	cfg.Mail.Provider = stringDefault("MAIL_PROVIDER", "log")
+	cfg.Mail.SMTP.Host = stringDefault("SMTP_HOST", "")
+	cfg.Mail.SMTP.Port = intDefault("SMTP_PORT", 587, &errs)
+	cfg.Mail.SMTP.Username = stringDefault("SMTP_USERNAME", "")
+	cfg.Mail.SMTP.Password = stringDefault("SMTP_PASSWORD", "")
+	cfg.Mail.SMTP.From = stringDefault("SMTP_FROM", "")
+	cfg.Mail.SMTP.TLSMode = stringDefault("SMTP_TLS_MODE", "starttls")
 
 	cfg.Storage.Provider = stringDefault("OBJECT_STORAGE_PROVIDER", "local")
 	cfg.Storage.Endpoint = stringDefault("OBJECT_STORAGE_ENDPOINT", "")
@@ -93,6 +108,14 @@ func stringListDefault(key string, defaultValue []string) []string {
 		return defaultValue
 	}
 
+	values := splitStringList(v)
+	if len(values) == 0 {
+		return defaultValue
+	}
+	return values
+}
+
+func splitStringList(v string) []string {
 	parts := strings.Split(v, ",")
 	values := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -100,9 +123,6 @@ func stringListDefault(key string, defaultValue []string) []string {
 		if value != "" {
 			values = append(values, value)
 		}
-	}
-	if len(values) == 0 {
-		return defaultValue
 	}
 	return values
 }

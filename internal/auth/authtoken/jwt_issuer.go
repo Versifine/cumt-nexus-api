@@ -20,7 +20,8 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 type AccessTokenClaims struct {
-	UserID userdomain.UserID
+	UserID   userdomain.UserID
+	IssuedAt time.Time
 }
 
 func NewJWTIssuer(secret string, issuer string, ttl time.Duration) *JWTIssuer {
@@ -79,6 +80,7 @@ func (i *JWTIssuer) ParseAccessToken(rawToken string) (*AccessTokenClaims, error
 	}
 
 	return &AccessTokenClaims{
-		UserID: userID,
+		UserID:   userID,
+		IssuedAt: claims.IssuedAt.Time,
 	}, nil
 }

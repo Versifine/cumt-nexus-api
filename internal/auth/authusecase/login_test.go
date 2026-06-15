@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
 
@@ -27,8 +28,9 @@ func TestLoginUserSuccess(t *testing.T) {
 	})
 
 	result, err := uc.Login(context.Background(), LoginInput{
-		Username: " Alice ",
-		Password: "password123",
+		Username:  " Alice ",
+		Password:  "password123",
+		RequestIP: "127.0.0.1",
 	})
 	if err != nil {
 		t.Fatalf("Login returned error: %v", err)
@@ -59,8 +61,8 @@ func TestLoginUserSuccess(t *testing.T) {
 	if !finder.called {
 		t.Fatal("expected user finder to be called")
 	}
-	if finder.username.String() != "alice" {
-		t.Fatalf("expected normalized username %q, got %q", "alice", finder.username.String())
+	if finder.identifier != "alice" {
+		t.Fatalf("expected normalized identifier %q, got %q", "alice", finder.identifier)
 	}
 	if !comparer.called {
 		t.Fatal("expected password comparer to be called")
@@ -79,6 +81,53 @@ func TestLoginUserSuccess(t *testing.T) {
 	}
 	if !issuer.now.Equal(fixedNow) {
 		t.Fatalf("expected token issue time %s, got %s", fixedNow, issuer.now)
+	}
+	if !finder.updateLastLoginCalled {
+		t.Fatal("expected last login to be updated")
+	}
+	if finder.loginIP != "127.0.0.1" {
+		t.Fatalf("expected login ip %q, got %q", "127.0.0.1", finder.loginIP)
+	}
+	if len(finder.events) != 1 {
+		t.Fatalf("expected one login security event, got %d", len(finder.events))
+	}
+	if finder.events[0].Action != loginPasswordSuccessAction {
+		t.Fatalf("expected success login event, got %q", finder.events[0].Action)
+	}
+}
+
+func TestLoginUserSuccessGrantsDailyLoginXP(t *testing.T) {
+	fixedNow := time.Date(2026, 6, 14, 23, 30, 0, 0, time.UTC)
+	user := newLoginTestUser(t, "alice", "hashed-password", "active", fixedNow.Add(-24*time.Hour))
+	finder := &fakeLoginUserFinder{user: user}
+	uc := NewLoginUserCase(
+		finder,
+		&fakeLoginPasswordComparer{},
+		&fakeLoginTokenIssuer{value: "access-token", tokenType: testTokenTypeBearer, expiresIn: time.Hour},
+		func() time.Time { return fixedNow },
+	)
+	recorder := &fakeXPRecorder{}
+	uc.SetXPRecorder(recorder)
+
+	_, err := uc.Login(context.Background(), LoginInput{
+		Username: "alice",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Login returned error: %v", err)
+	}
+	if len(recorder.inputs) != 1 {
+		t.Fatalf("expected one xp grant, got %d", len(recorder.inputs))
+	}
+	input := recorder.inputs[0]
+	if input.UserID != user.ID() || input.ActorID != user.ID() {
+		t.Fatalf("expected daily login xp for self, got %#v", input)
+	}
+	if input.SourceType != progressionusecase.XPSourceDailyLogin {
+		t.Fatalf("expected source type %q, got %q", progressionusecase.XPSourceDailyLogin, input.SourceType)
+	}
+	if input.SourceID != "2026-06-14" {
+		t.Fatalf("expected source id %q, got %q", "2026-06-14", input.SourceID)
 	}
 }
 
@@ -177,6 +226,59 @@ func TestLoginUserPasswordCompareErrorReturnsUnauthenticated(t *testing.T) {
 	if issuer.called {
 		t.Fatal("token issuer should not be called when password compare fails")
 	}
+	if len(finder.events) != 1 {
+		t.Fatalf("expected one failed login event, got %d", len(finder.events))
+	}
+	if finder.events[0].Action != loginPasswordFailedAction {
+		t.Fatalf("expected failed login event, got %q", finder.events[0].Action)
+	}
+}
+
+func TestLoginUserBlockedByAccountFailureLimit(t *testing.T) {
+	finder := &fakeLoginUserFinder{
+		accountFailureCount: loginFailureAccountLimit,
+	}
+	comparer := &fakeLoginPasswordComparer{}
+	issuer := &fakeLoginTokenIssuer{}
+	uc := NewLoginUserCase(finder, comparer, issuer, fixedClock())
+
+	_, err := uc.Login(context.Background(), LoginInput{
+		Username: "alice",
+		Password: "password123",
+	})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden, got %v", err)
+	}
+	if finder.called {
+		t.Fatal("user finder should not be called when account is rate limited")
+	}
+	if comparer.called {
+		t.Fatal("password comparer should not be called when account is rate limited")
+	}
+}
+
+func TestLoginUserBlockedByIPFailureLimit(t *testing.T) {
+	finder := &fakeLoginUserFinder{
+		ipFailureCount: loginFailureIPLimit,
+	}
+	comparer := &fakeLoginPasswordComparer{}
+	issuer := &fakeLoginTokenIssuer{}
+	uc := NewLoginUserCase(finder, comparer, issuer, fixedClock())
+
+	_, err := uc.Login(context.Background(), LoginInput{
+		Username:  "alice",
+		Password:  "password123",
+		RequestIP: "127.0.0.1",
+	})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden, got %v", err)
+	}
+	if finder.called {
+		t.Fatal("user finder should not be called when ip is rate limited")
+	}
+	if comparer.called {
+		t.Fatal("password comparer should not be called when ip is rate limited")
+	}
 }
 
 func TestLoginUserDisabledReturnsForbidden(t *testing.T) {
@@ -200,6 +302,34 @@ func TestLoginUserDisabledReturnsForbidden(t *testing.T) {
 	}
 	if issuer.called {
 		t.Fatal("token issuer should not be called for disabled user")
+	}
+}
+
+func TestLoginUserActiveBanReturnsForbidden(t *testing.T) {
+	user := newLoginTestUser(t, "alice", "hashed-password", "active", time.Now().UTC())
+	finder := &fakeLoginUserFinder{
+		user:      user,
+		activeBan: true,
+	}
+	comparer := &fakeLoginPasswordComparer{}
+	issuer := &fakeLoginTokenIssuer{}
+	uc := NewLoginUserCase(finder, comparer, issuer, fixedClock())
+
+	_, err := uc.Login(context.Background(), LoginInput{
+		Username: "alice",
+		Password: "password123",
+	})
+	if !hasAppCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden, got %v", err)
+	}
+	if !comparer.called {
+		t.Fatal("expected password comparer to be called")
+	}
+	if issuer.called {
+		t.Fatal("token issuer should not be called for banned user")
+	}
+	if len(finder.events) != 1 || finder.events[0].Action != loginPasswordFailedAction {
+		t.Fatalf("expected failed login event, got %#v", finder.events)
 	}
 }
 
@@ -227,16 +357,47 @@ func TestLoginUserTokenIssuerError(t *testing.T) {
 }
 
 type fakeLoginUserFinder struct {
-	called   bool
-	username userdomain.Username
-	user     *userdomain.User
-	err      error
+	called                bool
+	updateLastLoginCalled bool
+	identifier            string
+	loginIP               string
+	user                  *userdomain.User
+	err                   error
+	accountFailureCount   int
+	ipFailureCount        int
+	activeBan             bool
+	events                []SecurityEvent
 }
 
-func (f *fakeLoginUserFinder) FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error) {
+func (f *fakeLoginUserFinder) FindAuthUserByIdentifier(ctx context.Context, identifier string) (AuthUserRecord, error) {
 	f.called = true
-	f.username = username
-	return f.user, f.err
+	f.identifier = identifier
+	if f.err != nil {
+		return AuthUserRecord{}, f.err
+	}
+	return AuthUserRecord{User: f.user}, nil
+}
+
+func (f *fakeLoginUserFinder) UpdateLastLogin(ctx context.Context, userID userdomain.UserID, loginAt time.Time, loginIP string) error {
+	f.updateLastLoginCalled = true
+	f.loginIP = loginIP
+	return nil
+}
+
+func (f *fakeLoginUserFinder) HasActiveAccountBan(ctx context.Context, userID userdomain.UserID, now time.Time) (bool, error) {
+	return f.activeBan, nil
+}
+
+func (f *fakeLoginUserFinder) CountSecurityEventsSince(ctx context.Context, action string, identity string, requestIP string, since time.Time) (int, error) {
+	if requestIP != "" {
+		return f.ipFailureCount, nil
+	}
+	return f.accountFailureCount, nil
+}
+
+func (f *fakeLoginUserFinder) RecordSecurityEvent(ctx context.Context, event SecurityEvent) error {
+	f.events = append(f.events, event)
+	return nil
 }
 
 type fakeLoginPasswordComparer struct {

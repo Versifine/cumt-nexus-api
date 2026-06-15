@@ -25,8 +25,11 @@ type searchResponse struct {
 	Scope       string                    `json:"scope"`
 	Limit       int                       `json:"limit"`
 	Offset      int                       `json:"offset"`
+	NextOffset  int                       `json:"next_offset"`
+	HasMore     bool                      `json:"has_more"`
 	Communities []searchCommunityResponse `json:"communities"`
 	Posts       []searchPostResponse      `json:"posts"`
+	Users       []searchUserResponse      `json:"users"`
 }
 
 type searchCommunityResponse struct {
@@ -51,6 +54,18 @@ type searchPostResponse struct {
 	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type searchUserResponse struct {
+	ID          string    `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url"`
+	Headline    string    `json:"headline"`
+	BioExcerpt  string    `json:"bio_excerpt"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func NewHandler(search SearchUseCase) *Handler {
@@ -110,8 +125,11 @@ func toSearchResponse(result searchusecase.SearchResult) searchResponse {
 		Scope:       result.Scope,
 		Limit:       result.Limit,
 		Offset:      result.Offset,
+		NextOffset:  result.NextOffset,
+		HasMore:     result.HasMore,
 		Communities: make([]searchCommunityResponse, 0, len(result.Communities)),
 		Posts:       make([]searchPostResponse, 0, len(result.Posts)),
+		Users:       make([]searchUserResponse, 0, len(result.Users)),
 	}
 	for _, community := range result.Communities {
 		response.Communities = append(response.Communities, searchCommunityResponse{
@@ -137,6 +155,19 @@ func toSearchResponse(result searchusecase.SearchResult) searchResponse {
 			Status:        post.Status,
 			CreatedAt:     post.CreatedAt,
 			UpdatedAt:     post.UpdatedAt,
+		})
+	}
+	for _, user := range result.Users {
+		response.Users = append(response.Users, searchUserResponse{
+			ID:          user.ID,
+			Username:    user.Username,
+			DisplayName: user.DisplayName,
+			AvatarURL:   user.AvatarURL,
+			Headline:    user.Headline,
+			BioExcerpt:  user.BioExcerpt,
+			Status:      user.Status,
+			CreatedAt:   user.CreatedAt,
+			UpdatedAt:   user.UpdatedAt,
 		})
 	}
 	return response

@@ -5,11 +5,17 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
 )
 
-const MaxAltTextLength = 200
+const (
+	MaxAltTextLength           = 200
+	MaxStorageBucketRunes      = 128
+	MaxObjectKeyRunes          = 1024
+	MaxAttachmentPublicURLSize = 2048
+)
 
 type AttachmentID string
 
@@ -207,11 +213,27 @@ func RehydrateAttachment(params NewAttachmentParams) (*Attachment, error) {
 	if strings.TrimSpace(params.Bucket) == "" {
 		return nil, apperr.New(apperr.CodeInvalidArgument, "attachment bucket is required")
 	}
+	bucket, err := textlimit.TrimmedOptionalMaxRunes(params.Bucket, "attachment bucket", MaxStorageBucketRunes)
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(params.ObjectKey) == "" {
 		return nil, apperr.New(apperr.CodeInvalidArgument, "attachment object key is required")
 	}
+	objectKey, err := textlimit.TrimmedOptionalMaxRunes(params.ObjectKey, "attachment object key", MaxObjectKeyRunes)
+	if err != nil {
+		return nil, err
+	}
+	thumbnailObjectKey, err := textlimit.TrimmedOptionalMaxRunes(params.ThumbnailObjectKey, "attachment thumbnail object key", MaxObjectKeyRunes)
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(params.PublicURL) == "" {
 		return nil, apperr.New(apperr.CodeInvalidArgument, "attachment public url is required")
+	}
+	publicURL := strings.TrimSpace(params.PublicURL)
+	if err := textlimit.EnsureMaxBytes(publicURL, "attachment public url", MaxAttachmentPublicURLSize); err != nil {
+		return nil, err
 	}
 	width, err := validateOptionalPositiveInt(params.Width, "attachment width is invalid")
 	if err != nil {
@@ -252,10 +274,10 @@ func RehydrateAttachment(params NewAttachmentParams) (*Attachment, error) {
 		uploaderID:         params.UploaderID,
 		kind:               params.Kind,
 		storageProvider:    params.StorageProvider,
-		bucket:             strings.TrimSpace(params.Bucket),
-		objectKey:          strings.TrimSpace(params.ObjectKey),
-		publicURL:          strings.TrimSpace(params.PublicURL),
-		thumbnailObjectKey: strings.TrimSpace(params.ThumbnailObjectKey),
+		bucket:             bucket,
+		objectKey:          objectKey,
+		publicURL:          publicURL,
+		thumbnailObjectKey: thumbnailObjectKey,
 		width:              width,
 		height:             height,
 		sizeBytes:          params.SizeBytes,

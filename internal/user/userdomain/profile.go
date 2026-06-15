@@ -6,12 +6,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 )
 
 const (
 	maxDisplayNameLength = 40
 	maxHeadlineLength    = 80
 	maxBioLength         = 300
+	maxProfileURLLength  = 2048
 )
 
 type DisplayName string
@@ -89,6 +91,9 @@ func (value BannerURL) String() string {
 func validateOptionalHTTPURL(raw string) error {
 	if raw == "" {
 		return nil
+	}
+	if err := textlimit.EnsureMaxBytes(raw, "url", maxProfileURLLength); err != nil {
+		return err
 	}
 
 	parsed, err := url.Parse(raw)

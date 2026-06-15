@@ -8,6 +8,7 @@ type Config struct {
 	HTTP     HTTPConfig
 	Log      LogConfig
 	Auth     AuthConfig
+	Mail     MailConfig
 	Storage  ObjectStorageConfig
 	Upload   UploadConfig
 }
@@ -42,8 +43,27 @@ type LogConfig struct {
 type CacheConfig struct {
 }
 type AuthConfig struct {
-	TokenSecret    string
-	AccessTokenTTL time.Duration
+	TokenSecret             string
+	AccessTokenTTL          time.Duration
+	EmailAllowedDomains     []string
+	EmailCodeTTL            time.Duration
+	EmailCodeResendInterval time.Duration
+	EmailCodeMaxAttempts    int
+	EmailCodeDailyLimit     int
+	EmailCodeIPHourlyLimit  int
+	EmailCodeLength         int
+}
+type MailConfig struct {
+	Provider string
+	SMTP     SMTPConfig
+}
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	TLSMode  string
 }
 type ObjectStorageConfig struct {
 	Provider        string

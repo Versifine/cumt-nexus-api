@@ -76,6 +76,11 @@ func (repo *PostgresPostRepository) FindVisibleByID(ctx context.Context, id post
 			title,
 			body,
 			status,
+			is_locked,
+			is_pinned,
+			is_nsfw,
+			is_spoiler,
+			flair_text,
 			created_at,
 			updated_at
 		FROM posts
@@ -221,6 +226,11 @@ func (repo *PostgresPostRepository) ListRecommendedInPublicCommunities(ctx conte
 				posts.title,
 				posts.body,
 				posts.status,
+				posts.is_locked,
+				posts.is_pinned,
+				posts.is_nsfw,
+				posts.is_spoiler,
+				posts.flair_text,
 				posts.created_at,
 				posts.updated_at,
 				(
@@ -254,6 +264,11 @@ func (repo *PostgresPostRepository) ListRecommendedInPublicCommunities(ctx conte
 			title,
 			body,
 			status,
+			is_locked,
+			is_pinned,
+			is_nsfw,
+			is_spoiler,
+			flair_text,
 			created_at,
 			updated_at
 		FROM ranked
@@ -288,6 +303,20 @@ func (repo *PostgresPostRepository) ListRecommendedInPublicCommunities(ctx conte
 	return posts, nil
 }
 
+func (repo *PostgresPostRepository) ListFollowingInPublicCommunities(ctx context.Context, viewerID userdomain.UserID, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
+	return repo.listVisiblePosts(
+		ctx,
+		"list following posts in public communities",
+		"INNER JOIN communities ON communities.id = posts.community_id INNER JOIN community_follows ON community_follows.community_id = posts.community_id",
+		"community_follows.user_id = $1::uuid AND posts.status = 'visible' AND communities.status = 'active' AND communities.visibility = 'public'",
+		[]any{viewerID.String()},
+		sort,
+		createdAfter,
+		limit,
+		offset,
+	)
+}
+
 func (repo *PostgresPostRepository) ListVisibleByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID, sort postusecase.PostListSort, createdAfter *time.Time, limit int, offset int) ([]postdomain.Post, error) {
 	return repo.listVisiblePosts(
 		ctx,
@@ -320,6 +349,11 @@ func (repo *PostgresPostRepository) ListPostsByCommunityForManagement(ctx contex
 			posts.title,
 			posts.body,
 			posts.status,
+			posts.is_locked,
+			posts.is_pinned,
+			posts.is_nsfw,
+			posts.is_spoiler,
+			posts.flair_text,
 			posts.created_at,
 			posts.updated_at
 		FROM posts
@@ -366,6 +400,11 @@ func (repo *PostgresPostRepository) listVisiblePosts(ctx context.Context, operat
 			posts.title,
 			posts.body,
 			posts.status,
+			posts.is_locked,
+			posts.is_pinned,
+			posts.is_nsfw,
+			posts.is_spoiler,
+			posts.flair_text,
 			posts.created_at,
 			posts.updated_at
 		FROM posts
@@ -780,6 +819,11 @@ func (repo *PostgresPostRepository) ListSavedVisiblePosts(ctx context.Context, u
 			posts.title,
 			posts.body,
 			posts.status,
+			posts.is_locked,
+			posts.is_pinned,
+			posts.is_nsfw,
+			posts.is_spoiler,
+			posts.flair_text,
 			posts.created_at,
 			posts.updated_at
 		FROM post_saves
@@ -983,6 +1027,11 @@ func scanPost(row rowScanner) (*postdomain.Post, error) {
 	var rawTitle string
 	var rawBody string
 	var rawStatus string
+	var isLocked bool
+	var isPinned bool
+	var isNSFW bool
+	var isSpoiler bool
+	var flairText string
 	var createdAt time.Time
 	var updatedAt time.Time
 
@@ -993,6 +1042,11 @@ func scanPost(row rowScanner) (*postdomain.Post, error) {
 		&rawTitle,
 		&rawBody,
 		&rawStatus,
+		&isLocked,
+		&isPinned,
+		&isNSFW,
+		&isSpoiler,
+		&flairText,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -1024,7 +1078,7 @@ func scanPost(row rowScanner) (*postdomain.Post, error) {
 		return nil, fmt.Errorf("rehydrate post status: %v", err)
 	}
 
-	post, err := postdomain.RehydratePost(id, communityID, authorID, title, body, status, createdAt, updatedAt)
+	post, err := postdomain.RehydratePostWithModerationState(id, communityID, authorID, title, body, status, isLocked, isPinned, isNSFW, isSpoiler, flairText, createdAt, updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate post: %v", err)
 	}

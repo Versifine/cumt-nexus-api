@@ -46,6 +46,10 @@ type CommentVoteRepository interface {
 	SummarizeCommentVotesByIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID]votedomain.CommentVoteSummary, error)
 }
 
+type CommentEffectRepository interface {
+	ListCommentEffectsByCommentIDs(ctx context.Context, commentIDs []commentdomain.CommentID) (map[commentdomain.CommentID][]CommentEffectSummary, error)
+}
+
 type CommentMetadata struct {
 	Author postusecase.UserSummary
 }

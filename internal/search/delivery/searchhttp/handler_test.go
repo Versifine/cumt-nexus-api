@@ -49,6 +49,17 @@ func TestSearchReturnsResults(t *testing.T) {
 				CreatedAt:     now,
 				UpdatedAt:     now,
 			}},
+			Users: []searchusecase.UserResult{{
+				ID:          "user-1",
+				Username:    "alice",
+				DisplayName: "Alice",
+				AvatarURL:   "https://example.com/avatar.jpg",
+				Headline:    "Student",
+				BioExcerpt:  "Bio",
+				Status:      "active",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}},
 		},
 	}
 	router := newSearchTestRouter(usecase, validParser())
@@ -83,6 +94,9 @@ func TestSearchReturnsResults(t *testing.T) {
 	}
 	if len(response.Posts) != 1 || response.Posts[0].BodyExcerpt != "notice body" {
 		t.Fatalf("unexpected posts response: %#v", response.Posts)
+	}
+	if len(response.Users) != 1 || response.Users[0].Username != "alice" || response.Users[0].BioExcerpt != "Bio" {
+		t.Fatalf("unexpected users response: %#v", response.Users)
 	}
 }
 

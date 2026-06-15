@@ -45,6 +45,8 @@ type listNotificationsResponse struct {
 	Status        string                 `json:"status"`
 	Limit         int                    `json:"limit"`
 	Offset        int                    `json:"offset"`
+	NextOffset    int                    `json:"next_offset"`
+	HasMore       bool                   `json:"has_more"`
 }
 
 type unreadSummaryResponse struct {
@@ -117,6 +119,8 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 		Status:        result.Status,
 		Limit:         result.Limit,
 		Offset:        result.Offset,
+		NextOffset:    result.NextOffset,
+		HasMore:       result.HasMore,
 	}
 	for _, notification := range result.Notifications {
 		response.Notifications = append(response.Notifications, toNotificationResponse(notification))

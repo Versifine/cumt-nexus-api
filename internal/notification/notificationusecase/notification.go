@@ -14,6 +14,7 @@ import (
 const (
 	DefaultNotificationListLimit = 20
 	MaxNotificationListLimit     = 50
+	MaxNotificationSourceIDRunes = 64
 )
 
 const (
@@ -80,6 +81,8 @@ type ListNotificationsResult struct {
 	Status        string
 	Limit         int
 	Offset        int
+	NextOffset    int
+	HasMore       bool
 }
 
 type UnreadSummaryInput struct {
@@ -179,6 +182,9 @@ func (uc *UseCase) NotifyMentioned(ctx context.Context, recipientID userdomain.U
 	if strings.TrimSpace(sourceID) == "" {
 		return apperr.New(apperr.CodeInvalidArgument, "mention notification source id is required")
 	}
+	if len([]rune(strings.TrimSpace(sourceID))) > MaxNotificationSourceIDRunes {
+		return apperr.New(apperr.CodeInvalidArgument, "mention notification source id is invalid")
+	}
 	notification := uc.newNotification(recipientID, actorID, NotificationTypeMention, "新的提及", "有人提到了你", sourceType, sourceID, "")
 	if err := uc.repository.Create(ctx, notification); err != nil {
 		return fmt.Errorf("create mention notification: %w", err)
@@ -203,21 +209,25 @@ func (uc *UseCase) ListNotifications(ctx context.Context, input ListNotification
 		return ListNotificationsResult{}, err
 	}
 
-	notifications, err := uc.repository.ListByRecipient(ctx, input.ActorID, category, status, limit, offset)
+	notifications, err := uc.repository.ListByRecipient(ctx, input.ActorID, category, status, limit+1, offset)
 	if err != nil {
 		return ListNotificationsResult{}, fmt.Errorf("list notifications: %w", err)
 	}
+	notifications, hasMore := trimNotificationsPage(notifications, limit)
 	return ListNotificationsResult{
 		Notifications: notifications,
 		Category:      category.String(),
 		Status:        status.String(),
 		Limit:         limit,
 		Offset:        offset,
+		NextOffset:    offset + len(notifications),
+		HasMore:       hasMore,
 	}, nil
 }
 
 func (uc *UseCase) newNotification(recipientID userdomain.UserID, actorID userdomain.UserID, notificationType string, title string, body string, sourceType string, sourceID string, aggregateKey string) Notification {
 	now := uc.now().UTC()
+	sourceID = strings.TrimSpace(sourceID)
 	return Notification{
 		ID:             uuid.NewString(),
 		RecipientID:    recipientID.String(),
@@ -225,7 +235,7 @@ func (uc *UseCase) newNotification(recipientID userdomain.UserID, actorID userdo
 		Title:          title,
 		Body:           body,
 		SourceType:     sourceType,
-		SourceID:       strings.TrimSpace(sourceID),
+		SourceID:       sourceID,
 		AggregateKey:   aggregateKey,
 		AggregateCount: 1,
 		LastActorID:    actorID.String(),
@@ -346,6 +356,13 @@ func normalizePagination(limit int, offset int) (int, int, error) {
 		limit = MaxNotificationListLimit
 	}
 	return limit, offset, nil
+}
+
+func trimNotificationsPage(notifications []Notification, limit int) ([]Notification, bool) {
+	if len(notifications) <= limit {
+		return notifications, false
+	}
+	return notifications[:limit], true
 }
 
 func requireActor(actorID userdomain.UserID) error {

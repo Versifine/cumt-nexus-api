@@ -51,7 +51,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000017 | add_user_profile_fields | 为 `users` 表增加公开资料字段和基础长度/URL 约束 |
 | 000018 | add_user_banner_url | 为 `users` 表增加公开主页背景图 URL 字段和 URL 约束 |
 | 000019 | create_embeds | 创建白名单嵌入解析结果表 |
+| 000020 | add_text_length_constraints | 为外部输入、展示和系统持久化文本字段补充长度约束 |
+| 000021 | add_search_like_escape_function | 增加搜索字面量 `LIKE` 转义函数，用于中文、短词、前缀和子串兜底匹配 |
+| 000022 | add_auth_security | 为用户增加校园邮箱、安全状态和 token 失效字段，并创建邮箱验证码和账号安全事件表 |
+| 000023 | add_account_deletion | 增加用户 deleted 状态、删除时间和注销账号验证码用途 |
+| 000024 | create_progression_titles | 创建用户全站经验账户、经验事件、头衔目录和头衔授予表 |
+| 000025 | create_user_follows | 创建用户关注事实表和粉丝/关注列表查询索引 |
 
 ## 阶段 19 边界
 
 阶段 19 只沉淀 migration 契约和清单校验，不新增 schema migration，不修改已有 SQL，不改变 migration runner 行为，也不进入新的业务产品语义。
+
+| 000026 | create_community_owner_transfers | Adds community owner transfer records and active-owner uniqueness guard |
+| 000027 | add_platform_roles | Adds `users.platform_role` for owner/admin/staff platform role hierarchy |
+| 000028 | create_user_sanctions | Creates user sanction records for timed/permanent account bans and revocation audit state |
+| 000029 | create_platform_owner_transfers | Creates platform owner transfer records, system audit actor refs and active platform owner uniqueness guard |
+| 000030 | create_moderation_tools | Adds Reddit-style moderation queues, content action metadata, removal reasons, saved responses, community user moderation states, mod notes and community moderation logs |

@@ -70,8 +70,27 @@ function Get-HandlerBody {
         return ''
     }
 
-    $content = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $repo $Source)
-    $signature = [regex]::Match($content, "func\s+\(h \*Handler\)\s+$Handler\s*\(c \*gin\.Context\)\s*\{")
+    $sourcePath = Join-Path $repo $Source
+    $content = Get-Content -Raw -Encoding UTF8 -LiteralPath $sourcePath
+    $signature = [regex]::Match($content, "func\s+\(h \*Handler\)\s+$Handler\s*\(c \*gin\.Context(?:,\s*[^)]*)?\)\s*\{")
+    if (-not $signature.Success) {
+        $sourceDir = Split-Path -Parent $sourcePath
+        foreach ($candidate in Get-ChildItem -LiteralPath $sourceDir -Filter '*.go') {
+            if ($candidate.Name.EndsWith('_test.go')) {
+                continue
+            }
+            if ($candidate.FullName -eq $sourcePath) {
+                continue
+            }
+            $candidateContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $candidate.FullName
+            $candidateSignature = [regex]::Match($candidateContent, "func\s+\(h \*Handler\)\s+$Handler\s*\(c \*gin\.Context(?:,\s*[^)]*)?\)\s*\{")
+            if ($candidateSignature.Success) {
+                $content = $candidateContent
+                $signature = $candidateSignature
+                break
+            }
+        }
+    }
     if (-not $signature.Success) {
         return ''
     }
@@ -85,7 +104,15 @@ function Get-HandlerBody {
         } elseif ($char -eq '}') {
             $depth--
             if ($depth -eq 0) {
-                return $content.Substring($bodyStart, $i - $bodyStart)
+                $body = $content.Substring($bodyStart, $i - $bodyStart)
+                foreach ($helperMatch in [regex]::Matches($body, '\bh\.(listModQueue|listUserStates)\(c')) {
+                    $helperName = $helperMatch.Groups[1].Value
+                    $helperBody = Get-HandlerBody -Source $Source -Handler $helperName
+                    if (-not [string]::IsNullOrWhiteSpace($helperBody)) {
+                        $body += "`n" + $helperBody
+                    }
+                }
+                return $body
             }
         }
     }
@@ -143,6 +170,7 @@ if ([regex]::IsMatch($mainContent, 'router\.Static\("/uploads"')) {
 Add-RoutesFromFile -Routes $actualRoutes -Path 'internal/auth/delivery/authhttp/register.go' -Prefix '/api/v1/auth' -Auth 'public'
 
 $protectedRouteFiles = @(
+    'internal/auth/delivery/authhttp/security.go',
     'internal/admin/delivery/adminhttp/handler.go',
     'internal/vote/delivery/votehttp/handler.go',
     'internal/moderation/delivery/moderationhttp/handler.go',
@@ -167,7 +195,7 @@ Add-RoutesFromFile `
     -Path 'internal/user/delivery/userhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('Me', 'UpdateProfile')
+    -IncludeHandlers @('Me', 'UpdateProfile', 'ListFollowedUsers', 'FollowUser', 'DeleteUserFollow')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
@@ -181,7 +209,7 @@ Add-RoutesFromFile `
     -Path 'internal/community/delivery/communityhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers', 'ListCommunityManagePosts', 'ListCommunityManageComments', 'ListCommunityManageReports', 'GetCommunityManageSettings', 'UpdateCommunityManageSettings', 'ListCommunityRules', 'CreateCommunityRule', 'UpdateCommunityRule', 'DeleteCommunityRule')
+    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers', 'AddCommunityModerator', 'RemoveCommunityModerator', 'CreateCommunityOwnerTransfer', 'AcceptCommunityOwnerTransfer', 'ListCommunityManagePosts', 'ListCommunityManageComments', 'ListCommunityManageReports', 'GetCommunityManageSettings', 'UpdateCommunityManageSettings', 'ListCommunityRules', 'CreateCommunityRule', 'UpdateCommunityRule', 'DeleteCommunityRule')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
@@ -229,7 +257,13 @@ Add-RoutesFromFile `
     -Path 'internal/effect/delivery/effecthttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('GetMyPoints', 'ApplyCommentEffect')
+    -IncludeHandlers @('GetMyPoints', 'ListMyPointTransactions', 'ApplyCommentEffect')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/progression/delivery/progressionhttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'Bearer'
 
 if (-not (Test-Path -LiteralPath $docFullPath)) {
     throw "contract doc not found: $DocPath"

@@ -114,6 +114,10 @@ func TestUserStatusAndCanLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewUserStatus disabled returned error: %v", err)
 	}
+	deletedStatus, err := NewUserStatus("deleted")
+	if err != nil {
+		t.Fatalf("NewUserStatus deleted returned error: %v", err)
+	}
 
 	now := time.Now().UTC()
 	user := mustNewUser(t, now)
@@ -127,6 +131,13 @@ func TestUserStatusAndCanLogin(t *testing.T) {
 	}
 	if disabledUser.CanLogin() {
 		t.Fatal("disabled user should not be able to login")
+	}
+	deletedUser, err := RehydrateUser(user.ID(), user.Username(), user.PasswordHash(), deletedStatus, now, now)
+	if err != nil {
+		t.Fatalf("RehydrateUser deleted returned error: %v", err)
+	}
+	if deletedUser.CanLogin() {
+		t.Fatal("deleted user should not be able to login")
 	}
 
 	if _, err := NewUserStatus("locked"); !hasAppCode(err, apperr.CodeInvalidArgument) {

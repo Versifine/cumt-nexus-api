@@ -94,7 +94,7 @@ func TestListPostCommentsReturnsComments(t *testing.T) {
 	comments := &fakeCommentUseCase{
 		listResult: commentusecase.ListPostCommentsResult{
 			Comments: []commentusecase.Comment{
-				newCommentResult("Newer", now),
+				newCommentResultWithEffect("Newer", now),
 				newChildCommentResultWithAttachment("Older", parentID, now.Add(-time.Minute)),
 			},
 			View:     "tree",
@@ -143,6 +143,9 @@ func TestListPostCommentsReturnsComments(t *testing.T) {
 	}
 	if len(response.Comments[1].Attachments) != 1 || response.Comments[1].Attachments[0].Kind != "image" {
 		t.Fatalf("expected child comment attachment, got %#v", response.Comments[1].Attachments)
+	}
+	if len(response.Comments[0].Effects) != 1 || response.Comments[0].Effects[0].EffectID != "sparkle" || response.Comments[0].Effects[0].AppliedByUser.Username != "alice" {
+		t.Fatalf("expected root comment effect, got %#v", response.Comments[0].Effects)
 	}
 }
 
@@ -575,6 +578,26 @@ func newCommentResultWithAttachment(body string, now time.Time) commentusecase.C
 		{Kind: "image", RefID: "98fb2f1e-72a8-4f3a-9a38-787aeed6ac9a"},
 		{Kind: "link_preview", RefID: "https://example.com/comment"},
 	}
+	return comment
+}
+
+func newCommentResultWithEffect(body string, now time.Time) commentusecase.Comment {
+	comment := newCommentResult(body, now)
+	comment.Effects = []commentusecase.CommentEffectSummary{{
+		ID:           "d9f1ff4d-8a69-4f0c-8c24-8f3b0b8994b4",
+		EffectID:     "sparkle",
+		Name:         "Sparkle",
+		AssetURL:     "https://example.com/sparkle.png",
+		AnimationKey: "sparkle",
+		AppliedByUser: postusecase.UserSummary{
+			ID:          userdomain.NewGeneratedUserID().String(),
+			Username:    "alice",
+			DisplayName: "Alice",
+			Badges:      []string{},
+		},
+		PointsSpent: 10,
+		CreatedAt:   now,
+	}}
 	return comment
 }
 

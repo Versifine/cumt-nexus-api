@@ -6,8 +6,14 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
+)
+
+const (
+	MaxPostTitleRunes = 120
+	MaxPostBodyRunes  = 20000
 )
 
 type PostID string
@@ -37,12 +43,12 @@ func (id PostID) String() string {
 type PostTitle string
 
 func NewPostTitle(raw string) (PostTitle, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "post title is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "post title", MaxPostTitleRunes)
+	if err != nil {
+		return "", err
 	}
 
-	return PostTitle(raw), nil
+	return PostTitle(value), nil
 }
 
 func (title PostTitle) String() string {
@@ -52,12 +58,12 @@ func (title PostTitle) String() string {
 type PostBody string
 
 func NewPostBody(raw string) (PostBody, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "post body is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "post body", MaxPostBodyRunes)
+	if err != nil {
+		return "", err
 	}
 
-	return PostBody(raw), nil
+	return PostBody(value), nil
 }
 
 func (body PostBody) String() string {
@@ -72,6 +78,7 @@ const (
 	PostStatusDeleted PostStatus = "deleted"
 	PostStatusLocked  PostStatus = "locked"
 	PostStatusHidden  PostStatus = "hidden"
+	PostStatusSpam    PostStatus = "spam"
 )
 
 func NewPostStatus(raw string) (PostStatus, error) {
@@ -86,6 +93,8 @@ func NewPostStatus(raw string) (PostStatus, error) {
 		return PostStatusLocked, nil
 	case PostStatusHidden:
 		return PostStatusHidden, nil
+	case PostStatusSpam:
+		return PostStatusSpam, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "post status is invalid")
 	}
@@ -102,6 +111,11 @@ type Post struct {
 	title       PostTitle
 	body        PostBody
 	status      PostStatus
+	isLocked    bool
+	isPinned    bool
+	isNSFW      bool
+	isSpoiler   bool
+	flairText   string
 	createdAt   time.Time
 	updatedAt   time.Time
 }
@@ -117,6 +131,24 @@ func RehydratePost(
 	title PostTitle,
 	body PostBody,
 	status PostStatus,
+	createdAt time.Time,
+	updatedAt time.Time,
+) (*Post, error) {
+	return RehydratePostWithModerationState(id, communityID, authorID, title, body, status, false, false, false, false, "", createdAt, updatedAt)
+}
+
+func RehydratePostWithModerationState(
+	id PostID,
+	communityID communitydomain.CommunityID,
+	authorID userdomain.UserID,
+	title PostTitle,
+	body PostBody,
+	status PostStatus,
+	isLocked bool,
+	isPinned bool,
+	isNSFW bool,
+	isSpoiler bool,
+	flairText string,
 	createdAt time.Time,
 	updatedAt time.Time,
 ) (*Post, error) {
@@ -155,6 +187,11 @@ func RehydratePost(
 		title:       title,
 		body:        body,
 		status:      status,
+		isLocked:    isLocked,
+		isPinned:    isPinned,
+		isNSFW:      isNSFW,
+		isSpoiler:   isSpoiler,
+		flairText:   strings.TrimSpace(flairText),
 		createdAt:   createdAt,
 		updatedAt:   updatedAt,
 	}, nil
@@ -182,6 +219,26 @@ func (post *Post) Body() PostBody {
 
 func (post *Post) Status() PostStatus {
 	return post.status
+}
+
+func (post *Post) IsLocked() bool {
+	return post.isLocked
+}
+
+func (post *Post) IsPinned() bool {
+	return post.isPinned
+}
+
+func (post *Post) IsNSFW() bool {
+	return post.isNSFW
+}
+
+func (post *Post) IsSpoiler() bool {
+	return post.isSpoiler
+}
+
+func (post *Post) FlairText() string {
+	return post.flairText
 }
 
 func (post *Post) CreatedAt() time.Time {

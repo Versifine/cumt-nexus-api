@@ -6,9 +6,12 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
 )
+
+const MaxCommentBodyRunes = 5000
 
 type CommentID string
 
@@ -37,12 +40,12 @@ func (id CommentID) String() string {
 type CommentBody string
 
 func NewCommentBody(raw string) (CommentBody, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", apperr.New(apperr.CodeInvalidArgument, "comment body is required")
+	value, err := textlimit.TrimmedRequiredMaxRunes(raw, "comment body", MaxCommentBodyRunes)
+	if err != nil {
+		return "", err
 	}
 
-	return CommentBody(raw), nil
+	return CommentBody(value), nil
 }
 
 func (body CommentBody) String() string {
@@ -57,6 +60,7 @@ const (
 	CommentStatusDeleted CommentStatus = "deleted"
 	CommentStatusLocked  CommentStatus = "locked"
 	CommentStatusHidden  CommentStatus = "hidden"
+	CommentStatusSpam    CommentStatus = "spam"
 )
 
 func NewCommentStatus(raw string) (CommentStatus, error) {
@@ -71,6 +75,8 @@ func NewCommentStatus(raw string) (CommentStatus, error) {
 		return CommentStatusLocked, nil
 	case CommentStatusHidden:
 		return CommentStatusHidden, nil
+	case CommentStatusSpam:
+		return CommentStatusSpam, nil
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "comment status is invalid")
 	}

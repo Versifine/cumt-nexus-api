@@ -14,6 +14,8 @@ import (
 )
 
 const InitialPointBalance = 100
+const DefaultPointTransactionListLimit = 20
+const MaxPointTransactionListLimit = 50
 
 var effectIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
@@ -27,6 +29,7 @@ type Repository interface {
 	ListActiveEffects(ctx context.Context) ([]Effect, error)
 	FindActiveEffectByID(ctx context.Context, effectID string) (Effect, error)
 	GetOrCreatePointAccount(ctx context.Context, userID userdomain.UserID, initialBalance int, now time.Time) (PointAccount, error)
+	ListPointTransactions(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]PointTransaction, error)
 	ApplyCommentEffect(ctx context.Context, input ApplyCommentEffectRecordInput) (ApplyCommentEffectRecordResult, error)
 }
 
@@ -63,6 +66,17 @@ type CommentEffect struct {
 	CreatedAt   time.Time
 }
 
+type PointTransaction struct {
+	ID           string
+	UserID       string
+	Delta        int
+	BalanceAfter int
+	Reason       string
+	SourceType   string
+	SourceID     string
+	CreatedAt    time.Time
+}
+
 type ListEffectsCatalogResult struct {
 	Effects []Effect
 }
@@ -73,6 +87,20 @@ type GetMyPointsInput struct {
 
 type GetMyPointsResult struct {
 	Points PointAccount
+}
+
+type ListMyPointTransactionsInput struct {
+	ActorID userdomain.UserID
+	Limit   int
+	Offset  int
+}
+
+type ListMyPointTransactionsResult struct {
+	Transactions []PointTransaction
+	Limit        int
+	Offset       int
+	NextOffset   int
+	HasMore      bool
 }
 
 type ApplyCommentEffectInput struct {
@@ -137,6 +165,31 @@ func (uc *UseCase) GetMyPoints(ctx context.Context, input GetMyPointsInput) (Get
 	return GetMyPointsResult{Points: points}, nil
 }
 
+func (uc *UseCase) ListMyPointTransactions(ctx context.Context, input ListMyPointTransactionsInput) (ListMyPointTransactionsResult, error) {
+	if strings.TrimSpace(input.ActorID.String()) == "" {
+		return ListMyPointTransactionsResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	limit, offset, err := normalizePagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListMyPointTransactionsResult{}, err
+	}
+	if uc.repository == nil {
+		return ListMyPointTransactionsResult{}, fmt.Errorf("effect repository is not configured")
+	}
+	transactions, err := uc.repository.ListPointTransactions(ctx, input.ActorID, limit+1, offset)
+	if err != nil {
+		return ListMyPointTransactionsResult{}, fmt.Errorf("list point transactions: %w", err)
+	}
+	transactions, hasMore := trimPointTransactionPage(transactions, limit)
+	return ListMyPointTransactionsResult{
+		Transactions: transactions,
+		Limit:        limit,
+		Offset:       offset,
+		NextOffset:   offset + len(transactions),
+		HasMore:      hasMore,
+	}, nil
+}
+
 func (uc *UseCase) ApplyCommentEffect(ctx context.Context, input ApplyCommentEffectInput) (ApplyCommentEffectResult, error) {
 	if strings.TrimSpace(input.ActorID.String()) == "" {
 		return ApplyCommentEffectResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
@@ -178,6 +231,26 @@ func (uc *UseCase) ApplyCommentEffect(ctx context.Context, input ApplyCommentEff
 		CommentEffect: result.CommentEffect,
 		Points:        result.Points,
 	}, nil
+}
+
+func normalizePagination(limit int, offset int) (int, int, error) {
+	if limit == 0 {
+		limit = DefaultPointTransactionListLimit
+	}
+	if limit < 0 || offset < 0 {
+		return 0, 0, apperr.New(apperr.CodeInvalidArgument, "pagination is invalid")
+	}
+	if limit > MaxPointTransactionListLimit {
+		limit = MaxPointTransactionListLimit
+	}
+	return limit, offset, nil
+}
+
+func trimPointTransactionPage(transactions []PointTransaction, limit int) ([]PointTransaction, bool) {
+	if len(transactions) <= limit {
+		return transactions, false
+	}
+	return transactions[:limit], true
 }
 
 func normalizeEffectID(raw string) (string, error) {

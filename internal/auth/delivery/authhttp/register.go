@@ -17,13 +17,21 @@ type registerResponse struct {
 	User        userResponse `json:"user"`
 }
 type userResponse struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	Username      string    `json:"username"`
+	Status        string    `json:"status"`
+	Email         string    `json:"email"`
+	EmailVerified bool      `json:"email_verified"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/register", handler.Register)
+	group.POST("/email-codes/register", handler.SendRegisterEmailCode)
+	group.POST("/register-with-email", handler.RegisterWithEmail)
 	group.POST("/login", handler.Login)
+	group.POST("/email-codes/login", handler.SendLoginEmailCode)
+	group.POST("/login-with-email-code", handler.LoginWithEmailCode)
+	group.POST("/email-codes/password-reset", handler.SendPasswordResetEmailCode)
+	group.POST("/password-reset", handler.ResetPassword)
 }

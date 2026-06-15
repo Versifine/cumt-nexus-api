@@ -105,6 +105,9 @@ func validateObjectKey(objectKey string) error {
 	if strings.TrimSpace(objectKey) == "" {
 		return fmt.Errorf("object key is required")
 	}
+	if len([]rune(strings.TrimSpace(objectKey))) > 1024 {
+		return fmt.Errorf("object key is too long")
+	}
 	if strings.HasPrefix(objectKey, "/") || strings.Contains(objectKey, "\\") {
 		return fmt.Errorf("object key is invalid")
 	}

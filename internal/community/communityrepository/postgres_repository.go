@@ -142,7 +142,7 @@ func (repo *PostgresCommunityRepository) FindBySlug(ctx context.Context, slug co
 	return community, nil
 }
 
-func (repo *PostgresCommunityRepository) ListActivePublic(ctx context.Context) ([]communitydomain.Community, error) {
+func (repo *PostgresCommunityRepository) ListActivePublic(ctx context.Context, limit int, offset int) ([]communitydomain.Community, error) {
 	const query = `
 		SELECT
 			id::text,
@@ -159,9 +159,10 @@ func (repo *PostgresCommunityRepository) ListActivePublic(ctx context.Context) (
 		WHERE status = 'active'
 			AND visibility = 'public'
 		ORDER BY created_at ASC, slug ASC
+		LIMIT $1 OFFSET $2
 	`
 
-	rows, err := repo.db.Query(ctx, query)
+	rows, err := repo.db.Query(ctx, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list active public communities: %w", err)
 	}
@@ -677,6 +678,301 @@ func (repo *PostgresMembershipRepository) ListActiveMembers(ctx context.Context,
 	return members, nil
 }
 
+func (repo *PostgresMembershipRepository) FindActiveMemberByUserID(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID) (communityusecase.CommunityMember, error) {
+	const query = `
+		SELECT
+			users.id::text,
+			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline,
+			community_memberships.role,
+			community_memberships.status,
+			community_memberships.created_at,
+			community_memberships.updated_at
+		FROM community_memberships
+		INNER JOIN users ON users.id = community_memberships.user_id
+		WHERE community_memberships.community_id = $1::uuid
+			AND community_memberships.user_id = $2::uuid
+			AND community_memberships.status = 'active'
+			AND users.status = 'active'
+		LIMIT 1
+	`
+	return scanCommunityMember(repo.db.QueryRow(ctx, query, communityID.String(), userID.String()))
+}
+
+func (repo *PostgresMembershipRepository) FindActiveMemberByUsername(ctx context.Context, communityID communitydomain.CommunityID, username string) (communityusecase.CommunityMember, error) {
+	const query = `
+		SELECT
+			users.id::text,
+			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline,
+			community_memberships.role,
+			community_memberships.status,
+			community_memberships.created_at,
+			community_memberships.updated_at
+		FROM community_memberships
+		INNER JOIN users ON users.id = community_memberships.user_id
+		WHERE community_memberships.community_id = $1::uuid
+			AND users.username = $2
+			AND community_memberships.status = 'active'
+			AND users.status = 'active'
+		LIMIT 1
+	`
+	return scanCommunityMember(repo.db.QueryRow(ctx, query, communityID.String(), username))
+}
+
+func (repo *PostgresMembershipRepository) FindActiveUserByUsername(ctx context.Context, username string) (communityusecase.CommunityMember, error) {
+	const query = `
+		SELECT
+			id::text,
+			username,
+			display_name,
+			avatar_url,
+			headline,
+			'' AS role,
+			'active' AS status,
+			created_at,
+			updated_at
+		FROM users
+		WHERE username = $1
+			AND status = 'active'
+		LIMIT 1
+	`
+	return scanCommunityMember(repo.db.QueryRow(ctx, query, username))
+}
+
+func (repo *PostgresMembershipRepository) FindActiveUserByID(ctx context.Context, userID userdomain.UserID) (communityusecase.CommunityMember, error) {
+	const query = `
+		SELECT
+			id::text,
+			username,
+			display_name,
+			avatar_url,
+			headline,
+			'' AS role,
+			'active' AS status,
+			created_at,
+			updated_at
+		FROM users
+		WHERE id = $1::uuid
+			AND status = 'active'
+		LIMIT 1
+	`
+	return scanCommunityMember(repo.db.QueryRow(ctx, query, userID.String()))
+}
+
+func (repo *PostgresMembershipRepository) CountActiveMembers(ctx context.Context, communityID communitydomain.CommunityID) (int, error) {
+	var count int
+	if err := repo.db.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM community_memberships
+		WHERE community_id = $1::uuid
+			AND status = 'active'
+	`, communityID.String()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active community members: %w", err)
+	}
+	return count, nil
+}
+
+func (repo *PostgresMembershipRepository) CountActiveModerators(ctx context.Context, communityID communitydomain.CommunityID) (int, error) {
+	var count int
+	if err := repo.db.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM community_memberships
+		WHERE community_id = $1::uuid
+			AND role = 'moderator'
+			AND status = 'active'
+	`, communityID.String()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active community moderators: %w", err)
+	}
+	return count, nil
+}
+
+func (repo *PostgresMembershipRepository) UpsertActiveMemberRole(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, role communitydomain.MembershipRole, now time.Time) (communityusecase.CommunityMember, error) {
+	const query = `
+		INSERT INTO community_memberships (
+			community_id,
+			user_id,
+			role,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, 'active', $4, $4)
+		ON CONFLICT (community_id, user_id) DO UPDATE
+		SET role = EXCLUDED.role,
+			status = 'active',
+			updated_at = EXCLUDED.updated_at
+		RETURNING user_id::text
+	`
+	var rawUserID string
+	if err := repo.db.QueryRow(ctx, query, communityID.String(), userID.String(), role.String(), now).Scan(&rawUserID); err != nil {
+		return communityusecase.CommunityMember{}, mapPostgresWriteError("upsert community member role", err)
+	}
+	return repo.FindActiveMemberByUserID(ctx, communityID, userID)
+}
+
+func (repo *PostgresMembershipRepository) CreateOwnerTransfer(ctx context.Context, transfer communityusecase.CommunityOwnerTransferRecord) error {
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE community_owner_transfers
+		SET status = 'canceled',
+			updated_at = $3
+		WHERE community_id = $1::uuid
+			AND status = 'pending'
+			AND id <> $2::uuid
+	`, transfer.CommunityID.String(), transfer.ID, transfer.CreatedAt); err != nil {
+		return fmt.Errorf("cancel previous owner transfers: %w", err)
+	}
+	_, err := repo.db.Exec(ctx, `
+		INSERT INTO community_owner_transfers (
+			id,
+			community_id,
+			from_user_id,
+			to_user_id,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7)
+	`, transfer.ID, transfer.CommunityID.String(), transfer.FromUserID.String(), transfer.ToUserID.String(), transfer.Status, transfer.CreatedAt, transfer.UpdatedAt)
+	if err != nil {
+		return mapPostgresWriteError("create community owner transfer", err)
+	}
+	return nil
+}
+
+func (repo *PostgresMembershipRepository) FindOwnerTransferForUpdate(ctx context.Context, transferID string) (communityusecase.CommunityOwnerTransferRecord, error) {
+	const query = `
+		SELECT
+			id::text,
+			community_id::text,
+			from_user_id::text,
+			to_user_id::text,
+			status,
+			created_at,
+			updated_at,
+			accepted_at
+		FROM community_owner_transfers
+		WHERE id = $1::uuid
+		LIMIT 1
+		FOR UPDATE
+	`
+	return scanOwnerTransfer(repo.db.QueryRow(ctx, query, transferID))
+}
+
+func (repo *PostgresMembershipRepository) AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) error {
+	result, err := repo.db.Exec(ctx, `
+		UPDATE community_owner_transfers
+		SET status = 'accepted',
+			accepted_at = $2,
+			updated_at = $2
+		WHERE id = $1::uuid
+			AND status = 'pending'
+	`, transferID, acceptedAt)
+	if err != nil {
+		return mapPostgresWriteError("accept community owner transfer", err)
+	}
+	return ensureUpdated(result.RowsAffected(), "community owner transfer not found")
+}
+
+func (repo *PostgresMembershipRepository) TransferOwner(ctx context.Context, communityID communitydomain.CommunityID, newOwnerID userdomain.UserID, now time.Time) (communityusecase.CommunityOwnerChange, error) {
+	before, err := scanCommunityMember(repo.db.QueryRow(ctx, `
+		SELECT
+			users.id::text,
+			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline,
+			community_memberships.role,
+			community_memberships.status,
+			community_memberships.created_at,
+			community_memberships.updated_at
+		FROM community_memberships
+		INNER JOIN users ON users.id = community_memberships.user_id
+		WHERE community_memberships.community_id = $1::uuid
+			AND community_memberships.role = 'owner'
+			AND community_memberships.status = 'active'
+		LIMIT 1
+		FOR UPDATE OF community_memberships
+	`, communityID.String()))
+	if err != nil {
+		return communityusecase.CommunityOwnerChange{}, fmt.Errorf("find current community owner: %w", err)
+	}
+	if _, err := repo.FindActiveUserByID(ctx, newOwnerID); err != nil {
+		return communityusecase.CommunityOwnerChange{}, fmt.Errorf("find new community owner: %w", err)
+	}
+	if _, err := repo.db.Exec(ctx, `
+		UPDATE community_memberships
+		SET role = 'member',
+			updated_at = $2
+		WHERE community_id = $1::uuid
+			AND role = 'owner'
+			AND status = 'active'
+	`, communityID.String(), now); err != nil {
+		return communityusecase.CommunityOwnerChange{}, fmt.Errorf("demote current community owner: %w", err)
+	}
+	after, err := repo.UpsertActiveMemberRole(ctx, communityID, newOwnerID, communitydomain.MembershipRoleOwner, now)
+	if err != nil {
+		return communityusecase.CommunityOwnerChange{}, err
+	}
+	return communityusecase.CommunityOwnerChange{BeforeOwner: before, AfterOwner: after}, nil
+}
+
+func scanCommunityMember(row pgx.Row) (communityusecase.CommunityMember, error) {
+	var member communityusecase.CommunityMember
+	if err := row.Scan(
+		&member.UserID,
+		&member.Username,
+		&member.DisplayName,
+		&member.AvatarURL,
+		&member.Headline,
+		&member.Role,
+		&member.Status,
+		&member.CreatedAt,
+		&member.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return communityusecase.CommunityMember{}, apperr.New(apperr.CodeNotFound, "community member not found")
+		}
+		return communityusecase.CommunityMember{}, err
+	}
+	return member, nil
+}
+
+func scanOwnerTransfer(row pgx.Row) (communityusecase.CommunityOwnerTransferRecord, error) {
+	var record communityusecase.CommunityOwnerTransferRecord
+	var rawCommunityID string
+	var rawFromUserID string
+	var rawToUserID string
+	var acceptedAt pgtype.Timestamptz
+	if err := row.Scan(&record.ID, &rawCommunityID, &rawFromUserID, &rawToUserID, &record.Status, &record.CreatedAt, &record.UpdatedAt, &acceptedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return communityusecase.CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+		}
+		return communityusecase.CommunityOwnerTransferRecord{}, err
+	}
+	communityID, err := communitydomain.NewCommunityID(rawCommunityID)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferRecord{}, fmt.Errorf("rehydrate owner transfer community id: %v", err)
+	}
+	fromUserID, err := userdomain.NewUserID(rawFromUserID)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferRecord{}, fmt.Errorf("rehydrate owner transfer from user id: %v", err)
+	}
+	toUserID, err := userdomain.NewUserID(rawToUserID)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferRecord{}, fmt.Errorf("rehydrate owner transfer to user id: %v", err)
+	}
+	record.CommunityID = communityID
+	record.FromUserID = fromUserID
+	record.ToUserID = toUserID
+	record.AcceptedAt = nullableTime(acceptedAt)
+	return record, nil
+}
+
 type PostgresApplicationRepository struct {
 	db postgresExecutor
 }
@@ -898,6 +1194,26 @@ func (repo *PostgresPlatformStaffRepository) IsPlatformStaff(ctx context.Context
 	return isPlatformStaff, nil
 }
 
+func (repo *PostgresPlatformStaffRepository) IsPlatformOwner(ctx context.Context, userID userdomain.UserID) (bool, error) {
+	const query = `
+		SELECT platform_role = 'owner'
+		FROM users
+		WHERE id = $1::uuid
+			AND status = 'active'
+		LIMIT 1
+	`
+
+	var isPlatformOwner bool
+	if err := repo.db.QueryRow(ctx, query, userID.String()).Scan(&isPlatformOwner); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, apperr.New(apperr.CodeNotFound, "user not found")
+		}
+		return false, fmt.Errorf("check platform owner: %w", err)
+	}
+
+	return isPlatformOwner, nil
+}
+
 type PostgresCommunityTransactionManager struct {
 	pool *pgxpool.Pool
 }
@@ -1028,11 +1344,16 @@ func scanCommunity(row rowScanner) (*communitydomain.Community, error) {
 		return nil, fmt.Errorf("rehydrate community timestamps: missing timestamp")
 	}
 
+	description, err := communitydomain.NewCommunityDescription(rawDescription)
+	if err != nil {
+		return nil, err
+	}
+
 	community, err := communitydomain.RehydrateCommunity(
 		id,
 		slug,
 		name,
-		communitydomain.NewCommunityDescription(rawDescription),
+		description,
 		kind,
 		status,
 		visibility,
@@ -1100,11 +1421,16 @@ func scanCommunityRule(row rowScanner) (*communitydomain.CommunityRule, error) {
 		return nil, fmt.Errorf("rehydrate community rule timestamps: missing timestamp")
 	}
 
+	body, err := communitydomain.NewCommunityRuleBody(rawBody)
+	if err != nil {
+		return nil, err
+	}
+
 	rule, err := communitydomain.RehydrateCommunityRule(
 		id,
 		communityID,
 		title,
-		communitydomain.NewCommunityRuleBody(rawBody),
+		body,
 		position,
 		createdBy,
 		updatedBy,
@@ -1236,6 +1562,21 @@ func nullableTimeValue(value time.Time, ok bool) any {
 		return nil
 	}
 	return value
+}
+
+func nullableTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	t := value.Time
+	return &t
+}
+
+func ensureUpdated(rows int64, message string) error {
+	if rows == 0 {
+		return apperr.New(apperr.CodeNotFound, message)
+	}
+	return nil
 }
 
 func nullableRejectReasonValue(reason communitydomain.RejectReason, ok bool) any {

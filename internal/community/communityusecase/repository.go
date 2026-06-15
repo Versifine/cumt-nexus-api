@@ -16,7 +16,7 @@ type CommunityRepository interface {
 	Create(ctx context.Context, community communitydomain.Community) error
 	FindByID(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error)
 	FindBySlug(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error)
-	ListActivePublic(ctx context.Context) ([]communitydomain.Community, error)
+	ListActivePublic(ctx context.Context, limit int, offset int) ([]communitydomain.Community, error)
 }
 
 type CommunitySettingsRepository interface {
@@ -35,7 +35,19 @@ type CommunityFollowRepository interface {
 }
 
 type CommunityMembershipRepository interface {
+	CommunityMembershipReadRepository
 	Create(ctx context.Context, membership communitydomain.CommunityMembership) error
+	FindActiveMemberByUserID(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID) (CommunityMember, error)
+	FindActiveMemberByUsername(ctx context.Context, communityID communitydomain.CommunityID, username string) (CommunityMember, error)
+	FindActiveUserByUsername(ctx context.Context, username string) (CommunityMember, error)
+	FindActiveUserByID(ctx context.Context, userID userdomain.UserID) (CommunityMember, error)
+	CountActiveMembers(ctx context.Context, communityID communitydomain.CommunityID) (int, error)
+	CountActiveModerators(ctx context.Context, communityID communitydomain.CommunityID) (int, error)
+	UpsertActiveMemberRole(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, role communitydomain.MembershipRole, now time.Time) (CommunityMember, error)
+	CreateOwnerTransfer(ctx context.Context, transfer CommunityOwnerTransferRecord) error
+	FindOwnerTransferForUpdate(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error)
+	AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) error
+	TransferOwner(ctx context.Context, communityID communitydomain.CommunityID, newOwnerID userdomain.UserID, now time.Time) (CommunityOwnerChange, error)
 }
 
 type CommunityMembershipReadRepository interface {
@@ -73,6 +85,10 @@ type CommunityApplicationRepository interface {
 
 type PlatformStaffRepository interface {
 	IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error)
+}
+
+type PlatformOwnerRepository interface {
+	IsPlatformOwner(ctx context.Context, userID userdomain.UserID) (bool, error)
 }
 
 type CommunityTransactionManager interface {

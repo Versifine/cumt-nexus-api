@@ -65,8 +65,14 @@ func TestCommunityValues(t *testing.T) {
 		t.Fatalf("expected invalid_argument for blank community name, got %v", err)
 	}
 
-	if description := NewCommunityDescription(" description "); description.String() != "description" {
+	if description := mustCommunityDescription(t, " description "); description.String() != "description" {
 		t.Fatalf("expected trimmed description, got %q", description.String())
+	}
+	if _, err := NewCommunityName(strings.Repeat("a", MaxCommunityNameRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long community name, got %v", err)
+	}
+	if _, err := NewCommunityDescription(strings.Repeat("a", MaxCommunityDescriptionRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long community description, got %v", err)
 	}
 
 	assertCommunityKind(t, "system", CommunityKindSystem)
@@ -97,7 +103,7 @@ func TestCommunityValues(t *testing.T) {
 func TestCommunityCreationInvariants(t *testing.T) {
 	now := time.Now().UTC()
 
-	systemCommunity, err := NewSystemCommunity(mustCommunityID(t), mustCommunitySlug(t, "public"), mustCommunityName(t, "Public"), NewCommunityDescription(""), now)
+	systemCommunity, err := NewSystemCommunity(mustCommunityID(t), mustCommunitySlug(t, "public"), mustCommunityName(t, "Public"), mustCommunityDescription(t, ""), now)
 	if err != nil {
 		t.Fatalf("NewSystemCommunity returned error: %v", err)
 	}
@@ -109,7 +115,7 @@ func TestCommunityCreationInvariants(t *testing.T) {
 	}
 
 	creatorID := mustUserID(t)
-	userCommunity, err := NewUserCreatedCommunity(mustCommunityID(t), mustCommunitySlug(t, "campus-life"), mustCommunityName(t, "Campus Life"), NewCommunityDescription(""), creatorID, now)
+	userCommunity, err := NewUserCreatedCommunity(mustCommunityID(t), mustCommunitySlug(t, "campus-life"), mustCommunityName(t, "Campus Life"), mustCommunityDescription(t, ""), creatorID, now)
 	if err != nil {
 		t.Fatalf("NewUserCreatedCommunity returned error: %v", err)
 	}
@@ -117,24 +123,24 @@ func TestCommunityCreationInvariants(t *testing.T) {
 		t.Fatalf("expected user-created community creator %q, got %q present=%t", creatorID.String(), gotCreatorID.String(), ok)
 	}
 
-	if _, err := RehydrateCommunity(mustCommunityID(t), mustCommunitySlug(t, "go-backend"), mustCommunityName(t, "Go Backend"), NewCommunityDescription(""), CommunityKindUserCreated, CommunityStatusActive, CommunityVisibilityPublic, nil, now, now); !hasAppCode(err, apperr.CodeInvalidArgument) {
+	if _, err := RehydrateCommunity(mustCommunityID(t), mustCommunitySlug(t, "go-backend"), mustCommunityName(t, "Go Backend"), mustCommunityDescription(t, ""), CommunityKindUserCreated, CommunityStatusActive, CommunityVisibilityPublic, nil, now, now); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for missing user-created community creator, got %v", err)
 	}
-	if _, err := NewSystemCommunity(mustCommunityID(t), mustCommunitySlug(t, "public"), mustCommunityName(t, "Public"), NewCommunityDescription(""), time.Time{}); !hasAppCode(err, apperr.CodeInvalidArgument) {
+	if _, err := NewSystemCommunity(mustCommunityID(t), mustCommunitySlug(t, "public"), mustCommunityName(t, "Public"), mustCommunityDescription(t, ""), time.Time{}); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for zero community creation time, got %v", err)
 	}
-	if _, err := RehydrateCommunity(mustCommunityID(t), mustCommunitySlug(t, "public"), mustCommunityName(t, "Public"), NewCommunityDescription(""), CommunityKindSystem, CommunityStatusActive, CommunityVisibilityPublic, nil, now, now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+	if _, err := RehydrateCommunity(mustCommunityID(t), mustCommunitySlug(t, "public"), mustCommunityName(t, "Public"), mustCommunityDescription(t, ""), CommunityKindSystem, CommunityStatusActive, CommunityVisibilityPublic, nil, now, now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for updated_at before created_at, got %v", err)
 	}
 
 	updatedAt := now.Add(time.Minute)
-	if err := systemCommunity.UpdateDetails(mustCommunityName(t, "Public Square"), NewCommunityDescription("general discussion"), updatedAt); err != nil {
+	if err := systemCommunity.UpdateDetails(mustCommunityName(t, "Public Square"), mustCommunityDescription(t, "general discussion"), updatedAt); err != nil {
 		t.Fatalf("UpdateDetails returned error: %v", err)
 	}
 	if systemCommunity.Name().String() != "Public Square" || systemCommunity.Description().String() != "general discussion" || !systemCommunity.UpdatedAt().Equal(updatedAt) {
 		t.Fatalf("unexpected updated community details: name=%q description=%q updated=%s", systemCommunity.Name().String(), systemCommunity.Description().String(), systemCommunity.UpdatedAt())
 	}
-	if err := systemCommunity.UpdateDetails(mustCommunityName(t, "Invalid"), NewCommunityDescription(""), now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+	if err := systemCommunity.UpdateDetails(mustCommunityName(t, "Invalid"), mustCommunityDescription(t, ""), now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for update before created time, got %v", err)
 	}
 }
@@ -157,8 +163,14 @@ func TestCommunityRuleValuesAndLifecycle(t *testing.T) {
 	if _, err := NewCommunityRuleTitle(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for blank title, got %v", err)
 	}
-	if body := NewCommunityRuleBody(" body "); body.String() != "body" {
+	if body := mustCommunityRuleBody(t, " body "); body.String() != "body" {
 		t.Fatalf("expected trimmed body, got %q", body.String())
+	}
+	if _, err := NewCommunityRuleTitle(strings.Repeat("a", MaxCommunityRuleTitleRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long rule title, got %v", err)
+	}
+	if _, err := NewCommunityRuleBody(strings.Repeat("a", MaxCommunityRuleBodyRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long rule body, got %v", err)
 	}
 	if _, err := NewCommunityRulePosition(-1); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for negative position, got %v", err)
@@ -170,7 +182,7 @@ func TestCommunityRuleValuesAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
 	}
-	rule, err := NewCommunityRule(mustCommunityRuleID(t), mustCommunityID(t), title, NewCommunityRuleBody("Initial body"), position, actorID, now)
+	rule, err := NewCommunityRule(mustCommunityRuleID(t), mustCommunityID(t), title, mustCommunityRuleBody(t, "Initial body"), position, actorID, now)
 	if err != nil {
 		t.Fatalf("NewCommunityRule returned error: %v", err)
 	}
@@ -188,13 +200,13 @@ func TestCommunityRuleValuesAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCommunityRulePosition returned error: %v", err)
 	}
-	if err := rule.Update(updatedTitle, NewCommunityRuleBody("Updated body"), updatedPosition, updaterID, updatedAt); err != nil {
+	if err := rule.Update(updatedTitle, mustCommunityRuleBody(t, "Updated body"), updatedPosition, updaterID, updatedAt); err != nil {
 		t.Fatalf("Update returned error: %v", err)
 	}
 	if rule.Title().String() != "Stay on topic" || rule.Body().String() != "Updated body" || rule.Position().Int() != 2 || rule.UpdatedBy() != updaterID || !rule.UpdatedAt().Equal(updatedAt) {
 		t.Fatalf("unexpected updated rule: title=%q body=%q position=%d updater=%q updated=%s", rule.Title().String(), rule.Body().String(), rule.Position().Int(), rule.UpdatedBy().String(), rule.UpdatedAt())
 	}
-	if err := rule.Update(updatedTitle, NewCommunityRuleBody(""), updatedPosition, updaterID, now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+	if err := rule.Update(updatedTitle, mustCommunityRuleBody(t, ""), updatedPosition, updaterID, now.Add(-time.Second)); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for update before created time, got %v", err)
 	}
 }
@@ -293,8 +305,14 @@ func TestCommunityApplicationValidation(t *testing.T) {
 	if _, err := NewApplicationReason(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for blank application reason, got %v", err)
 	}
+	if _, err := NewApplicationReason(strings.Repeat("a", MaxApplicationReasonRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long application reason, got %v", err)
+	}
 	if _, err := NewRejectReason(" "); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for blank reject reason, got %v", err)
+	}
+	if _, err := NewRejectReason(strings.Repeat("a", MaxRejectReasonRunes+1)); !hasAppCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument for long reject reason, got %v", err)
 	}
 	if _, err := NewApplicationStatus("done"); !hasAppCode(err, apperr.CodeInvalidArgument) {
 		t.Fatalf("expected invalid_argument for invalid application status, got %v", err)
@@ -415,6 +433,26 @@ func mustCommunityName(t *testing.T, raw string) CommunityName {
 		t.Fatalf("NewCommunityName returned error: %v", err)
 	}
 	return name
+}
+
+func mustCommunityDescription(t *testing.T, raw string) CommunityDescription {
+	t.Helper()
+
+	description, err := NewCommunityDescription(raw)
+	if err != nil {
+		t.Fatalf("NewCommunityDescription returned error: %v", err)
+	}
+	return description
+}
+
+func mustCommunityRuleBody(t *testing.T, raw string) CommunityRuleBody {
+	t.Helper()
+
+	body, err := NewCommunityRuleBody(raw)
+	if err != nil {
+		t.Fatalf("NewCommunityRuleBody returned error: %v", err)
+	}
+	return body
 }
 
 func mustApplicationReason(t *testing.T, raw string) ApplicationReason {

@@ -168,7 +168,7 @@ func TestListCommunityApplicationsChecksStaffAndNormalizesInput(t *testing.T) {
 	if gotStatus != communitydomain.ApplicationStatusPending {
 		t.Fatalf("expected default pending status, got %q", gotStatus.String())
 	}
-	if gotLimit != maxCommunityApplicationListLimit || result.Limit != maxCommunityApplicationListLimit {
+	if gotLimit != maxCommunityApplicationListLimit+1 || result.Limit != maxCommunityApplicationListLimit {
 		t.Fatalf("expected capped limit %d, got repo=%d result=%d", maxCommunityApplicationListLimit, gotLimit, result.Limit)
 	}
 	if gotOffset != 5 || result.Offset != 5 {
@@ -447,6 +447,58 @@ func (f *fakeMembershipRepository) Create(ctx context.Context, membership commun
 		return f.createFunc(ctx, membership)
 	}
 	return nil
+}
+
+func (f *fakeMembershipRepository) FindActiveRolesByUser(ctx context.Context, communityIDs []communitydomain.CommunityID, userID userdomain.UserID) (map[communitydomain.CommunityID]communitydomain.MembershipRole, error) {
+	return map[communitydomain.CommunityID]communitydomain.MembershipRole{}, nil
+}
+
+func (f *fakeMembershipRepository) ListActiveMembers(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]CommunityMember, error) {
+	return nil, nil
+}
+
+func (f *fakeMembershipRepository) FindActiveMemberByUserID(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID) (CommunityMember, error) {
+	return CommunityMember{}, apperr.New(apperr.CodeNotFound, "community member not found")
+}
+
+func (f *fakeMembershipRepository) FindActiveMemberByUsername(ctx context.Context, communityID communitydomain.CommunityID, username string) (CommunityMember, error) {
+	return CommunityMember{}, apperr.New(apperr.CodeNotFound, "community member not found")
+}
+
+func (f *fakeMembershipRepository) FindActiveUserByUsername(ctx context.Context, username string) (CommunityMember, error) {
+	return CommunityMember{}, apperr.New(apperr.CodeNotFound, "user not found")
+}
+
+func (f *fakeMembershipRepository) FindActiveUserByID(ctx context.Context, userID userdomain.UserID) (CommunityMember, error) {
+	return CommunityMember{}, apperr.New(apperr.CodeNotFound, "user not found")
+}
+
+func (f *fakeMembershipRepository) CountActiveMembers(ctx context.Context, communityID communitydomain.CommunityID) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeMembershipRepository) CountActiveModerators(ctx context.Context, communityID communitydomain.CommunityID) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeMembershipRepository) UpsertActiveMemberRole(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, role communitydomain.MembershipRole, now time.Time) (CommunityMember, error) {
+	return CommunityMember{}, nil
+}
+
+func (f *fakeMembershipRepository) CreateOwnerTransfer(ctx context.Context, transfer CommunityOwnerTransferRecord) error {
+	return nil
+}
+
+func (f *fakeMembershipRepository) FindOwnerTransferForUpdate(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error) {
+	return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+}
+
+func (f *fakeMembershipRepository) AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) error {
+	return nil
+}
+
+func (f *fakeMembershipRepository) TransferOwner(ctx context.Context, communityID communitydomain.CommunityID, newOwnerID userdomain.UserID, now time.Time) (CommunityOwnerChange, error) {
+	return CommunityOwnerChange{}, nil
 }
 
 type fakePlatformStaffRepository struct {

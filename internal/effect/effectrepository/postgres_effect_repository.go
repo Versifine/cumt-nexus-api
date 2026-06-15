@@ -121,6 +121,45 @@ func (repo *PostgresEffectRepository) GetOrCreatePointAccount(ctx context.Contex
 	return account, nil
 }
 
+func (repo *PostgresEffectRepository) ListPointTransactions(ctx context.Context, userID userdomain.UserID, limit int, offset int) ([]effectusecase.PointTransaction, error) {
+	const query = `
+		SELECT
+			id::text,
+			user_id::text,
+			delta,
+			balance_after,
+			reason,
+			source_type,
+			source_id,
+			created_at
+		FROM point_transactions
+		WHERE user_id = $1::uuid
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2
+		OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, userID.String(), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list point transactions: %w", err)
+	}
+	defer rows.Close()
+
+	transactions := make([]effectusecase.PointTransaction, 0)
+	for rows.Next() {
+		transaction, err := scanPointTransaction(rows)
+		if err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, transaction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate point transactions: %w", err)
+	}
+
+	return transactions, nil
+}
+
 func (repo *PostgresEffectRepository) ApplyCommentEffect(ctx context.Context, input effectusecase.ApplyCommentEffectRecordInput) (effectusecase.ApplyCommentEffectRecordResult, error) {
 	tx, err := repo.pool.Begin(ctx)
 	if err != nil {
@@ -336,6 +375,21 @@ func scanCommentEffect(row pgx.Row) (effectusecase.CommentEffect, error) {
 		&commentEffect.CreatedAt,
 	)
 	return commentEffect, err
+}
+
+func scanPointTransaction(row pgx.Row) (effectusecase.PointTransaction, error) {
+	var transaction effectusecase.PointTransaction
+	err := row.Scan(
+		&transaction.ID,
+		&transaction.UserID,
+		&transaction.Delta,
+		&transaction.BalanceAfter,
+		&transaction.Reason,
+		&transaction.SourceType,
+		&transaction.SourceID,
+		&transaction.CreatedAt,
+	)
+	return transaction, err
 }
 
 func mapEffectPostgresWriteError(operation string, err error) error {

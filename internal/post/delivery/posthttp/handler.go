@@ -54,6 +54,11 @@ type postResponse struct {
 	Format            string                    `json:"format"`
 	ContentRefs       []contentRefResponse      `json:"content_refs"`
 	Status            string                    `json:"status"`
+	IsLocked          bool                      `json:"is_locked"`
+	IsPinned          bool                      `json:"is_pinned"`
+	IsNSFW            bool                      `json:"is_nsfw"`
+	IsSpoiler         bool                      `json:"is_spoiler"`
+	FlairText         string                    `json:"flair_text"`
 	Community         communitySummaryResponse  `json:"community"`
 	Author            userSummaryResponse       `json:"author"`
 	UpvoteCount       int                       `json:"upvote_count"`
@@ -104,9 +109,10 @@ type communitySummaryResponse struct {
 }
 
 type communityViewerPermissionsResponse struct {
-	CanPost     bool `json:"can_post"`
-	CanManage   bool `json:"can_manage"`
-	CanModerate bool `json:"can_moderate"`
+	CanPost               bool `json:"can_post"`
+	CanManage             bool `json:"can_manage"`
+	CanModerate           bool `json:"can_moderate"`
+	PlatformOwnerOverride bool `json:"platform_owner_override"`
 }
 
 type postPreviewResponse struct {
@@ -151,9 +157,11 @@ type publishPostResponse struct {
 }
 
 type listCommunityPostsResponse struct {
-	Posts  []postResponse `json:"posts"`
-	Limit  int            `json:"limit"`
-	Offset int            `json:"offset"`
+	Posts      []postResponse `json:"posts"`
+	Limit      int            `json:"limit"`
+	Offset     int            `json:"offset"`
+	NextOffset int            `json:"next_offset"`
+	HasMore    bool           `json:"has_more"`
 }
 
 type getPostResponse struct {
@@ -252,9 +260,11 @@ func (h *Handler) ListCommunityPosts(c *gin.Context) {
 	}
 
 	response := listCommunityPostsResponse{
-		Posts:  make([]postResponse, 0, len(result.Posts)),
-		Limit:  result.Limit,
-		Offset: result.Offset,
+		Posts:      make([]postResponse, 0, len(result.Posts)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, post := range result.Posts {
 		response.Posts = append(response.Posts, toPostResponse(post))
@@ -294,9 +304,11 @@ func (h *Handler) ListLatestPosts(c *gin.Context) {
 	}
 
 	response := listCommunityPostsResponse{
-		Posts:  make([]postResponse, 0, len(result.Posts)),
-		Limit:  result.Limit,
-		Offset: result.Offset,
+		Posts:      make([]postResponse, 0, len(result.Posts)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, post := range result.Posts {
 		response.Posts = append(response.Posts, toPostResponse(post))
@@ -335,9 +347,11 @@ func (h *Handler) ListUserPosts(c *gin.Context) {
 	}
 
 	response := listCommunityPostsResponse{
-		Posts:  make([]postResponse, 0, len(result.Posts)),
-		Limit:  result.Limit,
-		Offset: result.Offset,
+		Posts:      make([]postResponse, 0, len(result.Posts)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, post := range result.Posts {
 		response.Posts = append(response.Posts, toPostResponse(post))
@@ -437,9 +451,11 @@ func (h *Handler) ListSavedPosts(c *gin.Context) {
 	}
 
 	response := listCommunityPostsResponse{
-		Posts:  make([]postResponse, 0, len(result.Posts)),
-		Limit:  result.Limit,
-		Offset: result.Offset,
+		Posts:      make([]postResponse, 0, len(result.Posts)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
 	}
 	for _, post := range result.Posts {
 		response.Posts = append(response.Posts, toPostResponse(post))
@@ -525,6 +541,11 @@ func toPostResponse(post postusecase.Post) postResponse {
 		Format:            post.Format,
 		ContentRefs:       toContentRefResponses(post.ContentRefs),
 		Status:            post.Status,
+		IsLocked:          post.IsLocked,
+		IsPinned:          post.IsPinned,
+		IsNSFW:            post.IsNSFW,
+		IsSpoiler:         post.IsSpoiler,
+		FlairText:         post.FlairText,
 		Community:         toCommunitySummaryResponse(post.Community),
 		Author:            toUserSummaryResponse(post.Author),
 		UpvoteCount:       post.UpvoteCount,
@@ -605,9 +626,10 @@ func toCommunitySummaryResponse(community postusecase.CommunitySummary) communit
 
 func toCommunityViewerPermissionsResponse(permissions postusecase.CommunityViewerPermissions) communityViewerPermissionsResponse {
 	return communityViewerPermissionsResponse{
-		CanPost:     permissions.CanPost,
-		CanManage:   permissions.CanManage,
-		CanModerate: permissions.CanModerate,
+		CanPost:               permissions.CanPost,
+		CanManage:             permissions.CanManage,
+		CanModerate:           permissions.CanModerate,
+		PlatformOwnerOverride: permissions.PlatformOwnerOverride,
 	}
 }
 
