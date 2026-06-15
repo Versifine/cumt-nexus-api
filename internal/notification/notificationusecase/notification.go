@@ -24,8 +24,9 @@ const (
 	NotificationTypeCommentLike  = "comment_like"
 	NotificationTypeMention      = "mention"
 
-	NotificationSourcePost    = "post"
-	NotificationSourceComment = "comment"
+	NotificationSourcePost                   = "post"
+	NotificationSourceComment                = "comment"
+	NotificationSourceCommunityOwnerTransfer = "community_owner_transfer"
 )
 
 type StatusFilter string
@@ -215,6 +216,30 @@ func (uc *UseCase) NotifyMentioned(ctx context.Context, recipientID userdomain.U
 	notification := uc.newNotification(recipientID, actorID, NotificationTypeMention, "新的提及", "有人提到了你", sourceType, sourceID, "")
 	if err := uc.repository.Create(ctx, notification); err != nil {
 		return fmt.Errorf("create mention notification: %w", err)
+	}
+	return nil
+}
+
+func (uc *UseCase) NotifyCommunityOwnerTransfer(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, communitySlug string, transferID string) error {
+	if shouldSkipNotification(recipientID, actorID) {
+		return nil
+	}
+	sourceID := strings.TrimSpace(communitySlug) + ":" + strings.TrimSpace(transferID)
+	if strings.TrimSpace(communitySlug) == "" || strings.TrimSpace(transferID) == "" {
+		return apperr.New(apperr.CodeInvalidArgument, "community owner transfer notification source is required")
+	}
+	notification := uc.newNotification(
+		recipientID,
+		actorID,
+		"system",
+		"社区负责人交接邀请",
+		"你收到了一条社区负责人交接邀请",
+		NotificationSourceCommunityOwnerTransfer,
+		sourceID,
+		"",
+	)
+	if err := uc.repository.Create(ctx, notification); err != nil {
+		return fmt.Errorf("create community owner transfer notification: %w", err)
 	}
 	return nil
 }

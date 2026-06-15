@@ -179,6 +179,7 @@ GET  /api/v1/communities/:slug/manage/reports
 GET  /api/v1/communities/:slug/manage/members
 POST /api/v1/communities/:slug/manage/moderators
 DELETE /api/v1/communities/:slug/manage/moderators/:user_id
+GET  /api/v1/me/community-owner-transfers?status=pending&limit=20&offset=0
 GET  /api/v1/communities/:slug/manage/owner-transfer
 POST /api/v1/communities/:slug/manage/owner-transfer
 GET  /api/v1/communities/:slug/owner-transfer/:transfer_id
@@ -397,7 +398,7 @@ POST /api/v1/notifications/read-all
 
 搜索基于 PostgreSQL full-text search、字段权重、精确/前缀/子串命中和轻量时间衰减排序；`scope=all|communities|posts|users`，其中 `all` 分区返回公开社区、visible 帖子和 active 用户公开资料摘要。首版不返回高亮片段或命中原因，前端可基于响应字段自行高亮。
 
-评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；`category=interactions` 返回回复、提及和点赞类用户互动通知，`category=system` 返回系统通知，不传 `status` 默认返回 `all`。点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，响应包含 `aggregate_count`、`actor`、`last_actor` 和帖子/评论 `context`，评论通知可用 `context.permalink` 直达锚点。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，并进入互动分类。
+评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；`category=interactions` 返回回复、提及和点赞类用户互动通知，`category=system` 返回系统通知，不传 `status` 默认返回 `all`。点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，响应包含 `aggregate_count`、`actor`、`last_actor` 和帖子/评论 `context`，评论通知可用 `context.permalink` 直达锚点。社区负责人交接会给目标账号写系统通知，`source_type=community_owner_transfer`，`source_id=<community_slug>:<transfer_id>`。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，并进入互动分类。
 
 ## 响应约定
 

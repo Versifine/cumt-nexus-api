@@ -191,6 +191,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	commentUC.SetNotificationPublisher(notificationUC)
 	postUC.SetNotificationPublisher(notificationUC)
 	voteUC.SetNotificationPublisher(notificationUC)
+	communityReadUC.SetOwnerTransferNotificationPublisher(notificationUC)
 	registerUC.SetSettingsReader(adminRepo)
 	securityUC.SetSettingsReader(adminRepo)
 	postUC.SetSettingsReader(adminRepo)

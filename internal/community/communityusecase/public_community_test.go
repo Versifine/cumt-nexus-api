@@ -424,6 +424,56 @@ func TestCreateCommunityOwnerTransferRequiresRealCommunityOwner(t *testing.T) {
 	}
 }
 
+func TestCreateCommunityOwnerTransferNotifiesTarget(t *testing.T) {
+	now := time.Date(2026, 6, 16, 11, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	targetID := userdomain.NewGeneratedUserID()
+	community := mustSystemCommunity(t, "campus", now)
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		activeRolesByCommunityID: map[communitydomain.CommunityID]communitydomain.MembershipRole{
+			community.ID(): communitydomain.MembershipRoleOwner,
+		},
+		activeMemberByUserID: map[string]CommunityMember{
+			viewerID.String(): {
+				UserID:   viewerID.String(),
+				Username: "owner",
+				Role:     communitydomain.MembershipRoleOwner.String(),
+				Status:   communitydomain.MembershipStatusActive.String(),
+			},
+		},
+		activeUserByUsername: map[string]CommunityMember{
+			"target": {
+				UserID:   targetID.String(),
+				Username: "target",
+				Status:   "active",
+			},
+		},
+	}
+	notifications := &fakeOwnerTransferNotificationPublisher{}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipRepository(&fakeCommunityMembershipOps{repo})
+	uc.SetOwnerTransferNotificationPublisher(notifications)
+	uc.now = func() time.Time { return now }
+
+	result, err := uc.CreateCommunityOwnerTransfer(context.Background(), CreateCommunityOwnerTransferInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+		Username: "target",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommunityOwnerTransfer returned error: %v", err)
+	}
+	if repo.createdOwnerTransfer == nil || repo.createdOwnerTransfer.ToUserID != targetID {
+		t.Fatalf("expected owner transfer for target, got %#v", repo.createdOwnerTransfer)
+	}
+	if !notifications.called || notifications.recipientID != targetID || notifications.actorID != viewerID || notifications.communitySlug != "campus" || notifications.transferID != result.Transfer.ID {
+		t.Fatalf("unexpected notification call: %#v", notifications)
+	}
+}
+
 func TestListCommunityManagePostsReturnsPostsForModerator(t *testing.T) {
 	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
 	viewerID := userdomain.NewGeneratedUserID()
@@ -988,6 +1038,53 @@ func TestGetAndCancelCommunityOwnerTransferForPlatformOwner(t *testing.T) {
 	}
 }
 
+func TestListCommunityOwnerTransfersReturnsTargetInbox(t *testing.T) {
+	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	viewerID := userdomain.NewGeneratedUserID()
+	fromID := userdomain.NewGeneratedUserID()
+	community := mustCommunity(t, "campus", communitydomain.CommunityStatusActive, now)
+	repo := &fakeCommunityRepository{
+		ownerTransferList: []CommunityOwnerTransferListRecord{
+			{
+				Community: *community,
+				Transfer: CommunityOwnerTransferRecord{
+					ID:              "7b53252d-65c8-4c68-916c-255701c24b28",
+					CommunityID:     community.ID(),
+					FromUserID:      fromID,
+					FromUsername:    "owner",
+					FromDisplayName: "Owner",
+					ToUserID:        viewerID,
+					ToUsername:      "target",
+					ToDisplayName:   "Target",
+					Status:          "pending",
+					CreatedAt:       now,
+					UpdatedAt:       now,
+					ExpiresAt:       now.Add(CommunityOwnerTransferTTL),
+				},
+			},
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipRepository(&fakeCommunityMembershipOps{repo})
+	uc.now = func() time.Time { return now }
+
+	result, err := uc.ListCommunityOwnerTransfers(context.Background(), ListCommunityOwnerTransfersInput{
+		ViewerID: viewerID,
+		Status:   "pending",
+		Limit:    20,
+		Offset:   0,
+	})
+	if err != nil {
+		t.Fatalf("ListCommunityOwnerTransfers returned error: %v", err)
+	}
+	if repo.ownerTransferListTargetID != viewerID || repo.ownerTransferListStatus != "pending" || repo.ownerTransferListLimit != 21 {
+		t.Fatalf("unexpected repository args: target=%q status=%q limit=%d", repo.ownerTransferListTargetID.String(), repo.ownerTransferListStatus, repo.ownerTransferListLimit)
+	}
+	if len(result.Transfers) != 1 || result.Transfers[0].Community.Slug != "campus" || !result.Transfers[0].Transfer.ViewerIsTarget {
+		t.Fatalf("unexpected inbox result: %#v", result)
+	}
+}
+
 type fakeCommunityRepository struct {
 	createFunc                     func(ctx context.Context, community communitydomain.Community) error
 	findByIDFunc                   func(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error)
@@ -1018,6 +1115,11 @@ type fakeCommunityRepository struct {
 	upsertedMemberUserID           userdomain.UserID
 	createdOwnerTransfer           *CommunityOwnerTransferRecord
 	ownerTransfer                  *CommunityOwnerTransferRecord
+	ownerTransferList              []CommunityOwnerTransferListRecord
+	ownerTransferListTargetID      userdomain.UserID
+	ownerTransferListStatus        string
+	ownerTransferListLimit         int
+	ownerTransferListOffset        int
 	acceptedOwnerTransferID        string
 	cancelledOwnerTransferID       string
 	transferOwnerUserID            userdomain.UserID
@@ -1058,6 +1160,23 @@ type fakeCommunityMembershipOps struct {
 }
 
 func (f *fakeCommunityMembershipOps) Create(ctx context.Context, membership communitydomain.CommunityMembership) error {
+	return nil
+}
+
+type fakeOwnerTransferNotificationPublisher struct {
+	called        bool
+	recipientID   userdomain.UserID
+	actorID       userdomain.UserID
+	communitySlug string
+	transferID    string
+}
+
+func (f *fakeOwnerTransferNotificationPublisher) NotifyCommunityOwnerTransfer(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, communitySlug string, transferID string) error {
+	f.called = true
+	f.recipientID = recipientID
+	f.actorID = actorID
+	f.communitySlug = communitySlug
+	f.transferID = transferID
 	return nil
 }
 
@@ -1223,6 +1342,14 @@ func (f *fakeCommunityRepository) FindCurrentOwnerTransfer(ctx context.Context, 
 		return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
 	}
 	return *f.ownerTransfer, nil
+}
+
+func (f *fakeCommunityRepository) ListOwnerTransfersByTarget(ctx context.Context, targetUserID userdomain.UserID, status string, now time.Time, limit int, offset int) ([]CommunityOwnerTransferListRecord, error) {
+	f.ownerTransferListTargetID = targetUserID
+	f.ownerTransferListStatus = status
+	f.ownerTransferListLimit = limit
+	f.ownerTransferListOffset = offset
+	return f.ownerTransferList, nil
 }
 
 func (f *fakeCommunityRepository) FindOwnerTransferByID(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error) {

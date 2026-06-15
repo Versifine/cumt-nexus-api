@@ -24,6 +24,7 @@ type CommunityReadUseCase interface {
 	FollowCommunity(ctx context.Context, input communityusecase.FollowCommunityInput) (communityusecase.FollowCommunityResult, error)
 	DeleteCommunityFollow(ctx context.Context, input communityusecase.DeleteCommunityFollowInput) (communityusecase.DeleteCommunityFollowResult, error)
 	ListFollowedCommunities(ctx context.Context, input communityusecase.ListFollowedCommunitiesInput) (communityusecase.ListFollowedCommunitiesResult, error)
+	ListCommunityOwnerTransfers(ctx context.Context, input communityusecase.ListCommunityOwnerTransfersInput) (communityusecase.ListCommunityOwnerTransfersResult, error)
 	GetCommunityManageContext(ctx context.Context, input communityusecase.GetCommunityManageContextInput) (communityusecase.GetCommunityManageContextResult, error)
 	ListCommunityMembers(ctx context.Context, input communityusecase.ListCommunityMembersInput) (communityusecase.ListCommunityMembersResult, error)
 	ListCommunityManagePosts(ctx context.Context, input communityusecase.ListCommunityManagePostsInput) (communityusecase.ListCommunityManagePostsResult, error)
@@ -84,6 +85,36 @@ type listFollowedCommunitiesResponse struct {
 	Offset      int                 `json:"offset"`
 	NextOffset  int                 `json:"next_offset"`
 	HasMore     bool                `json:"has_more"`
+}
+
+type listCommunityOwnerTransfersResponse struct {
+	Transfers  []communityOwnerTransferListItemResponse `json:"transfers"`
+	Status     string                                   `json:"status"`
+	Limit      int                                      `json:"limit"`
+	Offset     int                                      `json:"offset"`
+	NextOffset int                                      `json:"next_offset"`
+	HasMore    bool                                     `json:"has_more"`
+}
+
+type communityOwnerTransferListItemResponse struct {
+	ID               string            `json:"id"`
+	CommunityID      string            `json:"community_id"`
+	Community        communityResponse `json:"community"`
+	FromUserID       string            `json:"from_user_id"`
+	FromUsername     string            `json:"from_username"`
+	FromDisplayName  string            `json:"from_display_name"`
+	ToUserID         string            `json:"to_user_id"`
+	ToUsername       string            `json:"to_username"`
+	ToDisplayName    string            `json:"to_display_name"`
+	Status           string            `json:"status"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	ExpiresAt        time.Time         `json:"expires_at"`
+	AcceptedAt       *time.Time        `json:"accepted_at"`
+	CancelledAt      *time.Time        `json:"cancelled_at"`
+	ViewerIsTarget   bool              `json:"viewer_is_target"`
+	ViewerCanCancel  bool              `json:"viewer_can_cancel"`
+	PlatformOverride bool              `json:"platform_owner_override"`
 }
 
 type listCommunityMembersResponse struct {
@@ -385,6 +416,7 @@ func RegisterApplicationRoutes(group *gin.RouterGroup, handler *Handler) {
 
 func RegisterFollowRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/me/followed-communities", handler.ListFollowedCommunities)
+	group.GET("/me/community-owner-transfers", handler.ListCommunityOwnerTransfers)
 	group.POST("/communities/:slug/follow", handler.FollowCommunity)
 	group.DELETE("/communities/:slug/follow", handler.DeleteCommunityFollow)
 }
@@ -551,6 +583,53 @@ func (h *Handler) ListFollowedCommunities(c *gin.Context) {
 		response.Communities = append(response.Communities, toCommunityResponse(community))
 	}
 
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) ListCommunityOwnerTransfers(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	result, err := h.communities.ListCommunityOwnerTransfers(c.Request.Context(), communityusecase.ListCommunityOwnerTransfersInput{
+		ViewerID: userID,
+		Status:   c.Query("status"),
+		Limit:    limit,
+		Offset:   offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	response := listCommunityOwnerTransfersResponse{
+		Transfers:  make([]communityOwnerTransferListItemResponse, 0, len(result.Transfers)),
+		Status:     result.Status,
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
+	}
+	for _, item := range result.Transfers {
+		response.Transfers = append(response.Transfers, toCommunityOwnerTransferListItemResponse(item))
+	}
 	c.JSON(http.StatusOK, response)
 }
 
@@ -1406,6 +1485,30 @@ func toCommunityOwnerTransferResponsePtr(transfer *communityusecase.CommunityOwn
 	}
 	response := toCommunityOwnerTransferResponse(*transfer)
 	return &response
+}
+
+func toCommunityOwnerTransferListItemResponse(item communityusecase.CommunityOwnerTransferListItem) communityOwnerTransferListItemResponse {
+	transfer := item.Transfer
+	return communityOwnerTransferListItemResponse{
+		ID:               transfer.ID,
+		CommunityID:      transfer.CommunityID,
+		Community:        toCommunityResponse(item.Community),
+		FromUserID:       transfer.FromUserID,
+		FromUsername:     transfer.FromUsername,
+		FromDisplayName:  transfer.FromDisplayName,
+		ToUserID:         transfer.ToUserID,
+		ToUsername:       transfer.ToUsername,
+		ToDisplayName:    transfer.ToDisplayName,
+		Status:           transfer.Status,
+		CreatedAt:        transfer.CreatedAt,
+		UpdatedAt:        transfer.UpdatedAt,
+		ExpiresAt:        transfer.ExpiresAt,
+		AcceptedAt:       transfer.AcceptedAt,
+		CancelledAt:      transfer.CancelledAt,
+		ViewerIsTarget:   transfer.ViewerIsTarget,
+		ViewerCanCancel:  transfer.ViewerCanCancel,
+		PlatformOverride: transfer.PlatformOverride,
+	}
 }
 
 func toCommunityManagePostResponse(post communityusecase.CommunityManagePost) communityManagePostResponse {

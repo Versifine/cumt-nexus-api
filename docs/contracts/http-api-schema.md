@@ -43,6 +43,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/auth/logout-all | none | none | 204 |
 | GET | /api/v1/me/saved-posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/me/followed-communities | query | `communityhttp.listFollowedCommunitiesResponse` | 200 |
+| GET | /api/v1/me/community-owner-transfers | query | `communityhttp.listCommunityOwnerTransfersResponse` | 200 |
 | GET | /api/v1/me/followed-users | query | `userhttp.listFollowedUsersResponse` | 200 |
 | GET | /api/v1/me/points | none | `effecthttp.getMyPointsResponse` | 200 |
 | GET | /api/v1/me/point-transactions | query | `effecthttp.listMyPointTransactionsResponse` | 200 |
@@ -243,6 +244,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `getCommunityManageSettingsResponse` | `community`, `settings` |
 | `communityhttp` | `updateCommunityManageSettingsResponse` | `community`, `settings` |
 | `communityhttp` | `listFollowedCommunitiesResponse` | `communities`, `limit`, `offset`, `next_offset`, `has_more` |
+| `communityhttp` | `listCommunityOwnerTransfersResponse` | `transfers`, `status`, `limit`, `offset`, `next_offset`, `has_more` |
+| `communityhttp` | `communityOwnerTransferListItemResponse` | `id`, `community_id`, `community`, `from_user_id`, `from_username`, `from_display_name`, `to_user_id`, `to_username`, `to_display_name`, `status`, `created_at`, `updated_at`, `expires_at`, `accepted_at`, `cancelled_at`, `viewer_is_target`, `viewer_can_cancel`, `platform_owner_override` |
 | `communityhttp` | `listCommunityMembersResponse` | `community`, `members`, `limit`, `offset`, `next_offset`, `has_more` |
 | `communityhttp` | `communityMemberResponse` | `user`, `role`, `status`, `created_at`, `updated_at` |
 | `communityhttp` | `communityMemberUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |

@@ -209,7 +209,7 @@ Add-RoutesFromFile `
     -Path 'internal/community/delivery/communityhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers', 'AddCommunityModerator', 'RemoveCommunityModerator', 'GetCurrentCommunityOwnerTransfer', 'GetCommunityOwnerTransfer', 'CreateCommunityOwnerTransfer', 'AcceptCommunityOwnerTransfer', 'CancelCommunityOwnerTransfer', 'ListCommunityManagePosts', 'ListCommunityManageComments', 'ListCommunityManageReports', 'GetCommunityManageSettings', 'UpdateCommunityManageSettings', 'ListCommunityRules', 'CreateCommunityRule', 'UpdateCommunityRule', 'DeleteCommunityRule')
+    -IncludeHandlers @('SubmitCommunityApplication', 'ListCommunityApplications', 'GetCommunityApplication', 'ApproveCommunityApplication', 'RejectCommunityApplication', 'ListFollowedCommunities', 'ListCommunityOwnerTransfers', 'FollowCommunity', 'DeleteCommunityFollow', 'GetCommunityManageContext', 'ListCommunityMembers', 'AddCommunityModerator', 'RemoveCommunityModerator', 'GetCurrentCommunityOwnerTransfer', 'GetCommunityOwnerTransfer', 'CreateCommunityOwnerTransfer', 'AcceptCommunityOwnerTransfer', 'CancelCommunityOwnerTransfer', 'ListCommunityManagePosts', 'ListCommunityManageComments', 'ListCommunityManageReports', 'GetCommunityManageSettings', 'UpdateCommunityManageSettings', 'ListCommunityRules', 'CreateCommunityRule', 'UpdateCommunityRule', 'DeleteCommunityRule')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `

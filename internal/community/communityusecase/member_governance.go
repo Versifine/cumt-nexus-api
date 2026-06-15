@@ -14,6 +14,14 @@ import (
 
 const CommunityOwnerTransferTTL = 48 * time.Hour
 
+type CommunityOwnerTransferNotificationPublisher interface {
+	NotifyCommunityOwnerTransfer(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, communitySlug string, transferID string) error
+}
+
+func (uc *CommunityReadUseCase) SetOwnerTransferNotificationPublisher(publisher CommunityOwnerTransferNotificationPublisher) {
+	uc.ownerTransferNotifications = publisher
+}
+
 type AddCommunityModeratorInput struct {
 	Slug     string
 	ViewerID userdomain.UserID
@@ -55,6 +63,13 @@ type CancelCommunityOwnerTransferInput struct {
 	TransferID string
 }
 
+type ListCommunityOwnerTransfersInput struct {
+	ViewerID userdomain.UserID
+	Status   string
+	Limit    int
+	Offset   int
+}
+
 type CommunityMemberMutationResult struct {
 	Community Community
 	Member    CommunityMember
@@ -68,6 +83,20 @@ type CommunityOwnerTransferResult struct {
 type CommunityOwnerTransferQueryResult struct {
 	Community Community
 	Transfer  *CommunityOwnerTransfer
+}
+
+type CommunityOwnerTransferListItem struct {
+	Community Community
+	Transfer  CommunityOwnerTransfer
+}
+
+type ListCommunityOwnerTransfersResult struct {
+	Transfers  []CommunityOwnerTransferListItem
+	Status     string
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type CommunityOwnerTransfer struct {
@@ -105,6 +134,11 @@ type CommunityOwnerTransferRecord struct {
 	ExpiresAt       time.Time
 	AcceptedAt      *time.Time
 	CancelledAt     *time.Time
+}
+
+type CommunityOwnerTransferListRecord struct {
+	Community communitydomain.Community
+	Transfer  CommunityOwnerTransferRecord
 }
 
 type CommunityOwnerChange struct {
@@ -288,7 +322,67 @@ func (uc *CommunityReadUseCase) CreateCommunityOwnerTransfer(ctx context.Context
 	if err != nil {
 		return CommunityOwnerTransferResult{}, err
 	}
-	return CommunityOwnerTransferResult{Community: communityDTO, Transfer: toCommunityOwnerTransfer(transfer, input.ViewerID, roleView, uc.now().UTC())}, nil
+	result := CommunityOwnerTransferResult{Community: communityDTO, Transfer: toCommunityOwnerTransfer(transfer, input.ViewerID, roleView, uc.now().UTC())}
+	if uc.ownerTransferNotifications != nil {
+		if err := uc.ownerTransferNotifications.NotifyCommunityOwnerTransfer(ctx, transfer.ToUserID, input.ViewerID, community.Slug().String(), transfer.ID); err != nil {
+			return CommunityOwnerTransferResult{}, fmt.Errorf("notify community owner transfer target: %w", err)
+		}
+	}
+	return result, nil
+}
+
+func (uc *CommunityReadUseCase) ListCommunityOwnerTransfers(ctx context.Context, input ListCommunityOwnerTransfersInput) (ListCommunityOwnerTransfersResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ListCommunityOwnerTransfersResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	status, err := normalizeCommunityOwnerTransferListStatus(input.Status)
+	if err != nil {
+		return ListCommunityOwnerTransfersResult{}, err
+	}
+	limit, offset, err := normalizeCommunityListPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListCommunityOwnerTransfersResult{}, err
+	}
+	records, err := uc.membershipOps.ListOwnerTransfersByTarget(ctx, input.ViewerID, status, uc.now().UTC(), limit+1, offset)
+	if err != nil {
+		return ListCommunityOwnerTransfersResult{}, fmt.Errorf("list community owner transfers: %w", err)
+	}
+	records, hasMore := trimCommunityOwnerTransferListPage(records, limit)
+
+	communities := make([]communitydomain.Community, 0, len(records))
+	for _, record := range records {
+		communities = append(communities, record.Community)
+	}
+	stats, err := uc.loadCommunityStats(ctx, communities)
+	if err != nil {
+		return ListCommunityOwnerTransfersResult{}, err
+	}
+	followViews, err := uc.loadCommunityFollowViews(ctx, communities, input.ViewerID)
+	if err != nil {
+		return ListCommunityOwnerTransfersResult{}, err
+	}
+	roleViews, err := uc.loadCommunityRoleViews(ctx, communities, input.ViewerID)
+	if err != nil {
+		return ListCommunityOwnerTransfersResult{}, err
+	}
+
+	result := ListCommunityOwnerTransfersResult{
+		Transfers:  make([]CommunityOwnerTransferListItem, 0, len(records)),
+		Status:     status,
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: nextOffset(offset, len(records)),
+		HasMore:    hasMore,
+	}
+	now := uc.now().UTC()
+	for _, record := range records {
+		roleView := roleViews[record.Community.ID()]
+		result.Transfers = append(result.Transfers, CommunityOwnerTransferListItem{
+			Community: toCommunityDTO(record.Community, stats[record.Community.ID()], followViews[record.Community.ID()], roleView, input.ViewerID),
+			Transfer:  toCommunityOwnerTransfer(record.Transfer, input.ViewerID, roleView, now),
+		})
+	}
+	return result, nil
 }
 
 func (uc *CommunityReadUseCase) GetCurrentCommunityOwnerTransfer(ctx context.Context, input GetCurrentCommunityOwnerTransferInput) (CommunityOwnerTransferQueryResult, error) {
@@ -541,4 +635,26 @@ func firstNonBlank(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeCommunityOwnerTransferListStatus(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "pending", nil
+	}
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "pending", "accepted", "cancelled", "canceled", "expired", "all":
+		if strings.TrimSpace(strings.ToLower(raw)) == "canceled" {
+			return "cancelled", nil
+		}
+		return strings.TrimSpace(strings.ToLower(raw)), nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "community owner transfer status is invalid")
+	}
+}
+
+func trimCommunityOwnerTransferListPage(items []CommunityOwnerTransferListRecord, limit int) ([]CommunityOwnerTransferListRecord, bool) {
+	if len(items) <= limit {
+		return items, false
+	}
+	return items[:limit], true
 }

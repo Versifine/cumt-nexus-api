@@ -181,6 +181,66 @@ func TestListFollowedCommunitiesReturnsCommunities(t *testing.T) {
 	}
 }
 
+func TestListCommunityOwnerTransfersReturnsTargetInbox(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	transferID := "7b53252d-65c8-4c68-916c-255701c24b28"
+	community := newCommunityResult("campus", now)
+	communities := &fakeCommunityReadUseCase{
+		listOwnerTransfersResult: communityusecase.ListCommunityOwnerTransfersResult{
+			Transfers: []communityusecase.CommunityOwnerTransferListItem{
+				{
+					Community: community,
+					Transfer: communityusecase.CommunityOwnerTransfer{
+						ID:              transferID,
+						CommunityID:     community.ID,
+						FromUserID:      userdomain.NewGeneratedUserID().String(),
+						FromUsername:    "owner",
+						FromDisplayName: "Owner",
+						ToUserID:        userID.String(),
+						ToUsername:      "target",
+						ToDisplayName:   "Target",
+						Status:          "pending",
+						CreatedAt:       now,
+						UpdatedAt:       now,
+						ExpiresAt:       now.Add(48 * time.Hour),
+						ViewerIsTarget:  true,
+					},
+				},
+			},
+			Status: "pending",
+			Limit:  20,
+			Offset: 5,
+		},
+	}
+	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/community-owner-transfers?status=pending&limit=20&offset=5", nil)
+	request.Header.Set("Authorization", "Bearer valid-token")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !communities.listOwnerTransfersCalled {
+		t.Fatal("expected ListCommunityOwnerTransfers to be called")
+	}
+	if communities.listOwnerTransfersInput.ViewerID != userID || communities.listOwnerTransfersInput.Status != "pending" || communities.listOwnerTransfersInput.Limit != 20 || communities.listOwnerTransfersInput.Offset != 5 {
+		t.Fatalf("unexpected list owner transfers input: %#v", communities.listOwnerTransfersInput)
+	}
+	var response listCommunityOwnerTransfersResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Transfers) != 1 || response.Transfers[0].ID != transferID || response.Transfers[0].Community.Slug != "campus" {
+		t.Fatalf("unexpected owner transfer inbox response: %#v", response)
+	}
+}
+
 func TestGetCommunityManageContextReturnsCommunity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1214,6 +1274,7 @@ type fakeCommunityReadUseCase struct {
 	followCalled             bool
 	deleteFollowCalled       bool
 	listFollowedCalled       bool
+	listOwnerTransfersCalled bool
 	manageCalled             bool
 	listMembersCalled        bool
 	listManagePostsCalled    bool
@@ -1237,6 +1298,7 @@ type fakeCommunityReadUseCase struct {
 	followInput              communityusecase.FollowCommunityInput
 	deleteFollowInput        communityusecase.DeleteCommunityFollowInput
 	listFollowedInput        communityusecase.ListFollowedCommunitiesInput
+	listOwnerTransfersInput  communityusecase.ListCommunityOwnerTransfersInput
 	manageInput              communityusecase.GetCommunityManageContextInput
 	listMembersInput         communityusecase.ListCommunityMembersInput
 	listManagePostsInput     communityusecase.ListCommunityManagePostsInput
@@ -1260,6 +1322,7 @@ type fakeCommunityReadUseCase struct {
 	followResult             communityusecase.FollowCommunityResult
 	deleteFollowResult       communityusecase.DeleteCommunityFollowResult
 	listFollowedResult       communityusecase.ListFollowedCommunitiesResult
+	listOwnerTransfersResult communityusecase.ListCommunityOwnerTransfersResult
 	manageResult             communityusecase.GetCommunityManageContextResult
 	listMembersResult        communityusecase.ListCommunityMembersResult
 	listManagePostsResult    communityusecase.ListCommunityManagePostsResult
@@ -1283,6 +1346,7 @@ type fakeCommunityReadUseCase struct {
 	followErr                error
 	deleteFollowErr          error
 	listFollowedErr          error
+	listOwnerTransfersErr    error
 	manageErr                error
 	listMembersErr           error
 	listManagePostsErr       error
@@ -1331,6 +1395,12 @@ func (f *fakeCommunityReadUseCase) ListFollowedCommunities(ctx context.Context, 
 	f.listFollowedCalled = true
 	f.listFollowedInput = input
 	return f.listFollowedResult, f.listFollowedErr
+}
+
+func (f *fakeCommunityReadUseCase) ListCommunityOwnerTransfers(ctx context.Context, input communityusecase.ListCommunityOwnerTransfersInput) (communityusecase.ListCommunityOwnerTransfersResult, error) {
+	f.listOwnerTransfersCalled = true
+	f.listOwnerTransfersInput = input
+	return f.listOwnerTransfersResult, f.listOwnerTransfersErr
 }
 
 func (f *fakeCommunityReadUseCase) GetCommunityManageContext(ctx context.Context, input communityusecase.GetCommunityManageContextInput) (communityusecase.GetCommunityManageContextResult, error) {

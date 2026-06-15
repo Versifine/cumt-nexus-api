@@ -29,19 +29,20 @@ type PublicCommunityBootstrapUseCase struct {
 }
 
 type CommunityReadUseCase struct {
-	communities    CommunityRepository
-	settings       CommunitySettingsRepository
-	stats          CommunityStatsRepository
-	follows        CommunityFollowRepository
-	memberships    CommunityMembershipReadRepository
-	membershipOps  CommunityMembershipRepository
-	managePosts    CommunityManagePostRepository
-	manageComments CommunityManageCommentRepository
-	manageReports  CommunityManageReportRepository
-	rules          CommunityRuleRepository
-	platformOwners PlatformOwnerRepository
-	transactions   CommunityTransactionManager
-	now            func() time.Time
+	communities                CommunityRepository
+	settings                   CommunitySettingsRepository
+	stats                      CommunityStatsRepository
+	follows                    CommunityFollowRepository
+	memberships                CommunityMembershipReadRepository
+	membershipOps              CommunityMembershipRepository
+	managePosts                CommunityManagePostRepository
+	manageComments             CommunityManageCommentRepository
+	manageReports              CommunityManageReportRepository
+	rules                      CommunityRuleRepository
+	platformOwners             PlatformOwnerRepository
+	transactions               CommunityTransactionManager
+	ownerTransferNotifications CommunityOwnerTransferNotificationPublisher
+	now                        func() time.Time
 }
 
 type ListCommunitiesInput struct {

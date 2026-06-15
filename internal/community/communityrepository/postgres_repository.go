@@ -888,6 +888,81 @@ func (repo *PostgresMembershipRepository) FindCurrentOwnerTransfer(ctx context.C
 	return scanOwnerTransfer(repo.db.QueryRow(ctx, query, communityID.String()))
 }
 
+func (repo *PostgresMembershipRepository) ListOwnerTransfersByTarget(ctx context.Context, targetUserID userdomain.UserID, status string, now time.Time, limit int, offset int) ([]communityusecase.CommunityOwnerTransferListRecord, error) {
+	query := `
+		SELECT
+			cot.id::text,
+			cot.community_id::text,
+			cot.from_user_id::text,
+			from_users.username,
+			from_users.display_name,
+			cot.to_user_id::text,
+			to_users.username,
+			to_users.display_name,
+			cot.status,
+			cot.created_at,
+			cot.updated_at,
+			cot.expires_at,
+			cot.accepted_at,
+			cot.cancelled_at,
+			communities.id::text,
+			communities.slug,
+			communities.name,
+			communities.description,
+			communities.avatar_url,
+			communities.banner_url,
+			communities.kind,
+			communities.status,
+			communities.visibility,
+			communities.created_by::text,
+			communities.created_at,
+			communities.updated_at
+		FROM community_owner_transfers AS cot
+		INNER JOIN users AS from_users ON from_users.id = cot.from_user_id
+		INNER JOIN users AS to_users ON to_users.id = cot.to_user_id
+		INNER JOIN communities ON communities.id = cot.community_id
+		WHERE cot.to_user_id = $1::uuid
+	`
+	args := []any{targetUserID.String(), now, limit, offset}
+	switch status {
+	case "pending":
+		query += ` AND cot.status = 'pending' AND cot.expires_at > $2`
+	case "accepted":
+		query += ` AND cot.status = 'accepted' AND $2::timestamptz IS NOT NULL`
+	case "cancelled":
+		query += ` AND cot.status IN ('cancelled', 'canceled') AND $2::timestamptz IS NOT NULL`
+	case "expired":
+		query += ` AND (cot.status = 'expired' OR (cot.status = 'pending' AND cot.expires_at <= $2))`
+	case "all":
+		query += ` AND $2::timestamptz IS NOT NULL`
+	default:
+		return nil, apperr.New(apperr.CodeInvalidArgument, "community owner transfer status is invalid")
+	}
+	query += `
+		ORDER BY cot.created_at DESC, cot.id DESC
+		LIMIT $3
+		OFFSET $4
+	`
+	rows, err := repo.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list community owner transfers by target: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]communityusecase.CommunityOwnerTransferListRecord, 0)
+	for rows.Next() {
+		record, err := scanOwnerTransferListRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate community owner transfers by target: %w", err)
+	}
+	return records, nil
+}
+
 func (repo *PostgresMembershipRepository) FindOwnerTransferByID(ctx context.Context, transferID string) (communityusecase.CommunityOwnerTransferRecord, error) {
 	return repo.findOwnerTransferByID(ctx, transferID, false)
 }
@@ -1069,6 +1144,138 @@ func scanOwnerTransfer(row pgx.Row) (communityusecase.CommunityOwnerTransferReco
 	record.AcceptedAt = nullableTime(acceptedAt)
 	record.CancelledAt = nullableTime(cancelledAt)
 	return record, nil
+}
+
+func scanOwnerTransferListRecord(row pgx.Row) (communityusecase.CommunityOwnerTransferListRecord, error) {
+	var transfer communityusecase.CommunityOwnerTransferRecord
+	var rawTransferCommunityID string
+	var rawCommunityID string
+	var rawFromUserID string
+	var rawToUserID string
+	var expiresAt pgtype.Timestamptz
+	var acceptedAt pgtype.Timestamptz
+	var cancelledAt pgtype.Timestamptz
+	var rawCommunityCreatedBy pgtype.Text
+	var rawCommunityCreatedAt pgtype.Timestamptz
+	var rawCommunityUpdatedAt pgtype.Timestamptz
+	var rawCommunitySlug string
+	var rawCommunityName string
+	var rawCommunityDescription string
+	var rawCommunityAvatarURL string
+	var rawCommunityBannerURL string
+	var rawCommunityKind string
+	var rawCommunityStatus string
+	var rawCommunityVisibility string
+	if err := row.Scan(
+		&transfer.ID,
+		&rawTransferCommunityID,
+		&rawFromUserID,
+		&transfer.FromUsername,
+		&transfer.FromDisplayName,
+		&rawToUserID,
+		&transfer.ToUsername,
+		&transfer.ToDisplayName,
+		&transfer.Status,
+		&transfer.CreatedAt,
+		&transfer.UpdatedAt,
+		&expiresAt,
+		&acceptedAt,
+		&cancelledAt,
+		&rawCommunityID,
+		&rawCommunitySlug,
+		&rawCommunityName,
+		&rawCommunityDescription,
+		&rawCommunityAvatarURL,
+		&rawCommunityBannerURL,
+		&rawCommunityKind,
+		&rawCommunityStatus,
+		&rawCommunityVisibility,
+		&rawCommunityCreatedBy,
+		&rawCommunityCreatedAt,
+		&rawCommunityUpdatedAt,
+	); err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, err
+	}
+	communityID, err := communitydomain.NewCommunityID(rawCommunityID)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community id: %v", err)
+	}
+	transferCommunityID, err := communitydomain.NewCommunityID(rawTransferCommunityID)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer transfer community id: %v", err)
+	}
+	fromUserID, err := userdomain.NewUserID(rawFromUserID)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer from user id: %v", err)
+	}
+	toUserID, err := userdomain.NewUserID(rawToUserID)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer to user id: %v", err)
+	}
+	slug, err := communitydomain.NewCommunitySlug(rawCommunitySlug)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community slug: %v", err)
+	}
+	name, err := communitydomain.NewCommunityName(rawCommunityName)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community name: %v", err)
+	}
+	description, err := communitydomain.NewCommunityDescription(rawCommunityDescription)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, err
+	}
+	kind, err := communitydomain.NewCommunityKind(rawCommunityKind)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community kind: %v", err)
+	}
+	status, err := communitydomain.NewCommunityStatus(rawCommunityStatus)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community status: %v", err)
+	}
+	visibility, err := communitydomain.NewCommunityVisibility(rawCommunityVisibility)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community visibility: %v", err)
+	}
+	var createdBy *userdomain.UserID
+	if rawCommunityCreatedBy.Valid {
+		parsedCreatedBy, err := userdomain.NewUserID(rawCommunityCreatedBy.String)
+		if err != nil {
+			return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community creator: %v", err)
+		}
+		createdBy = &parsedCreatedBy
+	}
+	if !rawCommunityCreatedAt.Valid || !rawCommunityUpdatedAt.Valid {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community timestamps: missing timestamp")
+	}
+	community, err := communitydomain.RehydrateCommunityWithMedia(
+		communityID,
+		slug,
+		name,
+		description,
+		rawCommunityAvatarURL,
+		rawCommunityBannerURL,
+		kind,
+		status,
+		visibility,
+		createdBy,
+		rawCommunityCreatedAt.Time,
+		rawCommunityUpdatedAt.Time,
+	)
+	if err != nil {
+		return communityusecase.CommunityOwnerTransferListRecord{}, fmt.Errorf("rehydrate owner transfer community: %v", err)
+	}
+	transfer.CommunityID = transferCommunityID
+	transfer.FromUserID = fromUserID
+	transfer.ToUserID = toUserID
+	if expiresAt.Valid {
+		transfer.ExpiresAt = expiresAt.Time
+	}
+	transfer.AcceptedAt = nullableTime(acceptedAt)
+	transfer.CancelledAt = nullableTime(cancelledAt)
+	return communityusecase.CommunityOwnerTransferListRecord{
+		Community: *community,
+		Transfer:  transfer,
+	}, nil
 }
 
 type PostgresApplicationRepository struct {

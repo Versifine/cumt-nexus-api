@@ -493,6 +493,10 @@ func (f *fakeMembershipRepository) FindCurrentOwnerTransfer(ctx context.Context,
 	return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
 }
 
+func (f *fakeMembershipRepository) ListOwnerTransfersByTarget(ctx context.Context, targetUserID userdomain.UserID, status string, now time.Time, limit int, offset int) ([]CommunityOwnerTransferListRecord, error) {
+	return nil, nil
+}
+
 func (f *fakeMembershipRepository) FindOwnerTransferByID(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error) {
 	return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
 }
