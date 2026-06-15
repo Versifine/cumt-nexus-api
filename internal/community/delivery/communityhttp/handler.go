@@ -37,8 +37,11 @@ type CommunityReadUseCase interface {
 	DeleteCommunityRule(ctx context.Context, input communityusecase.DeleteCommunityRuleInput) (communityusecase.DeleteCommunityRuleResult, error)
 	AddCommunityModerator(ctx context.Context, input communityusecase.AddCommunityModeratorInput) (communityusecase.CommunityMemberMutationResult, error)
 	RemoveCommunityModerator(ctx context.Context, input communityusecase.RemoveCommunityModeratorInput) (communityusecase.CommunityMemberMutationResult, error)
+	GetCurrentCommunityOwnerTransfer(ctx context.Context, input communityusecase.GetCurrentCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferQueryResult, error)
+	GetCommunityOwnerTransfer(ctx context.Context, input communityusecase.GetCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferQueryResult, error)
 	CreateCommunityOwnerTransfer(ctx context.Context, input communityusecase.CreateCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error)
 	AcceptCommunityOwnerTransfer(ctx context.Context, input communityusecase.AcceptCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error)
+	CancelCommunityOwnerTransfer(ctx context.Context, input communityusecase.CancelCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error)
 }
 
 type CommunityApplicationUseCase interface {
@@ -224,8 +227,10 @@ type communityRuleResponse struct {
 }
 
 type updateCommunityManageSettingsRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	AvatarURL   *string `json:"avatar_url"`
+	BannerURL   *string `json:"banner_url"`
 }
 
 type writeCommunityModeratorRequest struct {
@@ -242,19 +247,33 @@ type communityMemberMutationResponse struct {
 }
 
 type communityOwnerTransferResponse struct {
-	ID          string     `json:"id"`
-	CommunityID string     `json:"community_id"`
-	FromUserID  string     `json:"from_user_id"`
-	ToUserID    string     `json:"to_user_id"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	AcceptedAt  *time.Time `json:"accepted_at"`
+	ID               string     `json:"id"`
+	CommunityID      string     `json:"community_id"`
+	FromUserID       string     `json:"from_user_id"`
+	FromUsername     string     `json:"from_username"`
+	FromDisplayName  string     `json:"from_display_name"`
+	ToUserID         string     `json:"to_user_id"`
+	ToUsername       string     `json:"to_username"`
+	ToDisplayName    string     `json:"to_display_name"`
+	Status           string     `json:"status"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	AcceptedAt       *time.Time `json:"accepted_at"`
+	CancelledAt      *time.Time `json:"cancelled_at"`
+	ViewerIsTarget   bool       `json:"viewer_is_target"`
+	ViewerCanCancel  bool       `json:"viewer_can_cancel"`
+	PlatformOverride bool       `json:"platform_owner_override"`
 }
 
 type communityOwnerTransferMutationResponse struct {
 	Community communityResponse              `json:"community"`
 	Transfer  communityOwnerTransferResponse `json:"transfer"`
+}
+
+type communityOwnerTransferQueryResponse struct {
+	Community communityResponse               `json:"community"`
+	Transfer  *communityOwnerTransferResponse `json:"transfer"`
 }
 
 type writeCommunityRuleRequest struct {
@@ -378,8 +397,11 @@ func RegisterManageRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities/:slug/manage/members", handler.ListCommunityMembers)
 	group.POST("/communities/:slug/manage/moderators", handler.AddCommunityModerator)
 	group.DELETE("/communities/:slug/manage/moderators/:user_id", handler.RemoveCommunityModerator)
+	group.GET("/communities/:slug/manage/owner-transfer", handler.GetCurrentCommunityOwnerTransfer)
 	group.POST("/communities/:slug/manage/owner-transfer", handler.CreateCommunityOwnerTransfer)
+	group.GET("/communities/:slug/owner-transfer/:transfer_id", handler.GetCommunityOwnerTransfer)
 	group.POST("/communities/:slug/manage/owner-transfer/:transfer_id/accept", handler.AcceptCommunityOwnerTransfer)
+	group.DELETE("/communities/:slug/manage/owner-transfer/:transfer_id", handler.CancelCommunityOwnerTransfer)
 	group.GET("/communities/:slug/manage/settings", handler.GetCommunityManageSettings)
 	group.PATCH("/communities/:slug/manage/settings", handler.UpdateCommunityManageSettings)
 	group.GET("/communities/:slug/manage/rules", handler.ListCommunityRules)
@@ -654,6 +676,51 @@ func (h *Handler) RemoveCommunityModerator(c *gin.Context) {
 	})
 }
 
+func (h *Handler) GetCurrentCommunityOwnerTransfer(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	result, err := h.communities.GetCurrentCommunityOwnerTransfer(c.Request.Context(), communityusecase.GetCurrentCommunityOwnerTransferInput{
+		Slug:     c.Param("slug"),
+		ViewerID: userID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityOwnerTransferQueryResponse{
+		Community: toCommunityResponse(result.Community),
+		Transfer:  toCommunityOwnerTransferResponsePtr(result.Transfer),
+	})
+}
+
+func (h *Handler) GetCommunityOwnerTransfer(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	result, err := h.communities.GetCommunityOwnerTransfer(c.Request.Context(), communityusecase.GetCommunityOwnerTransferInput{
+		Slug:       c.Param("slug"),
+		ViewerID:   userID,
+		TransferID: c.Param("transfer_id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityOwnerTransferQueryResponse{
+		Community: toCommunityResponse(result.Community),
+		Transfer:  toCommunityOwnerTransferResponsePtr(result.Transfer),
+	})
+}
+
 func (h *Handler) CreateCommunityOwnerTransfer(c *gin.Context) {
 	userID, ok := authcontext.CurrentUserID(c.Request.Context())
 	if !ok {
@@ -691,6 +758,29 @@ func (h *Handler) AcceptCommunityOwnerTransfer(c *gin.Context) {
 		return
 	}
 	result, err := h.communities.AcceptCommunityOwnerTransfer(c.Request.Context(), communityusecase.AcceptCommunityOwnerTransferInput{
+		Slug:       c.Param("slug"),
+		ViewerID:   userID,
+		TransferID: c.Param("transfer_id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityOwnerTransferMutationResponse{
+		Community: toCommunityResponse(result.Community),
+		Transfer:  toCommunityOwnerTransferResponse(result.Transfer),
+	})
+}
+
+func (h *Handler) CancelCommunityOwnerTransfer(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+	result, err := h.communities.CancelCommunityOwnerTransfer(c.Request.Context(), communityusecase.CancelCommunityOwnerTransferInput{
 		Slug:       c.Param("slug"),
 		ViewerID:   userID,
 		TransferID: c.Param("transfer_id"),
@@ -894,6 +984,8 @@ func (h *Handler) UpdateCommunityManageSettings(c *gin.Context) {
 		ViewerID:    userID,
 		Name:        req.Name,
 		Description: req.Description,
+		AvatarURL:   req.AvatarURL,
+		BannerURL:   req.BannerURL,
 	})
 	if err != nil {
 		_ = c.Error(err)
@@ -1288,15 +1380,32 @@ func toCommunityMemberResponse(member communityusecase.CommunityMember) communit
 
 func toCommunityOwnerTransferResponse(transfer communityusecase.CommunityOwnerTransfer) communityOwnerTransferResponse {
 	return communityOwnerTransferResponse{
-		ID:          transfer.ID,
-		CommunityID: transfer.CommunityID,
-		FromUserID:  transfer.FromUserID,
-		ToUserID:    transfer.ToUserID,
-		Status:      transfer.Status,
-		CreatedAt:   transfer.CreatedAt,
-		UpdatedAt:   transfer.UpdatedAt,
-		AcceptedAt:  transfer.AcceptedAt,
+		ID:               transfer.ID,
+		CommunityID:      transfer.CommunityID,
+		FromUserID:       transfer.FromUserID,
+		FromUsername:     transfer.FromUsername,
+		FromDisplayName:  transfer.FromDisplayName,
+		ToUserID:         transfer.ToUserID,
+		ToUsername:       transfer.ToUsername,
+		ToDisplayName:    transfer.ToDisplayName,
+		Status:           transfer.Status,
+		CreatedAt:        transfer.CreatedAt,
+		UpdatedAt:        transfer.UpdatedAt,
+		ExpiresAt:        transfer.ExpiresAt,
+		AcceptedAt:       transfer.AcceptedAt,
+		CancelledAt:      transfer.CancelledAt,
+		ViewerIsTarget:   transfer.ViewerIsTarget,
+		ViewerCanCancel:  transfer.ViewerCanCancel,
+		PlatformOverride: transfer.PlatformOverride,
 	}
+}
+
+func toCommunityOwnerTransferResponsePtr(transfer *communityusecase.CommunityOwnerTransfer) *communityOwnerTransferResponse {
+	if transfer == nil {
+		return nil
+	}
+	response := toCommunityOwnerTransferResponse(*transfer)
+	return &response
 }
 
 func toCommunityManagePostResponse(post communityusecase.CommunityManagePost) communityManagePostResponse {

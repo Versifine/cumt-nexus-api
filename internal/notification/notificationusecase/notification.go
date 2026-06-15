@@ -39,11 +39,12 @@ const (
 type CategoryFilter string
 
 const (
-	CategoryFilterAll      CategoryFilter = "all"
-	CategoryFilterReplies  CategoryFilter = "replies"
-	CategoryFilterMentions CategoryFilter = "mentions"
-	CategoryFilterLikes    CategoryFilter = "likes"
-	CategoryFilterSystem   CategoryFilter = "system"
+	CategoryFilterAll          CategoryFilter = "all"
+	CategoryFilterInteractions CategoryFilter = "interactions"
+	CategoryFilterReplies      CategoryFilter = "replies"
+	CategoryFilterMentions     CategoryFilter = "mentions"
+	CategoryFilterLikes        CategoryFilter = "likes"
+	CategoryFilterSystem       CategoryFilter = "system"
 )
 
 type UseCase struct {
@@ -62,9 +63,35 @@ type Notification struct {
 	AggregateKey   string
 	AggregateCount int
 	LastActorID    string
+	LastActor      *NotificationActor
+	Actor          *NotificationActor
+	Context        NotificationContext
 	ReadAt         *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+type NotificationActor struct {
+	ID          string
+	Username    string
+	DisplayName string
+	AvatarURL   string
+}
+
+type NotificationCommunityContext struct {
+	ID   string
+	Slug string
+	Name string
+}
+
+type NotificationContext struct {
+	PostID         string
+	CommentID      string
+	Permalink      string
+	PostTitle      string
+	CommentExcerpt string
+	CommentDepth   int
+	Community      *NotificationCommunityContext
 }
 
 type ListNotificationsInput struct {
@@ -305,6 +332,8 @@ func normalizeCategory(raw string) (CategoryFilter, error) {
 	switch CategoryFilter(strings.TrimSpace(strings.ToLower(raw))) {
 	case CategoryFilterAll:
 		return CategoryFilterAll, nil
+	case CategoryFilterInteractions:
+		return CategoryFilterInteractions, nil
 	case CategoryFilterReplies:
 		return CategoryFilterReplies, nil
 	case CategoryFilterMentions:
@@ -324,7 +353,7 @@ func (category CategoryFilter) String() string {
 
 func normalizeStatus(raw string) (StatusFilter, error) {
 	if strings.TrimSpace(raw) == "" {
-		return StatusFilterUnread, nil
+		return StatusFilterAll, nil
 	}
 	switch StatusFilter(strings.TrimSpace(strings.ToLower(raw))) {
 	case StatusFilterUnread:

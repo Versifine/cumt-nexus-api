@@ -371,6 +371,8 @@ func TestUpdateCommunityManageSettingsParsesBody(t *testing.T) {
 			Settings: communityusecase.CommunitySettings{
 				Name:        "Campus Hub",
 				Description: "Rules and updates",
+				AvatarURL:   "https://cdn.example.com/campus-avatar.jpg",
+				BannerURL:   "https://cdn.example.com/campus-banner.jpg",
 				UpdatedAt:   now,
 			},
 		},
@@ -380,7 +382,9 @@ func TestUpdateCommunityManageSettingsParsesBody(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPatch, "/api/v1/communities/campus/manage/settings", bytes.NewBufferString(`{
 		"name": "Campus Hub",
-		"description": "Rules and updates"
+		"description": "Rules and updates",
+		"avatar_url": "https://cdn.example.com/campus-avatar.jpg",
+		"banner_url": "https://cdn.example.com/campus-banner.jpg"
 	}`))
 	request.Header.Set("Authorization", "Bearer valid-token")
 	request.Header.Set("Content-Type", "application/json")
@@ -393,7 +397,16 @@ func TestUpdateCommunityManageSettingsParsesBody(t *testing.T) {
 	if !communities.updateSettingsCalled {
 		t.Fatal("expected UpdateCommunityManageSettings to be called")
 	}
-	if communities.updateSettingsInput.Slug != "campus" || communities.updateSettingsInput.ViewerID != userID || communities.updateSettingsInput.Name != "Campus Hub" || communities.updateSettingsInput.Description != "Rules and updates" {
+	if communities.updateSettingsInput.Slug != "campus" ||
+		communities.updateSettingsInput.ViewerID != userID ||
+		communities.updateSettingsInput.Name == nil ||
+		*communities.updateSettingsInput.Name != "Campus Hub" ||
+		communities.updateSettingsInput.Description == nil ||
+		*communities.updateSettingsInput.Description != "Rules and updates" ||
+		communities.updateSettingsInput.AvatarURL == nil ||
+		*communities.updateSettingsInput.AvatarURL != "https://cdn.example.com/campus-avatar.jpg" ||
+		communities.updateSettingsInput.BannerURL == nil ||
+		*communities.updateSettingsInput.BannerURL != "https://cdn.example.com/campus-banner.jpg" {
 		t.Fatalf("unexpected update settings input: %#v", communities.updateSettingsInput)
 	}
 	var response updateCommunityManageSettingsResponse
@@ -679,6 +692,38 @@ func TestCommunityOwnerTransferRoutesPassInputs(t *testing.T) {
 	userID := userdomain.NewGeneratedUserID()
 	transferID := "8f92e975-5323-4a58-bac1-1336b668183c"
 	communities := &fakeCommunityReadUseCase{
+		getCurrentTransferResult: communityusecase.CommunityOwnerTransferQueryResult{
+			Community: newCommunityResult("campus", now),
+			Transfer: &communityusecase.CommunityOwnerTransfer{
+				ID:              transferID,
+				CommunityID:     userdomain.NewGeneratedUserID().String(),
+				FromUserID:      userID.String(),
+				FromUsername:    "alice",
+				ToUserID:        userdomain.NewGeneratedUserID().String(),
+				ToUsername:      "bob",
+				Status:          "pending",
+				CreatedAt:       now,
+				UpdatedAt:       now,
+				ExpiresAt:       now.Add(48 * time.Hour),
+				ViewerCanCancel: true,
+			},
+		},
+		getTransferResult: communityusecase.CommunityOwnerTransferQueryResult{
+			Community: newCommunityResult("campus", now),
+			Transfer: &communityusecase.CommunityOwnerTransfer{
+				ID:             transferID,
+				CommunityID:    userdomain.NewGeneratedUserID().String(),
+				FromUserID:     userdomain.NewGeneratedUserID().String(),
+				FromUsername:   "alice",
+				ToUserID:       userID.String(),
+				ToUsername:     "bob",
+				Status:         "pending",
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				ExpiresAt:      now.Add(48 * time.Hour),
+				ViewerIsTarget: true,
+			},
+		},
 		createTransferResult: communityusecase.CommunityOwnerTransferResult{
 			Community: newCommunityResult("campus", now),
 			Transfer: communityusecase.CommunityOwnerTransfer{
@@ -704,8 +749,46 @@ func TestCommunityOwnerTransferRoutesPassInputs(t *testing.T) {
 				AcceptedAt:  &now,
 			},
 		},
+		cancelTransferResult: communityusecase.CommunityOwnerTransferResult{
+			Community: newCommunityResult("campus", now),
+			Transfer: communityusecase.CommunityOwnerTransfer{
+				ID:          transferID,
+				CommunityID: userdomain.NewGeneratedUserID().String(),
+				FromUserID:  userID.String(),
+				ToUserID:    userdomain.NewGeneratedUserID().String(),
+				Status:      "cancelled",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+				ExpiresAt:   now.Add(48 * time.Hour),
+				CancelledAt: &now,
+			},
+		},
 	}
 	router := newCommunityTestRouter(communities, &fakeCommunityApplicationUseCase{}, validParserWithUserID(userID))
+
+	getCurrentRecorder := httptest.NewRecorder()
+	getCurrentRequest := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/manage/owner-transfer", nil)
+	getCurrentRequest.Header.Set("Authorization", "Bearer valid-token")
+	router.ServeHTTP(getCurrentRecorder, getCurrentRequest)
+
+	if getCurrentRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, getCurrentRecorder.Code, getCurrentRecorder.Body.String())
+	}
+	if !communities.getCurrentTransferCalled || communities.getCurrentTransferInput.Slug != "campus" || communities.getCurrentTransferInput.ViewerID != userID {
+		t.Fatalf("unexpected get current transfer input: %#v", communities.getCurrentTransferInput)
+	}
+
+	getRecorder := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/communities/campus/owner-transfer/"+transferID, nil)
+	getRequest.Header.Set("Authorization", "Bearer valid-token")
+	router.ServeHTTP(getRecorder, getRequest)
+
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, getRecorder.Code, getRecorder.Body.String())
+	}
+	if !communities.getTransferCalled || communities.getTransferInput.Slug != "campus" || communities.getTransferInput.ViewerID != userID || communities.getTransferInput.TransferID != transferID {
+		t.Fatalf("unexpected get transfer input: %#v", communities.getTransferInput)
+	}
 
 	createRecorder := httptest.NewRecorder()
 	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/communities/campus/manage/owner-transfer", bytes.NewBufferString(`{"username":"bob"}`))
@@ -736,6 +819,18 @@ func TestCommunityOwnerTransferRoutesPassInputs(t *testing.T) {
 	}
 	if communities.acceptTransferInput.Slug != "campus" || communities.acceptTransferInput.ViewerID != userID || communities.acceptTransferInput.TransferID != transferID {
 		t.Fatalf("unexpected accept transfer input: %#v", communities.acceptTransferInput)
+	}
+
+	cancelRecorder := httptest.NewRecorder()
+	cancelRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/communities/campus/manage/owner-transfer/"+transferID, nil)
+	cancelRequest.Header.Set("Authorization", "Bearer valid-token")
+	router.ServeHTTP(cancelRecorder, cancelRequest)
+
+	if cancelRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, cancelRecorder.Code, cancelRecorder.Body.String())
+	}
+	if !communities.cancelTransferCalled || communities.cancelTransferInput.Slug != "campus" || communities.cancelTransferInput.ViewerID != userID || communities.cancelTransferInput.TransferID != transferID {
+		t.Fatalf("unexpected cancel transfer input: %#v", communities.cancelTransferInput)
 	}
 }
 
@@ -1132,8 +1227,11 @@ type fakeCommunityReadUseCase struct {
 	deleteRuleCalled         bool
 	addModeratorCalled       bool
 	removeModeratorCalled    bool
+	getCurrentTransferCalled bool
+	getTransferCalled        bool
 	createTransferCalled     bool
 	acceptTransferCalled     bool
+	cancelTransferCalled     bool
 	listInput                communityusecase.ListCommunitiesInput
 	getInput                 communityusecase.GetCommunityInput
 	followInput              communityusecase.FollowCommunityInput
@@ -1152,8 +1250,11 @@ type fakeCommunityReadUseCase struct {
 	deleteRuleInput          communityusecase.DeleteCommunityRuleInput
 	addModeratorInput        communityusecase.AddCommunityModeratorInput
 	removeModeratorInput     communityusecase.RemoveCommunityModeratorInput
+	getCurrentTransferInput  communityusecase.GetCurrentCommunityOwnerTransferInput
+	getTransferInput         communityusecase.GetCommunityOwnerTransferInput
 	createTransferInput      communityusecase.CreateCommunityOwnerTransferInput
 	acceptTransferInput      communityusecase.AcceptCommunityOwnerTransferInput
+	cancelTransferInput      communityusecase.CancelCommunityOwnerTransferInput
 	listResult               communityusecase.ListCommunitiesResult
 	getResult                communityusecase.GetCommunityResult
 	followResult             communityusecase.FollowCommunityResult
@@ -1172,8 +1273,11 @@ type fakeCommunityReadUseCase struct {
 	deleteRuleResult         communityusecase.DeleteCommunityRuleResult
 	addModeratorResult       communityusecase.CommunityMemberMutationResult
 	removeModeratorResult    communityusecase.CommunityMemberMutationResult
+	getCurrentTransferResult communityusecase.CommunityOwnerTransferQueryResult
+	getTransferResult        communityusecase.CommunityOwnerTransferQueryResult
 	createTransferResult     communityusecase.CommunityOwnerTransferResult
 	acceptTransferResult     communityusecase.CommunityOwnerTransferResult
+	cancelTransferResult     communityusecase.CommunityOwnerTransferResult
 	listErr                  error
 	getErr                   error
 	followErr                error
@@ -1192,8 +1296,11 @@ type fakeCommunityReadUseCase struct {
 	deleteRuleErr            error
 	addModeratorErr          error
 	removeModeratorErr       error
+	getCurrentTransferErr    error
+	getTransferErr           error
 	createTransferErr        error
 	acceptTransferErr        error
+	cancelTransferErr        error
 }
 
 func (f *fakeCommunityReadUseCase) ListCommunities(ctx context.Context, input communityusecase.ListCommunitiesInput) (communityusecase.ListCommunitiesResult, error) {
@@ -1304,6 +1411,18 @@ func (f *fakeCommunityReadUseCase) RemoveCommunityModerator(ctx context.Context,
 	return f.removeModeratorResult, f.removeModeratorErr
 }
 
+func (f *fakeCommunityReadUseCase) GetCurrentCommunityOwnerTransfer(ctx context.Context, input communityusecase.GetCurrentCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferQueryResult, error) {
+	f.getCurrentTransferCalled = true
+	f.getCurrentTransferInput = input
+	return f.getCurrentTransferResult, f.getCurrentTransferErr
+}
+
+func (f *fakeCommunityReadUseCase) GetCommunityOwnerTransfer(ctx context.Context, input communityusecase.GetCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferQueryResult, error) {
+	f.getTransferCalled = true
+	f.getTransferInput = input
+	return f.getTransferResult, f.getTransferErr
+}
+
 func (f *fakeCommunityReadUseCase) CreateCommunityOwnerTransfer(ctx context.Context, input communityusecase.CreateCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error) {
 	f.createTransferCalled = true
 	f.createTransferInput = input
@@ -1314,6 +1433,12 @@ func (f *fakeCommunityReadUseCase) AcceptCommunityOwnerTransfer(ctx context.Cont
 	f.acceptTransferCalled = true
 	f.acceptTransferInput = input
 	return f.acceptTransferResult, f.acceptTransferErr
+}
+
+func (f *fakeCommunityReadUseCase) CancelCommunityOwnerTransfer(ctx context.Context, input communityusecase.CancelCommunityOwnerTransferInput) (communityusecase.CommunityOwnerTransferResult, error) {
+	f.cancelTransferCalled = true
+	f.cancelTransferInput = input
+	return f.cancelTransferResult, f.cancelTransferErr
 }
 
 type fakeCommunityApplicationUseCase struct {

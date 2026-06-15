@@ -48,7 +48,7 @@ func TestUpdateCommunityOwnerParsesBody(t *testing.T) {
 	router := newAdminTestRouter(admin, actorID)
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/communities/8f92e975-5323-4a58-bac1-1336b668183c/owner", bytes.NewBufferString(`{"user_id":"`+targetID.String()+`"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/communities/8f92e975-5323-4a58-bac1-1336b668183c/owner", bytes.NewBufferString(`{"user_id":"`+targetID.String()+`","reason":"owner left campus"}`))
 	request.Header.Set("Content-Type", "application/json")
 
 	router.ServeHTTP(recorder, request)
@@ -61,7 +61,8 @@ func TestUpdateCommunityOwnerParsesBody(t *testing.T) {
 	}
 	if admin.updateCommunityOwnerInput.ActorID != actorID ||
 		admin.updateCommunityOwnerInput.CommunityID != "8f92e975-5323-4a58-bac1-1336b668183c" ||
-		admin.updateCommunityOwnerInput.UserID != targetID.String() {
+		admin.updateCommunityOwnerInput.UserID != targetID.String() ||
+		admin.updateCommunityOwnerInput.Reason != "owner left campus" {
 		t.Fatalf("unexpected update community owner input: %#v", admin.updateCommunityOwnerInput)
 	}
 

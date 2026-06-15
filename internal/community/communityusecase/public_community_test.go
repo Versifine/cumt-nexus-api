@@ -529,12 +529,18 @@ func TestUpdateCommunityManageSettingsPersistsForOwner(t *testing.T) {
 	uc := NewCommunityReadUseCase(repo)
 	uc.SetMembershipReader(repo)
 	uc.now = func() time.Time { return updatedAt }
+	name := "Campus Hub"
+	description := "Rules and updates"
+	avatarURL := "https://cdn.example.com/campus-avatar.jpg"
+	bannerURL := "https://cdn.example.com/campus-banner.jpg"
 
 	result, err := uc.UpdateCommunityManageSettings(context.Background(), UpdateCommunityManageSettingsInput{
 		Slug:        "campus",
 		ViewerID:    viewerID,
-		Name:        "Campus Hub",
-		Description: "Rules and updates",
+		Name:        &name,
+		Description: &description,
+		AvatarURL:   &avatarURL,
+		BannerURL:   &bannerURL,
 	})
 	if err != nil {
 		t.Fatalf("UpdateCommunityManageSettings returned error: %v", err)
@@ -542,10 +548,10 @@ func TestUpdateCommunityManageSettingsPersistsForOwner(t *testing.T) {
 	if !repo.updateDetailsCalled {
 		t.Fatal("expected UpdateDetails to be called")
 	}
-	if repo.updatedCommunity.ID() != community.ID() || repo.updatedCommunity.Name().String() != "Campus Hub" || repo.updatedCommunity.Description().String() != "Rules and updates" || !repo.updatedCommunity.UpdatedAt().Equal(updatedAt) {
+	if repo.updatedCommunity.ID() != community.ID() || repo.updatedCommunity.Name().String() != "Campus Hub" || repo.updatedCommunity.Description().String() != "Rules and updates" || repo.updatedCommunity.AvatarURL() != avatarURL || repo.updatedCommunity.BannerURL() != bannerURL || !repo.updatedCommunity.UpdatedAt().Equal(updatedAt) {
 		t.Fatalf("unexpected updated community: id=%q name=%q description=%q updated=%s", repo.updatedCommunity.ID().String(), repo.updatedCommunity.Name().String(), repo.updatedCommunity.Description().String(), repo.updatedCommunity.UpdatedAt())
 	}
-	if result.Settings.Name != "Campus Hub" || result.Settings.Description != "Rules and updates" || !result.Settings.UpdatedAt.Equal(updatedAt) {
+	if result.Settings.Name != "Campus Hub" || result.Settings.Description != "Rules and updates" || result.Settings.AvatarURL != avatarURL || result.Settings.BannerURL != bannerURL || !result.Settings.UpdatedAt.Equal(updatedAt) {
 		t.Fatalf("unexpected settings result: %#v", result.Settings)
 	}
 }
@@ -564,11 +570,12 @@ func TestUpdateCommunityManageSettingsRequiresOwner(t *testing.T) {
 	}
 	uc := NewCommunityReadUseCase(repo)
 	uc.SetMembershipReader(repo)
+	name := "Campus Hub"
 
 	_, err := uc.UpdateCommunityManageSettings(context.Background(), UpdateCommunityManageSettingsInput{
 		Slug:     "campus",
 		ViewerID: viewerID,
-		Name:     "Campus Hub",
+		Name:     &name,
 	})
 	if !hasAppCode(err, apperr.CodeForbidden) {
 		t.Fatalf("expected forbidden for moderator settings update, got %v", err)
@@ -925,6 +932,62 @@ func TestAcceptCommunityOwnerTransferRequiresTargetUser(t *testing.T) {
 	}
 }
 
+func TestGetAndCancelCommunityOwnerTransferForPlatformOwner(t *testing.T) {
+	now := time.Date(2026, 6, 14, 13, 0, 0, 0, time.UTC)
+	fromID := userdomain.NewGeneratedUserID()
+	toID := userdomain.NewGeneratedUserID()
+	viewerID := userdomain.NewGeneratedUserID()
+	community := mustCommunity(t, "campus", communitydomain.CommunityStatusActive, now)
+	transferID := "7b53252d-65c8-4c68-916c-255701c24b28"
+	repo := &fakeCommunityRepository{
+		findBySlugFunc: func(ctx context.Context, slug communitydomain.CommunitySlug) (*communitydomain.Community, error) {
+			return community, nil
+		},
+		isPlatformOwner: true,
+		ownerTransfer: &CommunityOwnerTransferRecord{
+			ID:              transferID,
+			CommunityID:     community.ID(),
+			FromUserID:      fromID,
+			FromUsername:    "alice",
+			FromDisplayName: "Alice",
+			ToUserID:        toID,
+			ToUsername:      "bob",
+			ToDisplayName:   "Bob",
+			Status:          "pending",
+			CreatedAt:       now.Add(-time.Hour),
+			UpdatedAt:       now.Add(-time.Hour),
+			ExpiresAt:       now.Add(CommunityOwnerTransferTTL),
+		},
+	}
+	uc := NewCommunityReadUseCase(repo)
+	uc.SetMembershipRepository(&fakeCommunityMembershipOps{repo})
+	uc.SetPlatformOwnerRepository(repo)
+	uc.now = func() time.Time { return now }
+
+	current, err := uc.GetCurrentCommunityOwnerTransfer(context.Background(), GetCurrentCommunityOwnerTransferInput{
+		Slug:     "campus",
+		ViewerID: viewerID,
+	})
+	if err != nil {
+		t.Fatalf("GetCurrentCommunityOwnerTransfer returned error: %v", err)
+	}
+	if current.Transfer == nil || current.Transfer.FromUsername != "alice" || current.Transfer.ToUsername != "bob" || !current.Transfer.ViewerCanCancel || !current.Transfer.PlatformOverride {
+		t.Fatalf("unexpected current transfer: %#v", current.Transfer)
+	}
+
+	cancelled, err := uc.CancelCommunityOwnerTransfer(context.Background(), CancelCommunityOwnerTransferInput{
+		Slug:       "campus",
+		ViewerID:   viewerID,
+		TransferID: transferID,
+	})
+	if err != nil {
+		t.Fatalf("CancelCommunityOwnerTransfer returned error: %v", err)
+	}
+	if repo.cancelledOwnerTransferID != transferID || cancelled.Transfer.Status != "cancelled" || cancelled.Transfer.CancelledAt == nil {
+		t.Fatalf("unexpected cancel result: repo=%q transfer=%#v", repo.cancelledOwnerTransferID, cancelled.Transfer)
+	}
+}
+
 type fakeCommunityRepository struct {
 	createFunc                     func(ctx context.Context, community communitydomain.Community) error
 	findByIDFunc                   func(ctx context.Context, id communitydomain.CommunityID) (*communitydomain.Community, error)
@@ -956,6 +1019,7 @@ type fakeCommunityRepository struct {
 	createdOwnerTransfer           *CommunityOwnerTransferRecord
 	ownerTransfer                  *CommunityOwnerTransferRecord
 	acceptedOwnerTransferID        string
+	cancelledOwnerTransferID       string
 	transferOwnerUserID            userdomain.UserID
 	managePostsCalled              bool
 	managePostsCommunityID         communitydomain.CommunityID
@@ -1154,6 +1218,20 @@ func (f *fakeCommunityRepository) CreateOwnerTransfer(ctx context.Context, trans
 	return nil
 }
 
+func (f *fakeCommunityRepository) FindCurrentOwnerTransfer(ctx context.Context, communityID communitydomain.CommunityID, now time.Time) (CommunityOwnerTransferRecord, error) {
+	if f.ownerTransfer == nil || f.ownerTransfer.CommunityID != communityID || f.ownerTransfer.Status != "pending" {
+		return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+	}
+	return *f.ownerTransfer, nil
+}
+
+func (f *fakeCommunityRepository) FindOwnerTransferByID(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error) {
+	if f.ownerTransfer == nil || f.ownerTransfer.ID != transferID {
+		return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+	}
+	return *f.ownerTransfer, nil
+}
+
 func (f *fakeCommunityRepository) FindOwnerTransferForUpdate(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error) {
 	if f.ownerTransfer == nil || f.ownerTransfer.ID != transferID {
 		return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
@@ -1163,6 +1241,11 @@ func (f *fakeCommunityRepository) FindOwnerTransferForUpdate(ctx context.Context
 
 func (f *fakeCommunityRepository) AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) error {
 	f.acceptedOwnerTransferID = transferID
+	return nil
+}
+
+func (f *fakeCommunityRepository) CancelOwnerTransfer(ctx context.Context, transferID string, cancelledAt time.Time) error {
+	f.cancelledOwnerTransferID = transferID
 	return nil
 }
 

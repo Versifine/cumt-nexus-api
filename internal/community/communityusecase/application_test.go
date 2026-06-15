@@ -489,11 +489,23 @@ func (f *fakeMembershipRepository) CreateOwnerTransfer(ctx context.Context, tran
 	return nil
 }
 
+func (f *fakeMembershipRepository) FindCurrentOwnerTransfer(ctx context.Context, communityID communitydomain.CommunityID, now time.Time) (CommunityOwnerTransferRecord, error) {
+	return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+}
+
+func (f *fakeMembershipRepository) FindOwnerTransferByID(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error) {
+	return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+}
+
 func (f *fakeMembershipRepository) FindOwnerTransferForUpdate(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error) {
 	return CommunityOwnerTransferRecord{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
 }
 
 func (f *fakeMembershipRepository) AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) error {
+	return nil
+}
+
+func (f *fakeMembershipRepository) CancelOwnerTransfer(ctx context.Context, transferID string, cancelledAt time.Time) error {
 	return nil
 }
 

@@ -67,3 +67,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000028 | create_user_sanctions | Creates user sanction records for timed/permanent account bans and revocation audit state |
 | 000029 | create_platform_owner_transfers | Creates platform owner transfer records, system audit actor refs and active platform owner uniqueness guard |
 | 000030 | create_moderation_tools | Adds Reddit-style moderation queues, content action metadata, removal reasons, saved responses, community user moderation states, mod notes and community moderation logs |
+| 000031 | add_community_media_and_owner_transfer_state | Adds community avatar/banner URLs and community owner transfer expiration/cancellation state |

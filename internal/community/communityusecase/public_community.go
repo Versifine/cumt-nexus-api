@@ -120,8 +120,10 @@ type GetCommunityManageSettingsInput struct {
 type UpdateCommunityManageSettingsInput struct {
 	Slug        string
 	ViewerID    userdomain.UserID
-	Name        string
-	Description string
+	Name        *string
+	Description *string
+	AvatarURL   *string
+	BannerURL   *string
 }
 
 type ListCommunityRulesInput struct {
@@ -855,15 +857,34 @@ func (uc *CommunityReadUseCase) UpdateCommunityManageSettings(ctx context.Contex
 	if uc.settings == nil {
 		return UpdateCommunityManageSettingsResult{}, apperr.New(apperr.CodeInternal, "community settings are not configured")
 	}
-	name, err := communitydomain.NewCommunityName(input.Name)
+	if input.Name == nil && input.Description == nil && input.AvatarURL == nil && input.BannerURL == nil {
+		return UpdateCommunityManageSettingsResult{}, apperr.New(apperr.CodeInvalidArgument, "community settings update requires at least one field")
+	}
+	nameValue := community.Name().String()
+	if input.Name != nil {
+		nameValue = *input.Name
+	}
+	descriptionValue := community.Description().String()
+	if input.Description != nil {
+		descriptionValue = *input.Description
+	}
+	avatarURLValue := community.AvatarURL()
+	if input.AvatarURL != nil {
+		avatarURLValue = *input.AvatarURL
+	}
+	bannerURLValue := community.BannerURL()
+	if input.BannerURL != nil {
+		bannerURLValue = *input.BannerURL
+	}
+	name, err := communitydomain.NewCommunityName(nameValue)
 	if err != nil {
 		return UpdateCommunityManageSettingsResult{}, err
 	}
-	description, err := communitydomain.NewCommunityDescription(input.Description)
+	description, err := communitydomain.NewCommunityDescription(descriptionValue)
 	if err != nil {
 		return UpdateCommunityManageSettingsResult{}, err
 	}
-	if err := community.UpdateDetails(name, description, uc.now().UTC()); err != nil {
+	if err := community.UpdateSettings(name, description, avatarURLValue, bannerURLValue, uc.now().UTC()); err != nil {
 		return UpdateCommunityManageSettingsResult{}, err
 	}
 	if err := uc.settings.UpdateDetails(ctx, *community); err != nil {
@@ -1299,6 +1320,8 @@ func toCommunityDTO(community communitydomain.Community, stats CommunityStats, f
 		Slug:              community.Slug().String(),
 		Name:              community.Name().String(),
 		Description:       community.Description().String(),
+		AvatarURL:         community.AvatarURL(),
+		BannerURL:         community.BannerURL(),
 		Kind:              community.Kind().String(),
 		Status:            community.Status().String(),
 		Visibility:        community.Visibility().String(),
@@ -1316,6 +1339,8 @@ func toCommunitySettingsDTO(community communitydomain.Community) CommunitySettin
 	return CommunitySettings{
 		Name:        community.Name().String(),
 		Description: community.Description().String(),
+		AvatarURL:   community.AvatarURL(),
+		BannerURL:   community.BannerURL(),
 		UpdatedAt:   community.UpdatedAt(),
 	}
 }

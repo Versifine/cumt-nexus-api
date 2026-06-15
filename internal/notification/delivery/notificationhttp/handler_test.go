@@ -60,6 +60,12 @@ func TestListNotificationsReturnsNotifications(t *testing.T) {
 	if response.Notifications[0].AggregateCount != 2 || response.Notifications[0].LastActorID == "" {
 		t.Fatalf("expected aggregate notification fields, got %#v", response.Notifications[0])
 	}
+	if response.Notifications[0].Actor == nil || response.Notifications[0].LastActor == nil {
+		t.Fatalf("expected actor summaries, got %#v", response.Notifications[0])
+	}
+	if response.Notifications[0].Context.PostID == "" || response.Notifications[0].Context.Permalink == "" || response.Notifications[0].Context.Community == nil {
+		t.Fatalf("expected notification context, got %#v", response.Notifications[0].Context)
+	}
 }
 
 func TestGetUnreadSummaryReturnsCategoryCounts(t *testing.T) {
@@ -318,6 +324,7 @@ func validParserWithUserID(userID userdomain.UserID) *fakeAccessTokenParser {
 }
 
 func newNotification(recipientID userdomain.UserID, now time.Time) notificationusecase.Notification {
+	actorID := userdomain.NewGeneratedUserID().String()
 	return notificationusecase.Notification{
 		ID:             uuid.NewString(),
 		RecipientID:    recipientID.String(),
@@ -327,9 +334,34 @@ func newNotification(recipientID userdomain.UserID, now time.Time) notificationu
 		SourceType:     "system",
 		SourceID:       "source-1",
 		AggregateCount: 2,
-		LastActorID:    userdomain.NewGeneratedUserID().String(),
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		LastActorID:    actorID,
+		Actor: &notificationusecase.NotificationActor{
+			ID:          actorID,
+			Username:    "alice",
+			DisplayName: "Alice",
+			AvatarURL:   "https://example.com/avatar.jpg",
+		},
+		LastActor: &notificationusecase.NotificationActor{
+			ID:          actorID,
+			Username:    "alice",
+			DisplayName: "Alice",
+			AvatarURL:   "https://example.com/avatar.jpg",
+		},
+		Context: notificationusecase.NotificationContext{
+			PostID:         uuid.NewString(),
+			CommentID:      uuid.NewString(),
+			Permalink:      "/c/public/posts/post-1#comment-comment-1",
+			PostTitle:      "Post title",
+			CommentExcerpt: "Comment excerpt",
+			CommentDepth:   1,
+			Community: &notificationusecase.NotificationCommunityContext{
+				ID:   uuid.NewString(),
+				Slug: "public",
+				Name: "Public",
+			},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 }
 

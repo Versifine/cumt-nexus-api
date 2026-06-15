@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/notification/notificationusecase"
@@ -124,35 +125,63 @@ func (repo *PostgresNotificationRepository) UpsertAggregated(ctx context.Context
 func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, category notificationusecase.CategoryFilter, status notificationusecase.StatusFilter, limit int, offset int) ([]notificationusecase.Notification, error) {
 	query := `
 		SELECT
-			id::text,
-			recipient_id::text,
-			type,
-			title,
-			body,
-			source_type,
-			source_id,
-			aggregate_key,
-			aggregate_count,
-			last_actor_id::text,
-			read_at,
-			created_at,
-			updated_at
+			notifications.id::text,
+			notifications.recipient_id::text,
+			notifications.type,
+			notifications.title,
+			notifications.body,
+			notifications.source_type,
+			notifications.source_id,
+			notifications.aggregate_key,
+			notifications.aggregate_count,
+			notifications.last_actor_id::text,
+			last_actor.username,
+			last_actor.display_name,
+			last_actor.avatar_url,
+			source_post.id::text,
+			source_comment.id::text,
+			source_post.title,
+			source_comment.body,
+			CASE
+				WHEN source_comment.id IS NULL THEN 0
+				WHEN source_comment.parent_id IS NULL THEN 0
+				ELSE 1
+			END,
+			source_community.id::text,
+			source_community.slug,
+			source_community.name,
+			notifications.read_at,
+			notifications.created_at,
+			notifications.updated_at
 		FROM notifications
-		WHERE recipient_id = $1::uuid
+		LEFT JOIN users AS last_actor
+			ON last_actor.id = notifications.last_actor_id
+		LEFT JOIN comments AS source_comment
+			ON notifications.source_type = 'comment'
+			AND source_comment.id::text = notifications.source_id
+		LEFT JOIN posts AS source_post
+			ON (
+				notifications.source_type = 'post'
+				AND source_post.id::text = notifications.source_id
+			)
+			OR source_post.id = source_comment.post_id
+		LEFT JOIN communities AS source_community
+			ON source_community.id = source_post.community_id
+		WHERE notifications.recipient_id = $1::uuid
 	`
 	args := []any{recipientID.String()}
 	query += notificationCategoryPredicate(category)
 	switch status {
 	case notificationusecase.StatusFilterUnread:
-		query += ` AND read_at IS NULL`
+		query += ` AND notifications.read_at IS NULL`
 	case notificationusecase.StatusFilterRead:
-		query += ` AND read_at IS NOT NULL`
+		query += ` AND notifications.read_at IS NOT NULL`
 	case notificationusecase.StatusFilterAll:
 	default:
 		return nil, apperr.New(apperr.CodeInvalidArgument, "notification status is invalid")
 	}
 	query += `
-		ORDER BY created_at DESC, id DESC
+		ORDER BY notifications.created_at DESC, notifications.id DESC
 		LIMIT $2
 		OFFSET $3
 	`
@@ -215,25 +244,57 @@ func (repo *PostgresNotificationRepository) CountUnreadByCategory(ctx context.Co
 
 func (repo *PostgresNotificationRepository) MarkRead(ctx context.Context, id string, recipientID userdomain.UserID, readAt time.Time) (notificationusecase.Notification, error) {
 	const query = `
-		UPDATE notifications
-		SET read_at = COALESCE(read_at, $3),
-			updated_at = CASE WHEN read_at IS NULL THEN $3 ELSE updated_at END
-		WHERE id = $1::uuid
-			AND recipient_id = $2::uuid
-		RETURNING
-			id::text,
-			recipient_id::text,
-			type,
-			title,
-			body,
-			source_type,
-			source_id,
-			aggregate_key,
-			aggregate_count,
-			last_actor_id::text,
-			read_at,
-			created_at,
-			updated_at
+		WITH updated_notification AS (
+			UPDATE notifications
+			SET read_at = COALESCE(read_at, $3),
+				updated_at = CASE WHEN read_at IS NULL THEN $3 ELSE updated_at END
+			WHERE id = $1::uuid
+				AND recipient_id = $2::uuid
+			RETURNING *
+		)
+		SELECT
+			updated_notification.id::text,
+			updated_notification.recipient_id::text,
+			updated_notification.type,
+			updated_notification.title,
+			updated_notification.body,
+			updated_notification.source_type,
+			updated_notification.source_id,
+			updated_notification.aggregate_key,
+			updated_notification.aggregate_count,
+			updated_notification.last_actor_id::text,
+			last_actor.username,
+			last_actor.display_name,
+			last_actor.avatar_url,
+			source_post.id::text,
+			source_comment.id::text,
+			source_post.title,
+			source_comment.body,
+			CASE
+				WHEN source_comment.id IS NULL THEN 0
+				WHEN source_comment.parent_id IS NULL THEN 0
+				ELSE 1
+			END,
+			source_community.id::text,
+			source_community.slug,
+			source_community.name,
+			updated_notification.read_at,
+			updated_notification.created_at,
+			updated_notification.updated_at
+		FROM updated_notification
+		LEFT JOIN users AS last_actor
+			ON last_actor.id = updated_notification.last_actor_id
+		LEFT JOIN comments AS source_comment
+			ON updated_notification.source_type = 'comment'
+			AND source_comment.id::text = updated_notification.source_id
+		LEFT JOIN posts AS source_post
+			ON (
+				updated_notification.source_type = 'post'
+				AND source_post.id::text = updated_notification.source_id
+			)
+			OR source_post.id = source_comment.post_id
+		LEFT JOIN communities AS source_community
+			ON source_community.id = source_post.community_id
 	`
 
 	notification, err := scanNotification(repo.pool.QueryRow(ctx, query, id, recipientID.String(), readAt))
@@ -266,14 +327,16 @@ func notificationCategoryPredicate(category notificationusecase.CategoryFilter) 
 	switch category {
 	case notificationusecase.CategoryFilterAll:
 		return ""
+	case notificationusecase.CategoryFilterInteractions:
+		return ` AND notifications.type IN ('reply', 'comment_reply', 'post_reply', 'mention', 'like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
 	case notificationusecase.CategoryFilterReplies:
-		return ` AND type IN ('reply', 'comment_reply', 'post_reply')`
+		return ` AND notifications.type IN ('reply', 'comment_reply', 'post_reply')`
 	case notificationusecase.CategoryFilterMentions:
-		return ` AND type = 'mention'`
+		return ` AND notifications.type = 'mention'`
 	case notificationusecase.CategoryFilterLikes:
-		return ` AND type IN ('like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
+		return ` AND notifications.type IN ('like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
 	case notificationusecase.CategoryFilterSystem:
-		return ` AND type = 'system'`
+		return ` AND notifications.type = 'system'`
 	default:
 		return ` AND false`
 	}
@@ -286,6 +349,17 @@ type rowScanner interface {
 func scanNotification(row rowScanner) (notificationusecase.Notification, error) {
 	var notification notificationusecase.Notification
 	var lastActorID pgtype.Text
+	var actorUsername pgtype.Text
+	var actorDisplayName pgtype.Text
+	var actorAvatarURL pgtype.Text
+	var postID pgtype.Text
+	var commentID pgtype.Text
+	var postTitle pgtype.Text
+	var commentBody pgtype.Text
+	var commentDepth int
+	var communityID pgtype.Text
+	var communitySlug pgtype.Text
+	var communityName pgtype.Text
 	var readAt pgtype.Timestamptz
 	if err := row.Scan(
 		&notification.ID,
@@ -298,6 +372,17 @@ func scanNotification(row rowScanner) (notificationusecase.Notification, error) 
 		&notification.AggregateKey,
 		&notification.AggregateCount,
 		&lastActorID,
+		&actorUsername,
+		&actorDisplayName,
+		&actorAvatarURL,
+		&postID,
+		&commentID,
+		&postTitle,
+		&commentBody,
+		&commentDepth,
+		&communityID,
+		&communitySlug,
+		&communityName,
 		&readAt,
 		&notification.CreatedAt,
 		&notification.UpdatedAt,
@@ -307,11 +392,64 @@ func scanNotification(row rowScanner) (notificationusecase.Notification, error) 
 	if lastActorID.Valid {
 		notification.LastActorID = lastActorID.String
 	}
+	if lastActorID.Valid {
+		actor := &notificationusecase.NotificationActor{
+			ID:          lastActorID.String,
+			Username:    actorUsername.String,
+			DisplayName: actorDisplayName.String,
+			AvatarURL:   actorAvatarURL.String,
+		}
+		notification.LastActor = actor
+		notification.Actor = actor
+	}
+	if postID.Valid {
+		notification.Context.PostID = postID.String
+	}
+	if commentID.Valid {
+		notification.Context.CommentID = commentID.String
+	}
+	if postTitle.Valid {
+		notification.Context.PostTitle = postTitle.String
+	}
+	if commentBody.Valid {
+		notification.Context.CommentExcerpt = truncateRunes(strings.TrimSpace(commentBody.String), 120)
+		notification.Context.CommentDepth = commentDepth
+	}
+	if communityID.Valid || communitySlug.Valid || communityName.Valid {
+		notification.Context.Community = &notificationusecase.NotificationCommunityContext{
+			ID:   communityID.String,
+			Slug: communitySlug.String,
+			Name: communityName.String,
+		}
+	}
+	notification.Context.Permalink = notificationPermalink(notification.Context)
 	if readAt.Valid {
 		value := readAt.Time
 		notification.ReadAt = &value
 	}
 	return notification, nil
+}
+
+func notificationPermalink(context notificationusecase.NotificationContext) string {
+	if strings.TrimSpace(context.PostID) == "" {
+		return ""
+	}
+	path := "/posts/" + strings.TrimSpace(context.PostID)
+	if context.Community != nil && strings.TrimSpace(context.Community.Slug) != "" {
+		path = "/c/" + strings.TrimSpace(context.Community.Slug) + path
+	}
+	if strings.TrimSpace(context.CommentID) != "" {
+		path += "#comment-" + strings.TrimSpace(context.CommentID)
+	}
+	return path
+}
+
+func truncateRunes(value string, maxRunes int) string {
+	if maxRunes <= 0 || utf8.RuneCountInString(value) <= maxRunes {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:maxRunes])
 }
 
 func normalizeAggregateCount(count int) int {

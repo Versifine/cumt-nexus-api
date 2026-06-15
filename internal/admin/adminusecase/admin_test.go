@@ -79,6 +79,43 @@ func TestListCommunitiesSupportsSearchQuery(t *testing.T) {
 	}
 }
 
+func TestUpdateCommunityOwnerWritesReasonToAudit(t *testing.T) {
+	now := time.Date(2026, 6, 10, 9, 30, 0, 0, time.UTC)
+	actorID := userdomain.NewGeneratedUserID()
+	communityID := communitydomain.NewGeneratedCommunityID()
+	targetID := userdomain.NewGeneratedUserID()
+	repo := &fakeRepository{
+		isStaff: true,
+		communities: map[string]Community{
+			communityID.String(): {ID: communityID.String(), Slug: "campus", Name: "Campus", Status: "active"},
+		},
+		users: map[string]User{
+			targetID.String(): {ID: targetID.String(), Username: "alice", Status: "active"},
+		},
+	}
+	uc := NewUseCase(repo, func() time.Time { return now })
+
+	result, err := uc.UpdateCommunityOwner(context.Background(), UpdateCommunityOwnerInput{
+		ActorID:     actorID,
+		CommunityID: communityID.String(),
+		UserID:      targetID.String(),
+		Reason:      " owner left campus ",
+	})
+	if err != nil {
+		t.Fatalf("UpdateCommunityOwner returned error: %v", err)
+	}
+	if result.Owner.UserID != targetID.String() {
+		t.Fatalf("unexpected owner result: %#v", result.Owner)
+	}
+	if len(repo.auditLogs) != 1 {
+		t.Fatalf("expected one audit log, got %d", len(repo.auditLogs))
+	}
+	log := repo.auditLogs[0]
+	if log.Action != "admin.communities.update_owner" || log.After["reason"] != "owner left campus" {
+		t.Fatalf("unexpected audit log: %#v", log)
+	}
+}
+
 func TestUpdateSettingWritesAuditLogInTransaction(t *testing.T) {
 	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
 	actorID := userdomain.NewGeneratedUserID()

@@ -96,6 +96,52 @@ func TestPostgresNotificationRepositoryListByCategory(t *testing.T) {
 	if !containsNotification(system, systemID) || containsNotification(system, mentionID) {
 		t.Fatalf("unexpected system results: %#v", system)
 	}
+
+	interactions, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterInteractions, notificationusecase.StatusFilterAll, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByRecipient interactions returned error: %v", err)
+	}
+	if !containsNotification(interactions, replyID) || !containsNotification(interactions, likeID) || !containsNotification(interactions, mentionID) || containsNotification(interactions, systemID) {
+		t.Fatalf("unexpected interactions results: %#v", interactions)
+	}
+}
+
+func TestPostgresNotificationRepositoryListIncludesActorAndContext(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresNotificationRepository(pool)
+	now := testNow()
+
+	recipientID := insertTestUser(ctx, t, pool)
+	actorID := insertTestUser(ctx, t, pool)
+	updateTestUserProfile(ctx, t, pool, actorID, "Alice", "https://example.com/avatar.jpg")
+	communityID, communitySlug := insertTestCommunity(ctx, t, pool, actorID)
+	postID := insertTestPost(ctx, t, pool, communityID, actorID, "Context post")
+	commentID := insertTestComment(ctx, t, pool, postID, actorID, nil, "Context comment body")
+	notificationID := insertTestNotificationWithSource(ctx, t, pool, recipientID, actorID, notificationusecase.NotificationTypeCommentReply, notificationusecase.NotificationSourceComment, commentID, now)
+
+	notifications, err := repo.ListByRecipient(ctx, recipientID, notificationusecase.CategoryFilterInteractions, notificationusecase.StatusFilterAll, 20, 0)
+	if err != nil {
+		t.Fatalf("ListByRecipient returned error: %v", err)
+	}
+	if len(notifications) != 1 || notifications[0].ID != notificationID {
+		t.Fatalf("expected context notification, got %#v", notifications)
+	}
+	got := notifications[0]
+	if got.Actor == nil || got.Actor.Username == "" || got.Actor.DisplayName != "Alice" || got.Actor.AvatarURL == "" {
+		t.Fatalf("expected actor summary, got %#v", got.Actor)
+	}
+	if got.LastActor == nil || got.LastActor.ID != actorID.String() {
+		t.Fatalf("expected last actor summary, got %#v", got.LastActor)
+	}
+	if got.Context.PostID != postID || got.Context.CommentID != commentID || got.Context.PostTitle != "Context post" {
+		t.Fatalf("unexpected content context: %#v", got.Context)
+	}
+	if got.Context.Community == nil || got.Context.Community.ID != communityID || got.Context.Community.Slug != communitySlug {
+		t.Fatalf("unexpected community context: %#v", got.Context.Community)
+	}
+	if got.Context.Permalink == "" || !strings.Contains(got.Context.Permalink, "#comment-"+commentID) {
+		t.Fatalf("expected comment permalink, got %q", got.Context.Permalink)
+	}
 }
 
 func TestPostgresNotificationRepositoryUnreadSummaryAndMarkAllRead(t *testing.T) {
@@ -248,7 +294,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireNotificationSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "notifications"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "notifications"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -347,6 +393,107 @@ func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool) userd
 	return id
 }
 
+func updateTestUserProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID userdomain.UserID, displayName string, avatarURL string) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		UPDATE users
+		SET display_name = $2,
+			avatar_url = $3
+		WHERE id = $1::uuid
+	`, userID.String(), displayName, avatarURL)
+	if err != nil {
+		t.Fatalf("update test user profile: %v", err)
+	}
+}
+
+func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, creatorID userdomain.UserID) (string, string) {
+	t.Helper()
+
+	id := uuid.NewString()
+	slug := "notification-" + randomSuffix()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO communities (
+			id,
+			slug,
+			name,
+			description,
+			kind,
+			status,
+			visibility,
+			created_by,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2, 'Notification Community', '', 'user_created', 'active', 'public', $3::uuid, $4, $4)
+	`, id, slug, creatorID.String(), testNow())
+	if err != nil {
+		t.Fatalf("insert test community: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM communities WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup community %q: %v", id, err)
+		}
+	})
+	return id, slug
+}
+
+func insertTestPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID string, authorID userdomain.UserID, title string) string {
+	t.Helper()
+
+	id := uuid.NewString()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO posts (
+			id,
+			community_id,
+			author_id,
+			title,
+			body,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'Body', 'visible', $5, $5)
+	`, id, communityID, authorID.String(), title, testNow())
+	if err != nil {
+		t.Fatalf("insert test post: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM posts WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup post %q: %v", id, err)
+		}
+	})
+	return id
+}
+
+func insertTestComment(ctx context.Context, t *testing.T, pool *pgxpool.Pool, postID string, authorID userdomain.UserID, parentID *string, body string) string {
+	t.Helper()
+
+	id := uuid.NewString()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO comments (
+			id,
+			post_id,
+			author_id,
+			parent_id,
+			body,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, 'visible', $6, $6)
+	`, id, postID, authorID.String(), parentID, body, testNow())
+	if err != nil {
+		t.Fatalf("insert test comment: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM comments WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup comment %q: %v", id, err)
+		}
+	})
+	return id
+}
+
 func insertTestNotification(ctx context.Context, t *testing.T, pool *pgxpool.Pool, recipientID userdomain.UserID, readAt *time.Time, createdAt time.Time) string {
 	t.Helper()
 
@@ -374,6 +521,39 @@ func insertTestNotificationWithType(ctx context.Context, t *testing.T, pool *pgx
 	`, id, recipientID.String(), notificationType, "source-"+id, readAt, createdAt)
 	if err != nil {
 		t.Fatalf("insert test notification: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM notifications WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup notification %q: %v", id, err)
+		}
+	})
+
+	return id
+}
+
+func insertTestNotificationWithSource(ctx context.Context, t *testing.T, pool *pgxpool.Pool, recipientID userdomain.UserID, actorID userdomain.UserID, notificationType string, sourceType string, sourceID string, createdAt time.Time) string {
+	t.Helper()
+
+	id := uuid.NewString()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO notifications (
+			id,
+			recipient_id,
+			type,
+			title,
+			body,
+			source_type,
+			source_id,
+			aggregate_count,
+			last_actor_id,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, 'Test notification', 'Body', $4, $5, 2, $6::uuid, $7, $7)
+	`, id, recipientID.String(), notificationType, sourceType, sourceID, actorID.String(), createdAt)
+	if err != nil {
+		t.Fatalf("insert test notification with source: %v", err)
 	}
 
 	t.Cleanup(func() {

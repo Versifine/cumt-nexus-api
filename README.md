@@ -179,8 +179,11 @@ GET  /api/v1/communities/:slug/manage/reports
 GET  /api/v1/communities/:slug/manage/members
 POST /api/v1/communities/:slug/manage/moderators
 DELETE /api/v1/communities/:slug/manage/moderators/:user_id
+GET  /api/v1/communities/:slug/manage/owner-transfer
 POST /api/v1/communities/:slug/manage/owner-transfer
+GET  /api/v1/communities/:slug/owner-transfer/:transfer_id
 POST /api/v1/communities/:slug/manage/owner-transfer/:transfer_id/accept
+DELETE /api/v1/communities/:slug/manage/owner-transfer/:transfer_id
 GET  /api/v1/communities/:slug/manage/settings
 PATCH /api/v1/communities/:slug/manage/settings
 GET  /api/v1/communities/:slug/manage/rules
@@ -196,9 +199,9 @@ POST /api/v1/community-applications/:id/approve
 POST /api/v1/community-applications/:id/reject
 ```
 
-社区管理设置读取允许 owner/moderator 进入管理上下文；设置更新仅允许 owner 修改 `name` 和 `description`。社区规则列表和 CRUD 允许 owner/moderator 使用，按 `position`、创建时间和 ID 稳定排序。
+社区管理设置读取允许 owner/moderator 进入管理上下文；设置更新允许真实 owner 或平台 owner 覆盖修改 `name`、`description`、`avatar_url` 和 `banner_url`，媒体 URL 为空字符串表示清除，非空必须是 `http/https` 绝对 URL。社区规则列表和 CRUD 允许 owner/moderator 使用，按 `position`、创建时间和 ID 稳定排序。
 
-Community governance write routes are Bearer-only. Appointing/removing moderators is allowed for the real community owner and for active platform `owner` override; creating a community owner transfer still requires the real community owner. Moderator caps are based on active member count: under 500 allows 5, 500 or more allows 10, and 2000 or more allows 20. Owner transfer is a two-step flow: current owner creates a pending transfer by target username, then the target accepts it. Platform `owner` can manage all active communities without being written into `community_memberships`; responses keep `viewer_role` as the real community role and set `viewer_permissions.platform_owner_override=true`. Platform staff can take over a community owner through the admin owner route.
+Community governance write routes are Bearer-only. Appointing/removing moderators is allowed for the real community owner and for active platform `owner` override; creating a community owner transfer still requires the real community owner. Moderator caps are based on active member count: under 500 allows 5, 500 or more allows 10, and 2000 or more allows 20. Owner transfer is a two-step flow: current owner creates a pending transfer by target username, the management route can read or cancel it, the accept-page route returns status and both user summaries, and the target accepts it within 48 hours. Platform `owner` can manage all active communities without being written into `community_memberships`; responses keep `viewer_role` as the real community role and set `viewer_permissions.platform_owner_override=true`. Platform staff can take over a community owner through the admin owner route and include an audit reason.
 
 ### Admin
 
@@ -387,14 +390,14 @@ GET  /api/v1/communities/:slug/moderation/logs?action=&actor_id=&target_type=&ta
 ```text
 GET  /api/v1/search                         # public, optional Bearer
 GET  /api/v1/notifications/unread-summary
-GET  /api/v1/notifications?category=likes&status=unread
+GET  /api/v1/notifications?category=interactions&limit=20&offset=0
 POST /api/v1/notifications/:id/read
 POST /api/v1/notifications/read-all
 ```
 
 搜索基于 PostgreSQL full-text search、字段权重、精确/前缀/子串命中和轻量时间衰减排序；`scope=all|communities|posts|users`，其中 `all` 分区返回公开社区、visible 帖子和 active 用户公开资料摘要。首版不返回高亮片段或命中原因，前端可基于响应字段自行高亮。
 
-评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，并进入 `mentions` 分类。
+评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；`category=interactions` 返回回复、提及和点赞类用户互动通知，`category=system` 返回系统通知，不传 `status` 默认返回 `all`。点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，响应包含 `aggregate_count`、`actor`、`last_actor` 和帖子/评论 `context`，评论通知可用 `context.permalink` 直达锚点。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，并进入互动分类。
 
 ## 响应约定
 

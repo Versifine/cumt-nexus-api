@@ -25,18 +25,44 @@ type UseCase interface {
 }
 
 type notificationResponse struct {
-	ID             string     `json:"id"`
-	RecipientID    string     `json:"recipient_id"`
-	Type           string     `json:"type"`
-	Title          string     `json:"title"`
-	Body           string     `json:"body"`
-	SourceType     string     `json:"source_type"`
-	SourceID       string     `json:"source_id"`
-	AggregateCount int        `json:"aggregate_count"`
-	LastActorID    string     `json:"last_actor_id"`
-	ReadAt         *time.Time `json:"read_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID             string                      `json:"id"`
+	RecipientID    string                      `json:"recipient_id"`
+	Type           string                      `json:"type"`
+	Title          string                      `json:"title"`
+	Body           string                      `json:"body"`
+	SourceType     string                      `json:"source_type"`
+	SourceID       string                      `json:"source_id"`
+	AggregateCount int                         `json:"aggregate_count"`
+	LastActorID    string                      `json:"last_actor_id"`
+	Actor          *actorResponse              `json:"actor,omitempty"`
+	LastActor      *actorResponse              `json:"last_actor,omitempty"`
+	Context        notificationContextResponse `json:"context"`
+	ReadAt         *time.Time                  `json:"read_at,omitempty"`
+	CreatedAt      time.Time                   `json:"created_at"`
+	UpdatedAt      time.Time                   `json:"updated_at"`
+}
+
+type actorResponse struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	AvatarURL   string `json:"avatar_url"`
+}
+
+type communityContextResponse struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+type notificationContextResponse struct {
+	PostID         string                    `json:"post_id"`
+	CommentID      string                    `json:"comment_id"`
+	Permalink      string                    `json:"permalink"`
+	PostTitle      string                    `json:"post_title"`
+	CommentExcerpt string                    `json:"comment_excerpt"`
+	CommentDepth   int                       `json:"comment_depth"`
+	Community      *communityContextResponse `json:"community,omitempty"`
 }
 
 type listNotificationsResponse struct {
@@ -223,8 +249,42 @@ func toNotificationResponse(notification notificationusecase.Notification) notif
 		SourceID:       notification.SourceID,
 		AggregateCount: notification.AggregateCount,
 		LastActorID:    notification.LastActorID,
+		Actor:          toActorResponse(notification.Actor),
+		LastActor:      toActorResponse(notification.LastActor),
+		Context:        toNotificationContextResponse(notification.Context),
 		ReadAt:         notification.ReadAt,
 		CreatedAt:      notification.CreatedAt,
 		UpdatedAt:      notification.UpdatedAt,
 	}
+}
+
+func toActorResponse(actor *notificationusecase.NotificationActor) *actorResponse {
+	if actor == nil {
+		return nil
+	}
+	return &actorResponse{
+		ID:          actor.ID,
+		Username:    actor.Username,
+		DisplayName: actor.DisplayName,
+		AvatarURL:   actor.AvatarURL,
+	}
+}
+
+func toNotificationContextResponse(context notificationusecase.NotificationContext) notificationContextResponse {
+	response := notificationContextResponse{
+		PostID:         context.PostID,
+		CommentID:      context.CommentID,
+		Permalink:      context.Permalink,
+		PostTitle:      context.PostTitle,
+		CommentExcerpt: context.CommentExcerpt,
+		CommentDepth:   context.CommentDepth,
+	}
+	if context.Community != nil {
+		response.Community = &communityContextResponse{
+			ID:   context.Community.ID,
+			Slug: context.Community.Slug,
+			Name: context.Community.Name,
+		}
+	}
+	return response
 }

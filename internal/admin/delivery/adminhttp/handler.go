@@ -143,6 +143,7 @@ type updateAdminCommunityStatusResponse struct {
 
 type updateAdminCommunityOwnerRequest struct {
 	UserID string `json:"user_id" binding:"required"`
+	Reason string `json:"reason"`
 }
 
 type adminCommunityOwnerResponse struct {
@@ -608,6 +609,7 @@ func (h *Handler) UpdateCommunityOwner(c *gin.Context) {
 		ActorID:     userID,
 		CommunityID: c.Param("id"),
 		UserID:      req.UserID,
+		Reason:      req.Reason,
 	})
 	if err != nil {
 		_ = c.Error(err)

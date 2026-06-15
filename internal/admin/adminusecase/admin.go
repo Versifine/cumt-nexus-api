@@ -406,6 +406,7 @@ type UpdateCommunityOwnerInput struct {
 	ActorID     userdomain.UserID
 	CommunityID string
 	UserID      string
+	Reason      string
 }
 
 type UpdateCommunityOwnerResult struct {
@@ -771,6 +772,10 @@ func (uc *UseCase) UpdateCommunityOwner(ctx context.Context, input UpdateCommuni
 	if err != nil {
 		return UpdateCommunityOwnerResult{}, err
 	}
+	reason, err := textlimit.TrimmedOptionalMaxRunes(input.Reason, "community owner transfer reason", MaxOwnerTransferReasonRunes)
+	if err != nil {
+		return UpdateCommunityOwnerResult{}, err
+	}
 
 	var community Community
 	var owner CommunityOwnerMember
@@ -784,7 +789,12 @@ func (uc *UseCase) UpdateCommunityOwner(ctx context.Context, input UpdateCommuni
 		if err != nil {
 			return fmt.Errorf("transfer admin community owner: %w", err)
 		}
-		if err := repository.CreateAuditLog(ctx, newAuditLog(input.ActorID, "admin.communities.update_owner", "community", communityID.String(), communityOwnerAuditState(change.BeforeOwner), communityOwnerAuditState(change.AfterOwner), updatedAt)); err != nil {
+		beforeState := communityOwnerAuditState(change.BeforeOwner)
+		afterState := communityOwnerAuditState(change.AfterOwner)
+		if reason != "" {
+			afterState["reason"] = reason
+		}
+		if err := repository.CreateAuditLog(ctx, newAuditLog(input.ActorID, "admin.communities.update_owner", "community", communityID.String(), beforeState, afterState, updatedAt)); err != nil {
 			return fmt.Errorf("create admin community owner audit log: %w", err)
 		}
 		community = currentCommunity

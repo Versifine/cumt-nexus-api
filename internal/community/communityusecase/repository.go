@@ -45,8 +45,11 @@ type CommunityMembershipRepository interface {
 	CountActiveModerators(ctx context.Context, communityID communitydomain.CommunityID) (int, error)
 	UpsertActiveMemberRole(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, role communitydomain.MembershipRole, now time.Time) (CommunityMember, error)
 	CreateOwnerTransfer(ctx context.Context, transfer CommunityOwnerTransferRecord) error
+	FindCurrentOwnerTransfer(ctx context.Context, communityID communitydomain.CommunityID, now time.Time) (CommunityOwnerTransferRecord, error)
+	FindOwnerTransferByID(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error)
 	FindOwnerTransferForUpdate(ctx context.Context, transferID string) (CommunityOwnerTransferRecord, error)
 	AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) error
+	CancelOwnerTransfer(ctx context.Context, transferID string, cancelledAt time.Time) error
 	TransferOwner(ctx context.Context, communityID communitydomain.CommunityID, newOwnerID userdomain.UserID, now time.Time) (CommunityOwnerChange, error)
 }
 

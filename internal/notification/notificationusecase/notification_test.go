@@ -21,8 +21,8 @@ func TestListNotificationsDefaultsUnreadAndPagination(t *testing.T) {
 			if category != CategoryFilterAll {
 				t.Fatalf("expected all category, got %q", category)
 			}
-			if status != StatusFilterUnread {
-				t.Fatalf("expected unread status, got %q", status)
+			if status != StatusFilterAll {
+				t.Fatalf("expected all status, got %q", status)
 			}
 			if limit != DefaultNotificationListLimit+1 || offset != 0 {
 				t.Fatalf("expected default pagination, got %d/%d", limit, offset)
@@ -41,7 +41,7 @@ func TestListNotificationsDefaultsUnreadAndPagination(t *testing.T) {
 	if !repository.listCalled {
 		t.Fatal("expected repository list call")
 	}
-	if result.Status != StatusFilterUnread.String() || result.Limit != DefaultNotificationListLimit || result.Offset != 0 {
+	if result.Status != StatusFilterAll.String() || result.Limit != DefaultNotificationListLimit || result.Offset != 0 {
 		t.Fatalf("unexpected list result: %#v", result)
 	}
 	if len(result.Notifications) != 1 {
@@ -78,6 +78,33 @@ func TestListNotificationsSupportsStatusAndClampsLimit(t *testing.T) {
 		t.Fatalf("ListNotifications returned error: %v", err)
 	}
 	if result.Category != CategoryFilterLikes.String() || result.Status != StatusFilterAll.String() || result.Limit != MaxNotificationListLimit || result.Offset != 3 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestListNotificationsSupportsInteractionsCategory(t *testing.T) {
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{
+		listFunc: func(ctx context.Context, recipientID userdomain.UserID, category CategoryFilter, status StatusFilter, limit int, offset int) ([]Notification, error) {
+			if category != CategoryFilterInteractions {
+				t.Fatalf("expected interactions category, got %q", category)
+			}
+			if status != StatusFilterAll {
+				t.Fatalf("expected default all status, got %q", status)
+			}
+			return nil, nil
+		},
+	}
+	uc := NewUseCase(repository, time.Now)
+
+	result, err := uc.ListNotifications(context.Background(), ListNotificationsInput{
+		ActorID:  actorID,
+		Category: "interactions",
+	})
+	if err != nil {
+		t.Fatalf("ListNotifications returned error: %v", err)
+	}
+	if result.Category != CategoryFilterInteractions.String() || result.Status != StatusFilterAll.String() {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }

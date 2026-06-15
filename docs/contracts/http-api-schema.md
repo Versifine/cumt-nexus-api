@@ -192,7 +192,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `commenthttp.setCommentVoteRequest` | `value` |
 | `commenthttp.updateCommentRequest` | `body` |
 | `communityhttp.rejectCommunityApplicationRequest` | `reject_reason` |
-| `communityhttp.updateCommunityManageSettingsRequest` | `name` |
 | `communityhttp.writeCommunityRuleRequest` | `title` |
 | `contentrefhttp.resolveEmbedRequest` | `url` |
 | `contentrefhttp.resolveLinkPreviewRequest` | `url` |
@@ -259,7 +258,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `updateCommunityRuleResponse` | `community`, `rule` |
 | `communityhttp` | `communitySettingsResponse` | `name`, `description`, `avatar_url`, `banner_url`, `updated_at` |
 | `communityhttp` | `communityRuleResponse` | `id`, `community_id`, `title`, `body`, `position`, `created_by`, `updated_by`, `created_at`, `updated_at` |
-| `communityhttp` | `updateCommunityManageSettingsRequest` | `name`, `description` |
+| `communityhttp` | `updateCommunityManageSettingsRequest` | `name`, `description`, `avatar_url`, `banner_url` |
 | `communityhttp` | `writeCommunityRuleRequest` | `title`, `body`, `position` |
 | `communityhttp` | `submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `communityhttp` | `rejectCommunityApplicationRequest` | `reject_reason` |
@@ -370,7 +369,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `searchhttp` | `searchCommunityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_at`, `updated_at` |
 | `searchhttp` | `searchPostResponse` | `id`, `community_id`, `community_slug`, `author_id`, `title`, `body_excerpt`, `status`, `created_at`, `updated_at` |
 | `searchhttp` | `searchUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `bio_excerpt`, `status`, `created_at`, `updated_at` |
-| `notificationhttp` | `notificationResponse` | `id`, `recipient_id`, `type`, `title`, `body`, `source_type`, `source_id`, `aggregate_count`, `last_actor_id`, `read_at`, `created_at`, `updated_at` |
+| `notificationhttp` | `notificationResponse` | `id`, `recipient_id`, `type`, `title`, `body`, `source_type`, `source_id`, `aggregate_count`, `last_actor_id`, `actor`, `last_actor`, `context`, `read_at`, `created_at`, `updated_at` |
+| `notificationhttp` | `actorResponse` | `id`, `username`, `display_name`, `avatar_url` |
+| `notificationhttp` | `communityContextResponse` | `id`, `slug`, `name` |
+| `notificationhttp` | `notificationContextResponse` | `post_id`, `comment_id`, `permalink`, `post_title`, `comment_excerpt`, `comment_depth`, `community` |
 | `notificationhttp` | `listNotificationsResponse` | `notifications`, `category`, `status`, `limit`, `offset`, `next_offset`, `has_more` |
 | `notificationhttp` | `unreadSummaryResponse` | `total`, `replies`, `mentions`, `likes`, `system` |
 | `notificationhttp` | `markNotificationReadResponse` | `notification` |
@@ -428,8 +430,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 |---|---|---|---|---|
 | POST | /api/v1/communities/:slug/manage/moderators | `communityhttp.writeCommunityModeratorRequest` | `communityhttp.communityMemberMutationResponse` | 200 |
 | DELETE | /api/v1/communities/:slug/manage/moderators/:user_id | none | `communityhttp.communityMemberMutationResponse` | 200 |
+| GET | /api/v1/communities/:slug/manage/owner-transfer | none | `communityhttp.communityOwnerTransferQueryResponse` | 200 |
 | POST | /api/v1/communities/:slug/manage/owner-transfer | `communityhttp.createCommunityOwnerTransferRequest` | `communityhttp.communityOwnerTransferMutationResponse` | 200 |
+| GET | /api/v1/communities/:slug/owner-transfer/:transfer_id | none | `communityhttp.communityOwnerTransferQueryResponse` | 200 |
 | POST | /api/v1/communities/:slug/manage/owner-transfer/:transfer_id/accept | none | `communityhttp.communityOwnerTransferMutationResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/manage/owner-transfer/:transfer_id | none | `communityhttp.communityOwnerTransferMutationResponse` | 200 |
 | POST | /api/v1/admin/communities/:id/owner | `adminhttp.updateAdminCommunityOwnerRequest` | `adminhttp.updateAdminCommunityOwnerResponse` | 200 |
 | PATCH | /api/v1/admin/users/:id/platform-role | `adminhttp.updateAdminUserPlatformRoleRequest` | `adminhttp.updateAdminUserPlatformRoleResponse` | 200 |
 
@@ -448,9 +453,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `writeCommunityModeratorRequest` | `username` |
 | `communityhttp` | `createCommunityOwnerTransferRequest` | `username` |
 | `communityhttp` | `communityMemberMutationResponse` | `community`, `member` |
-| `communityhttp` | `communityOwnerTransferResponse` | `id`, `community_id`, `from_user_id`, `to_user_id`, `status`, `created_at`, `updated_at`, `accepted_at` |
+| `communityhttp` | `communityOwnerTransferResponse` | `id`, `community_id`, `from_user_id`, `from_username`, `from_display_name`, `to_user_id`, `to_username`, `to_display_name`, `status`, `created_at`, `updated_at`, `expires_at`, `accepted_at`, `cancelled_at`, `viewer_is_target`, `viewer_can_cancel`, `platform_owner_override` |
 | `communityhttp` | `communityOwnerTransferMutationResponse` | `community`, `transfer` |
-| `adminhttp` | `updateAdminCommunityOwnerRequest` | `user_id` |
+| `communityhttp` | `communityOwnerTransferQueryResponse` | `community`, `transfer` |
+| `adminhttp` | `updateAdminCommunityOwnerRequest` | `user_id`, `reason` |
 | `adminhttp` | `adminCommunityOwnerResponse` | `user_id`, `username`, `role`, `status`, `updated_at` |
 | `adminhttp` | `updateAdminCommunityOwnerResponse` | `community`, `owner` |
 | `adminhttp` | `updateAdminUserPlatformRoleRequest` | `role` |

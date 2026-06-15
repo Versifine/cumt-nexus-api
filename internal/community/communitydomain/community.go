@@ -1,6 +1,7 @@
 package communitydomain
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 const (
 	MaxCommunityNameRunes        = 60
 	MaxCommunityDescriptionRunes = 300
+	MaxCommunityMediaURLBytes    = 2048
 )
 
 var communitySlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,31}$`)
@@ -159,6 +161,8 @@ type Community struct {
 	slug        CommunitySlug
 	name        CommunityName
 	description CommunityDescription
+	avatarURL   string
+	bannerURL   string
 	kind        CommunityKind
 	status      CommunityStatus
 	visibility  CommunityVisibility
@@ -180,6 +184,23 @@ func RehydrateCommunity(
 	slug CommunitySlug,
 	name CommunityName,
 	description CommunityDescription,
+	kind CommunityKind,
+	status CommunityStatus,
+	visibility CommunityVisibility,
+	createdBy *userdomain.UserID,
+	createdAt time.Time,
+	updatedAt time.Time,
+) (*Community, error) {
+	return RehydrateCommunityWithMedia(id, slug, name, description, "", "", kind, status, visibility, createdBy, createdAt, updatedAt)
+}
+
+func RehydrateCommunityWithMedia(
+	id CommunityID,
+	slug CommunitySlug,
+	name CommunityName,
+	description CommunityDescription,
+	avatarURL string,
+	bannerURL string,
 	kind CommunityKind,
 	status CommunityStatus,
 	visibility CommunityVisibility,
@@ -213,12 +234,22 @@ func RehydrateCommunity(
 	if err := validateCreatedUpdated("community", createdAt, updatedAt); err != nil {
 		return nil, err
 	}
+	avatarURL, err := NewCommunityMediaURL(avatarURL, "community avatar url")
+	if err != nil {
+		return nil, err
+	}
+	bannerURL, err = NewCommunityMediaURL(bannerURL, "community banner url")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Community{
 		id:          id,
 		slug:        slug,
 		name:        name,
 		description: description,
+		avatarURL:   avatarURL,
+		bannerURL:   bannerURL,
 		kind:        kind,
 		status:      status,
 		visibility:  visibility,
@@ -226,6 +257,21 @@ func RehydrateCommunity(
 		createdAt:   createdAt,
 		updatedAt:   updatedAt,
 	}, nil
+}
+
+func NewCommunityMediaURL(raw string, field string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	if len([]byte(value)) > MaxCommunityMediaURLBytes {
+		return "", apperr.New(apperr.CodeInvalidArgument, field+" is too long")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", apperr.New(apperr.CodeInvalidArgument, field+" must be an absolute http or https URL")
+	}
+	return value, nil
 }
 
 func (community *Community) ID() CommunityID {
@@ -242,6 +288,14 @@ func (community *Community) Name() CommunityName {
 
 func (community *Community) Description() CommunityDescription {
 	return community.description
+}
+
+func (community *Community) AvatarURL() string {
+	return community.avatarURL
+}
+
+func (community *Community) BannerURL() string {
+	return community.bannerURL
 }
 
 func (community *Community) Kind() CommunityKind {
@@ -273,15 +327,29 @@ func (community *Community) UpdatedAt() time.Time {
 }
 
 func (community *Community) UpdateDetails(name CommunityName, description CommunityDescription, now time.Time) error {
+	return community.UpdateSettings(name, description, community.avatarURL, community.bannerURL, now)
+}
+
+func (community *Community) UpdateSettings(name CommunityName, description CommunityDescription, avatarURL string, bannerURL string, now time.Time) error {
 	if now.IsZero() {
 		return apperr.New(apperr.CodeInvalidArgument, "community updated time can't be zero")
 	}
 	if now.Before(community.createdAt) {
 		return apperr.New(apperr.CodeInvalidArgument, "community updated time can't be before created time")
 	}
+	avatarURL, err := NewCommunityMediaURL(avatarURL, "community avatar url")
+	if err != nil {
+		return err
+	}
+	bannerURL, err = NewCommunityMediaURL(bannerURL, "community banner url")
+	if err != nil {
+		return err
+	}
 
 	community.name = name
 	community.description = description
+	community.avatarURL = avatarURL
+	community.bannerURL = bannerURL
 	community.updatedAt = now
 	return nil
 }

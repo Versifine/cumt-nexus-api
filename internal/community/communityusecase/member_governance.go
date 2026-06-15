@@ -3,6 +3,7 @@ package communityusecase
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
@@ -10,6 +11,8 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/google/uuid"
 )
+
+const CommunityOwnerTransferTTL = 48 * time.Hour
 
 type AddCommunityModeratorInput struct {
 	Slug     string
@@ -35,6 +38,23 @@ type AcceptCommunityOwnerTransferInput struct {
 	TransferID string
 }
 
+type GetCurrentCommunityOwnerTransferInput struct {
+	Slug     string
+	ViewerID userdomain.UserID
+}
+
+type GetCommunityOwnerTransferInput struct {
+	Slug       string
+	ViewerID   userdomain.UserID
+	TransferID string
+}
+
+type CancelCommunityOwnerTransferInput struct {
+	Slug       string
+	ViewerID   userdomain.UserID
+	TransferID string
+}
+
 type CommunityMemberMutationResult struct {
 	Community Community
 	Member    CommunityMember
@@ -45,26 +65,46 @@ type CommunityOwnerTransferResult struct {
 	Transfer  CommunityOwnerTransfer
 }
 
+type CommunityOwnerTransferQueryResult struct {
+	Community Community
+	Transfer  *CommunityOwnerTransfer
+}
+
 type CommunityOwnerTransfer struct {
-	ID          string
-	CommunityID string
-	FromUserID  string
-	ToUserID    string
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	AcceptedAt  *time.Time
+	ID               string
+	CommunityID      string
+	FromUserID       string
+	FromUsername     string
+	FromDisplayName  string
+	ToUserID         string
+	ToUsername       string
+	ToDisplayName    string
+	Status           string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ExpiresAt        time.Time
+	AcceptedAt       *time.Time
+	CancelledAt      *time.Time
+	ViewerIsTarget   bool
+	ViewerCanCancel  bool
+	PlatformOverride bool
 }
 
 type CommunityOwnerTransferRecord struct {
-	ID          string
-	CommunityID communitydomain.CommunityID
-	FromUserID  userdomain.UserID
-	ToUserID    userdomain.UserID
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	AcceptedAt  *time.Time
+	ID              string
+	CommunityID     communitydomain.CommunityID
+	FromUserID      userdomain.UserID
+	FromUsername    string
+	FromDisplayName string
+	ToUserID        userdomain.UserID
+	ToUsername      string
+	ToDisplayName   string
+	Status          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ExpiresAt       time.Time
+	AcceptedAt      *time.Time
+	CancelledAt     *time.Time
 }
 
 type CommunityOwnerChange struct {
@@ -218,15 +258,24 @@ func (uc *CommunityReadUseCase) CreateCommunityOwnerTransfer(ctx context.Context
 		if targetID == input.ViewerID {
 			return apperr.New(apperr.CodeInvalidArgument, "community owner transfer target cannot be self")
 		}
+		fromMember, err := repo.FindActiveMemberByUserID(txCtx, community.ID(), input.ViewerID)
+		if err != nil {
+			return fmt.Errorf("find community owner transfer initiator: %w", err)
+		}
 		now := uc.now().UTC()
 		transfer = CommunityOwnerTransferRecord{
-			ID:          uuid.NewString(),
-			CommunityID: community.ID(),
-			FromUserID:  input.ViewerID,
-			ToUserID:    targetID,
-			Status:      "pending",
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:              uuid.NewString(),
+			CommunityID:     community.ID(),
+			FromUserID:      input.ViewerID,
+			FromUsername:    fromMember.Username,
+			FromDisplayName: fromMember.DisplayName,
+			ToUserID:        targetID,
+			ToUsername:      target.Username,
+			ToDisplayName:   target.DisplayName,
+			Status:          "pending",
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			ExpiresAt:       now.Add(CommunityOwnerTransferTTL),
 		}
 		if err := repo.CreateOwnerTransfer(txCtx, transfer); err != nil {
 			return fmt.Errorf("create community owner transfer: %w", err)
@@ -239,7 +288,76 @@ func (uc *CommunityReadUseCase) CreateCommunityOwnerTransfer(ctx context.Context
 	if err != nil {
 		return CommunityOwnerTransferResult{}, err
 	}
-	return CommunityOwnerTransferResult{Community: communityDTO, Transfer: toCommunityOwnerTransfer(transfer)}, nil
+	return CommunityOwnerTransferResult{Community: communityDTO, Transfer: toCommunityOwnerTransfer(transfer, input.ViewerID, roleView, uc.now().UTC())}, nil
+}
+
+func (uc *CommunityReadUseCase) GetCurrentCommunityOwnerTransfer(ctx context.Context, input GetCurrentCommunityOwnerTransferInput) (CommunityOwnerTransferQueryResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return CommunityOwnerTransferQueryResult{}, err
+	}
+	if !canManageCommunity(roleView) {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeForbidden, "community owner required")
+	}
+	if uc.membershipOps == nil {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeInternal, "community membership writes are not configured")
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return CommunityOwnerTransferQueryResult{}, err
+	}
+	record, err := uc.membershipOps.FindCurrentOwnerTransfer(ctx, community.ID(), uc.now().UTC())
+	if err != nil {
+		if apperr.IsCode(err, apperr.CodeNotFound) {
+			return CommunityOwnerTransferQueryResult{Community: communityDTO}, nil
+		}
+		return CommunityOwnerTransferQueryResult{}, fmt.Errorf("find current community owner transfer: %w", err)
+	}
+	transfer := toCommunityOwnerTransfer(record, input.ViewerID, roleView, uc.now().UTC())
+	return CommunityOwnerTransferQueryResult{Community: communityDTO, Transfer: &transfer}, nil
+}
+
+func (uc *CommunityReadUseCase) GetCommunityOwnerTransfer(ctx context.Context, input GetCommunityOwnerTransferInput) (CommunityOwnerTransferQueryResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	communitySlug, err := communitydomain.NewCommunitySlug(input.Slug)
+	if err != nil {
+		return CommunityOwnerTransferQueryResult{}, err
+	}
+	if _, err := uuid.Parse(input.TransferID); err != nil {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeInvalidArgument, "owner transfer id is invalid")
+	}
+	if uc.membershipOps == nil {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeInternal, "community membership writes are not configured")
+	}
+	community, err := uc.communities.FindBySlug(ctx, communitySlug)
+	if err != nil {
+		return CommunityOwnerTransferQueryResult{}, fmt.Errorf("find community: %w", err)
+	}
+	if community.Status() != communitydomain.CommunityStatusActive {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeNotFound, "community not found")
+	}
+	roleView, err := uc.loadCommunityRoleView(ctx, *community, input.ViewerID)
+	if err != nil {
+		return CommunityOwnerTransferQueryResult{}, err
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return CommunityOwnerTransferQueryResult{}, err
+	}
+	record, err := uc.membershipOps.FindOwnerTransferByID(ctx, input.TransferID)
+	if err != nil {
+		return CommunityOwnerTransferQueryResult{}, fmt.Errorf("find community owner transfer: %w", err)
+	}
+	if record.CommunityID != community.ID() {
+		return CommunityOwnerTransferQueryResult{}, apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+	}
+	transfer := toCommunityOwnerTransfer(record, input.ViewerID, roleView, uc.now().UTC())
+	return CommunityOwnerTransferQueryResult{Community: communityDTO, Transfer: &transfer}, nil
 }
 
 func (uc *CommunityReadUseCase) AcceptCommunityOwnerTransfer(ctx context.Context, input AcceptCommunityOwnerTransferInput) (CommunityOwnerTransferResult, error) {
@@ -273,6 +391,9 @@ func (uc *CommunityReadUseCase) AcceptCommunityOwnerTransfer(ctx context.Context
 		if record.Status != "pending" {
 			return apperr.New(apperr.CodeConflict, "community owner transfer is not pending")
 		}
+		if !record.ExpiresAt.IsZero() && !record.ExpiresAt.After(uc.now().UTC()) {
+			return apperr.New(apperr.CodeConflict, "community owner transfer is expired")
+		}
 		if record.ToUserID != input.ViewerID {
 			return apperr.New(apperr.CodeForbidden, "community owner transfer target required")
 		}
@@ -296,7 +417,59 @@ func (uc *CommunityReadUseCase) AcceptCommunityOwnerTransfer(ctx context.Context
 	if err != nil {
 		return CommunityOwnerTransferResult{}, err
 	}
-	return CommunityOwnerTransferResult{Community: communityDTO, Transfer: toCommunityOwnerTransfer(transfer)}, nil
+	return CommunityOwnerTransferResult{Community: communityDTO, Transfer: toCommunityOwnerTransfer(transfer, input.ViewerID, roleView, uc.now().UTC())}, nil
+}
+
+func (uc *CommunityReadUseCase) CancelCommunityOwnerTransfer(ctx context.Context, input CancelCommunityOwnerTransferInput) (CommunityOwnerTransferResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return CommunityOwnerTransferResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if _, err := uuid.Parse(input.TransferID); err != nil {
+		return CommunityOwnerTransferResult{}, apperr.New(apperr.CodeInvalidArgument, "owner transfer id is invalid")
+	}
+	community, roleView, err := uc.findManageableCommunityBySlug(ctx, input.Slug, input.ViewerID)
+	if err != nil {
+		return CommunityOwnerTransferResult{}, err
+	}
+	if !canManageCommunity(roleView) {
+		return CommunityOwnerTransferResult{}, apperr.New(apperr.CodeForbidden, "community owner required")
+	}
+
+	var transfer CommunityOwnerTransferRecord
+	if err := uc.withMembershipWrite(ctx, func(txCtx context.Context, repo CommunityMembershipRepository) error {
+		record, err := repo.FindOwnerTransferForUpdate(txCtx, input.TransferID)
+		if err != nil {
+			return fmt.Errorf("find community owner transfer: %w", err)
+		}
+		if record.CommunityID != community.ID() {
+			return apperr.New(apperr.CodeNotFound, "community owner transfer not found")
+		}
+		if record.Status != "pending" {
+			return apperr.New(apperr.CodeConflict, "community owner transfer is not pending")
+		}
+		now := uc.now().UTC()
+		if !record.ExpiresAt.IsZero() && !record.ExpiresAt.After(now) {
+			return apperr.New(apperr.CodeConflict, "community owner transfer is expired")
+		}
+		if record.FromUserID != input.ViewerID && !roleView.platformOwnerOverride {
+			return apperr.New(apperr.CodeForbidden, "community owner transfer initiator required")
+		}
+		if err := repo.CancelOwnerTransfer(txCtx, input.TransferID, now); err != nil {
+			return fmt.Errorf("cancel community owner transfer: %w", err)
+		}
+		record.Status = "cancelled"
+		record.CancelledAt = &now
+		record.UpdatedAt = now
+		transfer = record
+		return nil
+	}); err != nil {
+		return CommunityOwnerTransferResult{}, err
+	}
+	communityDTO, err := uc.buildCommunityDTOForViewer(ctx, *community, roleView, input.ViewerID)
+	if err != nil {
+		return CommunityOwnerTransferResult{}, err
+	}
+	return CommunityOwnerTransferResult{Community: communityDTO, Transfer: toCommunityOwnerTransfer(transfer, input.ViewerID, roleView, uc.now().UTC())}, nil
 }
 
 func (uc *CommunityReadUseCase) withMembershipWrite(ctx context.Context, fn func(ctx context.Context, repo CommunityMembershipRepository) error) error {
@@ -311,6 +484,14 @@ func (uc *CommunityReadUseCase) withMembershipWrite(ctx context.Context, fn func
 	return fn(ctx, uc.membershipOps)
 }
 
+func (uc *CommunityReadUseCase) loadCommunityRoleView(ctx context.Context, community communitydomain.Community, viewerID userdomain.UserID) (communityRoleView, error) {
+	views, err := uc.loadCommunityRoleViews(ctx, []communitydomain.Community{community}, viewerID)
+	if err != nil {
+		return communityRoleView{}, err
+	}
+	return views[community.ID()], nil
+}
+
 func moderatorLimit(memberCount int) int {
 	switch {
 	case memberCount >= 2000:
@@ -322,15 +503,42 @@ func moderatorLimit(memberCount int) int {
 	}
 }
 
-func toCommunityOwnerTransfer(record CommunityOwnerTransferRecord) CommunityOwnerTransfer {
-	return CommunityOwnerTransfer{
-		ID:          record.ID,
-		CommunityID: record.CommunityID.String(),
-		FromUserID:  record.FromUserID.String(),
-		ToUserID:    record.ToUserID.String(),
-		Status:      record.Status,
-		CreatedAt:   record.CreatedAt,
-		UpdatedAt:   record.UpdatedAt,
-		AcceptedAt:  record.AcceptedAt,
+func toCommunityOwnerTransfer(record CommunityOwnerTransferRecord, viewerID userdomain.UserID, roleView communityRoleView, now time.Time) CommunityOwnerTransfer {
+	status := record.Status
+	if status == "canceled" {
+		status = "cancelled"
 	}
+	if status == "pending" && !record.ExpiresAt.IsZero() && !record.ExpiresAt.After(now) {
+		status = "expired"
+	}
+	viewerIsTarget := record.ToUserID == viewerID
+	viewerCanCancel := status == "pending" && (record.FromUserID == viewerID || roleView.platformOwnerOverride)
+	return CommunityOwnerTransfer{
+		ID:               record.ID,
+		CommunityID:      record.CommunityID.String(),
+		FromUserID:       record.FromUserID.String(),
+		FromUsername:     record.FromUsername,
+		FromDisplayName:  firstNonBlank(record.FromDisplayName, record.FromUsername),
+		ToUserID:         record.ToUserID.String(),
+		ToUsername:       record.ToUsername,
+		ToDisplayName:    firstNonBlank(record.ToDisplayName, record.ToUsername),
+		Status:           status,
+		CreatedAt:        record.CreatedAt,
+		UpdatedAt:        record.UpdatedAt,
+		ExpiresAt:        record.ExpiresAt,
+		AcceptedAt:       record.AcceptedAt,
+		CancelledAt:      record.CancelledAt,
+		ViewerIsTarget:   viewerIsTarget,
+		ViewerCanCancel:  viewerCanCancel,
+		PlatformOverride: roleView.platformOwnerOverride,
+	}
+}
+
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
