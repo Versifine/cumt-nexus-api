@@ -36,6 +36,9 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/media/delivery/mediahttp"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediarepository"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediausecase"
+	"github.com/Versifine/cumt-nexus-api/internal/message/delivery/messagehttp"
+	"github.com/Versifine/cumt-nexus-api/internal/message/messagerepository"
+	"github.com/Versifine/cumt-nexus-api/internal/message/messageusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/delivery/moderationhttp"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationrepository"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationusecase"
@@ -109,6 +112,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	adminRepo := adminrepository.NewPostgresAdminRepository(pool)
 	progressionRepo := progressionrepository.NewPostgresProgressionRepository(pool)
 	contentRefRepo := contentrefrepository.NewPostgresContentRefRepository(pool)
+	messageRepo := messagerepository.NewPostgresMessageRepository(pool)
 	objectStorage, err := storage.NewObjectStorage(ctx, cfg.Storage)
 	if err != nil {
 		return err
@@ -144,9 +148,11 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	publicUserUC := userusecase.NewPublicUserUseCase(userRepo)
 	updateProfileUC := userusecase.NewUpdateProfileUseCase(userRepo, time.Now)
 	progressionUC := progressionusecase.NewUseCase(progressionRepo, time.Now)
+	messageUC := messageusecase.NewUseCase(messageRepo, userRepo, time.Now)
 	loginUC.SetXPRecorder(progressionUC)
 	securityUC.SetXPRecorder(progressionUC)
 	publicUserUC.SetProgressionReader(progressionUC)
+	publicUserUC.SetDMCapabilityReader(publicUserDMCapabilityAdapter{messages: messageUC})
 	publicCommunityUC := communityusecase.NewPublicCommunityBootstrapUseCase(communityRepo, time.Now)
 	communityReadUC := communityusecase.NewCommunityReadUseCase(communityRepo)
 	communityReadUC.SetMembershipRepository(communityrepository.NewPostgresMembershipRepository(pool))
@@ -224,6 +230,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	effectHandler := effecthttp.NewHandler(effectUC)
 	adminHandler := adminhttp.NewHandler(adminUC)
 	progressionHandler := progressionhttp.NewHandler(progressionUC)
+	messageHandler := messagehttp.NewHandler(messageUC)
 
 	router := httpserver.NewRouter(log, cfg.HTTP)
 	if cfg.Storage.Provider == "local" {
@@ -231,6 +238,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	}
 	apiV1 := router.Group("/api/v1")
 	authhttp.RegisterRoutes(apiV1.Group("/auth"), authHandler)
+	messagehttp.RegisterRealtimeRoutes(apiV1, messageHandler)
 	publicReadV1 := apiV1.Group("")
 	publicReadV1.Use(authhttp.OptionalAuth(tokenIssuer, authRepo))
 	userhttp.RegisterPublicRoutes(publicReadV1, userHandler)
@@ -257,6 +265,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	adminhttp.RegisterRoutes(protectedV1, adminHandler)
 	progressionhttp.RegisterRoutes(protectedV1, progressionHandler)
 	progressionhttp.RegisterAdminRoutes(protectedV1, progressionHandler)
+	messagehttp.RegisterRoutes(protectedV1, messageHandler)
 	server := httpserver.NewServer(cfg.HTTP, router)
 
 	return serveHTTP(server, cfg.HTTP, log)

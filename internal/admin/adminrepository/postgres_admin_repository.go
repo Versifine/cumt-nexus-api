@@ -677,9 +677,11 @@ func (repo *PostgresAdminRepository) TransferCommunityOwner(ctx context.Context,
 			AND community_memberships.status = 'active'
 		LIMIT 1
 		FOR UPDATE OF community_memberships
-	`, communityID.String()))
+	`, communityID.String()), "community owner not found")
 	if err != nil {
-		return adminusecase.CommunityOwnerChange{}, fmt.Errorf("find current community owner: %w", err)
+		if !apperr.IsCode(err, apperr.CodeNotFound) {
+			return adminusecase.CommunityOwnerChange{}, fmt.Errorf("find current community owner: %w", err)
+		}
 	}
 	if _, err := scanCommunityOwnerMember(repo.db.QueryRow(ctx, `
 		SELECT
@@ -692,7 +694,7 @@ func (repo *PostgresAdminRepository) TransferCommunityOwner(ctx context.Context,
 		WHERE id = $1::uuid
 			AND status = 'active'
 		LIMIT 1
-	`, newOwnerID.String())); err != nil {
+	`, newOwnerID.String()), "user not found"); err != nil {
 		return adminusecase.CommunityOwnerChange{}, fmt.Errorf("find new community owner: %w", err)
 	}
 	if _, err := repo.db.Exec(ctx, `
@@ -735,11 +737,15 @@ func (repo *PostgresAdminRepository) TransferCommunityOwner(ctx context.Context,
 			AND community_memberships.user_id = $2::uuid
 			AND community_memberships.status = 'active'
 		LIMIT 1
-	`, communityID.String(), newOwnerID.String()))
+	`, communityID.String(), newOwnerID.String()), "community owner not found")
 	if err != nil {
 		return adminusecase.CommunityOwnerChange{}, fmt.Errorf("find updated community owner: %w", err)
 	}
-	return adminusecase.CommunityOwnerChange{BeforeOwner: before, AfterOwner: after}, nil
+	var beforeOwner *adminusecase.CommunityOwnerMember
+	if before.UserID != "" {
+		beforeOwner = &before
+	}
+	return adminusecase.CommunityOwnerChange{BeforeOwner: beforeOwner, AfterOwner: after}, nil
 }
 
 func (repo *PostgresAdminRepository) ListEffects(ctx context.Context, active *bool, limit int, offset int) ([]adminusecase.Effect, error) {
@@ -1384,11 +1390,11 @@ func scanCommunity(row rowScanner) (adminusecase.Community, error) {
 	return community, nil
 }
 
-func scanCommunityOwnerMember(row rowScanner) (adminusecase.CommunityOwnerMember, error) {
+func scanCommunityOwnerMember(row rowScanner, notFoundMessage string) (adminusecase.CommunityOwnerMember, error) {
 	var member adminusecase.CommunityOwnerMember
 	if err := row.Scan(&member.UserID, &member.Username, &member.Role, &member.Status, &member.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return adminusecase.CommunityOwnerMember{}, apperr.New(apperr.CodeNotFound, "community owner not found")
+			return adminusecase.CommunityOwnerMember{}, apperr.New(apperr.CodeNotFound, notFoundMessage)
 		}
 		return adminusecase.CommunityOwnerMember{}, err
 	}

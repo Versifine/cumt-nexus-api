@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS message_realtime_tickets;
+DROP TABLE IF EXISTS message_realtime_events;
+DROP TABLE IF EXISTS message_reports;
+DROP TABLE IF EXISTS message_requests;
+DROP TABLE IF EXISTS message_user_states;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS message_conversation_participants;
+DROP TABLE IF EXISTS message_conversations;
+DROP TABLE IF EXISTS message_privacy_settings;
+DROP TABLE IF EXISTS user_blocks;

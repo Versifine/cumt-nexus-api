@@ -45,20 +45,29 @@ type currentUserResponse struct {
 }
 
 type publicUserResponse struct {
-	ID                string                        `json:"id"`
-	Username          string                        `json:"username"`
-	DisplayName       string                        `json:"display_name"`
-	AvatarURL         string                        `json:"avatar_url"`
-	BannerURL         string                        `json:"banner_url"`
-	Headline          string                        `json:"headline"`
-	Bio               string                        `json:"bio"`
-	Badges            []string                      `json:"badges"`
-	Roles             []string                      `json:"roles"`
-	Status            string                        `json:"status"`
-	Stats             publicUserStatsResponse       `json:"stats"`
-	Progression       publicUserProgressionResponse `json:"progression"`
-	ViewerIsFollowing bool                          `json:"viewer_is_following"`
-	CreatedAt         time.Time                     `json:"created_at"`
+	ID                string                         `json:"id"`
+	Username          string                         `json:"username"`
+	DisplayName       string                         `json:"display_name"`
+	AvatarURL         string                         `json:"avatar_url"`
+	BannerURL         string                         `json:"banner_url"`
+	Headline          string                         `json:"headline"`
+	Bio               string                         `json:"bio"`
+	Badges            []string                       `json:"badges"`
+	Roles             []string                       `json:"roles"`
+	Status            string                         `json:"status"`
+	Stats             publicUserStatsResponse        `json:"stats"`
+	Progression       publicUserProgressionResponse  `json:"progression"`
+	DMCapability      publicUserDMCapabilityResponse `json:"dm_capability"`
+	ViewerIsFollowing bool                           `json:"viewer_is_following"`
+	CreatedAt         time.Time                      `json:"created_at"`
+}
+
+type publicUserDMCapabilityResponse struct {
+	CanStart             bool    `json:"can_start"`
+	RequiresRequest      bool    `json:"requires_request"`
+	Reason               *string `json:"reason"`
+	DirectConversationID *string `json:"direct_conversation_id"`
+	ViewerRelation       string  `json:"viewer_relation"`
 }
 
 type publicUserProgressionResponse struct {
@@ -331,7 +340,14 @@ func toPublicUserResponse(user userusecase.PublicUser) publicUserResponse {
 			FollowerCount:  user.Stats.FollowerCount,
 			FollowingCount: user.Stats.FollowingCount,
 		},
-		Progression:       toPublicUserProgressionResponse(user.Progression),
+		Progression: toPublicUserProgressionResponse(user.Progression),
+		DMCapability: publicUserDMCapabilityResponse{
+			CanStart:             user.DMCapability.CanStart,
+			RequiresRequest:      user.DMCapability.RequiresRequest,
+			Reason:               user.DMCapability.Reason,
+			DirectConversationID: user.DMCapability.DirectConversationID,
+			ViewerRelation:       user.DMCapability.ViewerRelation,
+		},
 		ViewerIsFollowing: user.ViewerIsFollowing,
 		CreatedAt:         user.CreatedAt,
 	}

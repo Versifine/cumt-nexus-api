@@ -116,6 +116,46 @@ func TestUpdateCommunityOwnerWritesReasonToAudit(t *testing.T) {
 	}
 }
 
+func TestUpdateCommunityOwnerAllowsMissingActiveOwner(t *testing.T) {
+	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	actorID := userdomain.NewGeneratedUserID()
+	communityID := communitydomain.NewGeneratedCommunityID()
+	targetID := userdomain.NewGeneratedUserID()
+	repo := &fakeRepository{
+		isStaff:                true,
+		noActiveCommunityOwner: true,
+		communities: map[string]Community{
+			communityID.String(): {ID: communityID.String(), Slug: "campus", Name: "Campus", Status: "active"},
+		},
+		users: map[string]User{
+			targetID.String(): {ID: targetID.String(), Username: "alice", Status: "active"},
+		},
+	}
+	uc := NewUseCase(repo, func() time.Time { return now })
+
+	result, err := uc.UpdateCommunityOwner(context.Background(), UpdateCommunityOwnerInput{
+		ActorID:     actorID,
+		CommunityID: communityID.String(),
+		UserID:      targetID.String(),
+		Reason:      "no active owner",
+	})
+	if err != nil {
+		t.Fatalf("UpdateCommunityOwner returned error: %v", err)
+	}
+	if result.Owner.UserID != targetID.String() {
+		t.Fatalf("unexpected owner result: %#v", result.Owner)
+	}
+	if len(repo.auditLogs) != 1 {
+		t.Fatalf("expected one audit log, got %d", len(repo.auditLogs))
+	}
+	if repo.auditLogs[0].Before["owner"] != nil {
+		t.Fatalf("expected nil before owner, got %#v", repo.auditLogs[0].Before)
+	}
+	if repo.auditLogs[0].After["reason"] != "no active owner" {
+		t.Fatalf("expected reason in audit after state, got %#v", repo.auditLogs[0].After)
+	}
+}
+
 func TestUpdateSettingWritesAuditLogInTransaction(t *testing.T) {
 	now := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
 	actorID := userdomain.NewGeneratedUserID()
@@ -865,20 +905,21 @@ func TestRevokeUserSanctionWritesAudit(t *testing.T) {
 }
 
 type fakeRepository struct {
-	isStaff           bool
-	users             map[string]User
-	passwordHashes    map[string]userdomain.PasswordHash
-	ownerTransfers    map[string]OwnerTransfer
-	communities       map[string]Community
-	effects           map[string]Effect
-	settings          map[string]Setting
-	pointAccounts     map[string]PointAccount
-	pointTransactions []PointTransaction
-	createdSanction   CreateUserSanctionRecordInput
-	sanctions         map[string]UserSanction
-	revokedSanctionID string
-	auditLogs         []AuditLog
-	txCount           int
+	isStaff                bool
+	noActiveCommunityOwner bool
+	users                  map[string]User
+	passwordHashes         map[string]userdomain.PasswordHash
+	ownerTransfers         map[string]OwnerTransfer
+	communities            map[string]Community
+	effects                map[string]Effect
+	settings               map[string]Setting
+	pointAccounts          map[string]PointAccount
+	pointTransactions      []PointTransaction
+	createdSanction        CreateUserSanctionRecordInput
+	sanctions              map[string]UserSanction
+	revokedSanctionID      string
+	auditLogs              []AuditLog
+	txCount                int
 }
 
 func (f *fakeRepository) WithinTx(ctx context.Context, fn func(ctx context.Context, repository Repository) error) error {
@@ -1129,14 +1170,18 @@ func (f *fakeRepository) TransferCommunityOwner(ctx context.Context, communityID
 	if !ok || user.Status != "active" {
 		return CommunityOwnerChange{}, apperr.New(apperr.CodeNotFound, "user not found")
 	}
-	return CommunityOwnerChange{
-		BeforeOwner: CommunityOwnerMember{
+	var beforeOwner *CommunityOwnerMember
+	if !f.noActiveCommunityOwner {
+		beforeOwner = &CommunityOwnerMember{
 			UserID:    "previous-owner",
 			Username:  "previous",
 			Role:      "owner",
 			Status:    "active",
 			UpdatedAt: updatedAt.Add(-time.Minute),
-		},
+		}
+	}
+	return CommunityOwnerChange{
+		BeforeOwner: beforeOwner,
 		AfterOwner: CommunityOwnerMember{
 			UserID:    user.ID,
 			Username:  user.Username,

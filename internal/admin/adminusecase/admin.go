@@ -125,7 +125,7 @@ type CommunityOwnerMember struct {
 }
 
 type CommunityOwnerChange struct {
-	BeforeOwner CommunityOwnerMember
+	BeforeOwner *CommunityOwnerMember
 	AfterOwner  CommunityOwnerMember
 }
 
@@ -789,7 +789,10 @@ func (uc *UseCase) UpdateCommunityOwner(ctx context.Context, input UpdateCommuni
 		if err != nil {
 			return fmt.Errorf("transfer admin community owner: %w", err)
 		}
-		beforeState := communityOwnerAuditState(change.BeforeOwner)
+		beforeState := map[string]any{"owner": nil}
+		if change.BeforeOwner != nil {
+			beforeState["owner"] = communityOwnerAuditState(*change.BeforeOwner)
+		}
 		afterState := communityOwnerAuditState(change.AfterOwner)
 		if reason != "" {
 			afterState["reason"] = reason

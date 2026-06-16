@@ -54,6 +54,7 @@ domain/usecase 可以返回 `apperr`，但不能决定 HTTP 状态码。
 | `forbidden` | 403 | 已认证但当前状态不允许 |
 | `not_found` | 404 | 资源不存在 |
 | `conflict` | 409 | 唯一约束、状态冲突或重复操作 |
+| `rate_limited` | 429 | 当前用户短时间内触发频率限制 |
 | `internal` | 500 | 未预期系统错误 |
 
 ## handler 规则

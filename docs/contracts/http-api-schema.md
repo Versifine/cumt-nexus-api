@@ -170,6 +170,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/notifications | query | `notificationhttp.listNotificationsResponse` | 200 |
 | POST | /api/v1/notifications/:id/read | none | `notificationhttp.markNotificationReadResponse` | 200 |
 | POST | /api/v1/notifications/read-all | none | `notificationhttp.markAllNotificationsReadResponse` | 200 |
+| GET | /api/v1/messages/summary | none | `messagehttp.summaryResponse` | 200 |
+| GET | /api/v1/messages/conversations | query | `messagehttp.listConversationsResponse` | 200 |
+| POST | /api/v1/messages/conversations | `messagehttp.startConversationRequest` | `messagehttp.conversationMutationResponse` | 201 |
+| GET | /api/v1/messages/conversations/:id/messages | query | `messagehttp.listMessagesResponse` | 200 |
+| POST | /api/v1/messages/conversations/:id/messages | `messagehttp.sendMessageRequest` | `messagehttp.conversationMutationResponse` | 201 |
+| POST | /api/v1/messages/conversations/:id/read | none | `messagehttp.conversationMutationResponse` | 200 |
+| POST | /api/v1/messages/conversations/:id/archive | none | `messagehttp.conversationMutationResponse` | 200 |
+| DELETE | /api/v1/messages/conversations/:id/archive | none | `messagehttp.conversationMutationResponse` | 200 |
+| POST | /api/v1/messages/requests/:id/accept | none | `messagehttp.conversationMutationResponse` | 200 |
+| POST | /api/v1/messages/requests/:id/reject | none | `messagehttp.conversationMutationResponse` | 200 |
+| POST | /api/v1/messages/:id/recall | none | `messagehttp.conversationMutationResponse` | 200 |
+| DELETE | /api/v1/messages/:id | none | none | 204 |
+| POST | /api/v1/messages/:id/report | `messagehttp.reportMessageRequest` | `messagehttp.reportResponse` | 201 |
+| POST | /api/v1/users/:username/block | none | none | 204 |
+| DELETE | /api/v1/users/:username/block | none | none | 204 |
+| GET | /api/v1/me/privacy/messages | none | `messagehttp.privacyResponse` | 200 |
+| PATCH | /api/v1/me/privacy/messages | `messagehttp.updatePrivacyRequest` | `messagehttp.privacyResponse` | 200 |
+| POST | /api/v1/realtime/tickets | `messagehttp.realtimeTicketRequest` | `messagehttp.realtimeTicketResponse` | 201 |
+| GET | /api/v1/realtime/messages | query | `messagehttp.realtimeHelloResponse` | 200 |
 | POST | /api/v1/uploads/images | multipart form | `mediahttp.uploadImageResponse` | 201 |
 | POST | /api/v1/link-previews/resolve | `contentrefhttp.resolveLinkPreviewRequest` | `contentrefhttp.resolveLinkPreviewResponse` | 200 |
 | POST | /api/v1/embeds/resolve | `contentrefhttp.resolveEmbedRequest` | `contentrefhttp.resolveEmbedResponse` | 200 |
@@ -198,6 +217,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `contentrefhttp.resolveLinkPreviewRequest` | `url` |
 | `effecthttp.applyCommentEffectRequest` | `effect_id` |
 | `communityhttp.submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
+| `messagehttp.startConversationRequest` | `target_username`, `message` |
+| `messagehttp.sendMessageRequest` | `message` |
+| `messagehttp.reportMessageRequest` | `reason` |
 | `moderationhttp.reportContentRequest` | `reason` |
 | `moderationhttp.bulkActionRequest` | `action` |
 | `moderationhttp.templateRequest` | `title` |
@@ -230,7 +252,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `authhttp` | `deleteAccountCodeRequest` | `email` |
 | `authhttp` | `deleteAccountRequest` | `code`, `current_password`, `confirmation` |
 | `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at` |
-| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `progression`, `viewer_is_following`, `created_at` |
+| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `progression`, `dm_capability`, `viewer_is_following`, `created_at` |
+| `userhttp` | `publicUserDMCapabilityResponse` | `can_start`, `requires_request`, `reason`, `direct_conversation_id`, `viewer_relation` |
 | `userhttp` | `publicUserProgressionResponse` | `level`, `level_name`, `xp_total`, `current_level_xp`, `next_level_xp`, `level_progress`, `active_title`, `titles_count` |
 | `userhttp` | `publicUserTitleResponse` | `grant_id`, `title_id`, `name`, `scope_type`, `scope_id` |
 | `userhttp` | `publicUserStatsResponse` | `post_count`, `comment_count`, `follower_count`, `following_count` |
@@ -380,6 +403,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `notificationhttp` | `unreadSummaryResponse` | `total`, `replies`, `mentions`, `likes`, `system` |
 | `notificationhttp` | `markNotificationReadResponse` | `notification` |
 | `notificationhttp` | `markAllNotificationsReadResponse` | `updated_count`, `read_at` |
+| `messagehttp` | `summaryResponse` | `unread_total`, `request_count`, `unread_conversations`, `online_status_enabled` |
+| `messagehttp` | `listConversationsResponse` | `conversations`, `box`, `limit`, `offset`, `next_offset`, `has_more` |
+| `messagehttp` | `conversationMutationResponse` | `conversation`, `message` |
+| `messagehttp` | `conversationResponse` | `id`, `box`, `request_id`, `request_status`, `participant`, `last_message`, `unread_count`, `updated_at`, `pinned`, `muted`, `archived`, `blocked`, `can_send`, `disable_reason`, `peer_online_status_visible`, `peer_online` |
+| `messagehttp` | `messageSummaryResponse` | `id`, `type`, `text`, `status`, `created_at` |
+| `messagehttp` | `listMessagesResponse` | `messages`, `limit`, `has_more`, `next_before` |
+| `messagehttp` | `messageResponse` | `id`, `conversation_id`, `sender`, `type`, `body`, `image_url`, `share`, `status`, `created_at`, `updated_at`, `recalled_at`, `viewer_deleted` |
+| `messagehttp` | `shareSnapshotResponse` | `share_type`, `share_id`, `title`, `summary`, `thumbnail_url`, `target_url`, `snapshot_created_at` |
+| `messagehttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `status` |
+| `messagehttp` | `startConversationRequest` | `target_username`, `message` |
+| `messagehttp` | `messageDraftRequest` | `type`, `body`, `image_url`, `share` |
+| `messagehttp` | `shareSnapshotRequest` | `share_type`, `share_id`, `title`, `summary`, `thumbnail_url`, `target_url`, `snapshot_created_at` |
+| `messagehttp` | `sendMessageRequest` | `message` |
+| `messagehttp` | `reportMessageRequest` | `reason` |
+| `messagehttp` | `privacyResponse` | `allow_messages`, `online_status_enabled`, `updated_at` |
+| `messagehttp` | `updatePrivacyRequest` | `allow_messages`, `online_status_enabled` |
+| `messagehttp` | `realtimeTicketRequest` | `last_event_id` |
+| `messagehttp` | `realtimeTicketResponse` | `ticket`, `expires_at` |
+| `messagehttp` | `realtimeEventResponse` | `id`, `type`, `conversation_id`, `payload`, `created_at` |
+| `messagehttp` | `realtimeHelloResponse` | `type`, `events` |
+| `messagehttp` | `reportResponse` | `report` |
+| `messagehttp` | `messageReportResponse` | `id`, `conversation_id`, `message_id`, `reported_user_id`, `reason`, `context_before`, `context_after`, `created_at` |
 | `mediahttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `mediahttp` | `uploadImageResponse` | `attachment` |
 | `contentrefhttp` | `resolveLinkPreviewRequest` | `url` |

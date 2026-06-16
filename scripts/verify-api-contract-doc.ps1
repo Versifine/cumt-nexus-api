@@ -185,6 +185,20 @@ foreach ($file in $protectedRouteFiles) {
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `
+    -Path 'internal/message/delivery/messagehttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'Bearer' `
+    -IncludeHandlers @('GetSummary', 'ListConversations', 'StartConversation', 'ListMessages', 'SendMessage', 'MarkConversationRead', 'ArchiveConversation', 'UnarchiveConversation', 'AcceptRequest', 'RejectRequest', 'RecallMessage', 'DeleteMessage', 'ReportMessage', 'BlockUser', 'UnblockUser', 'GetPrivacy', 'UpdatePrivacy', 'CreateRealtimeTicket')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
+    -Path 'internal/message/delivery/messagehttp/handler.go' `
+    -Prefix '/api/v1' `
+    -Auth 'ticket' `
+    -IncludeHandlers @('RealtimeMessages')
+
+Add-RoutesFromFile `
+    -Routes $actualRoutes `
     -Path 'internal/user/delivery/userhttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'optional Bearer' `

@@ -16,6 +16,7 @@ $httpStatusValues = @{
     StatusForbidden = 403
     StatusNotFound = 404
     StatusConflict = 409
+    StatusTooManyRequests = 429
     StatusInternalServerError = 500
 }
 

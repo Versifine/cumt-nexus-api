@@ -137,6 +137,7 @@ func (uc *UpdateProfileUseCase) UpdateProfile(ctx context.Context, input UpdateP
 			followingCount,
 			false,
 			progressionusecase.BuildProgression(progressionusecase.ProgressionRecord{UserID: user.ID().String()}),
+			selfDMCapability(),
 		),
 	}, nil
 }

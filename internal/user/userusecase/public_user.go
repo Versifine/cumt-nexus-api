@@ -11,9 +11,10 @@ import (
 )
 
 type PublicUserUseCase struct {
-	users       PublicUserRepository
-	progression PublicProgressionReader
-	now         func() time.Time
+	users        PublicUserRepository
+	progression  PublicProgressionReader
+	dmCapability PublicDMCapabilityReader
+	now          func() time.Time
 }
 
 type PublicUserRepository interface {
@@ -53,6 +54,10 @@ type PublicProgressionReader interface {
 	GetPublicProgression(ctx context.Context, userID userdomain.UserID) (progressionusecase.Progression, error)
 }
 
+type PublicDMCapabilityReader interface {
+	GetPublicUserDMCapability(ctx context.Context, viewerID userdomain.UserID, targetID userdomain.UserID) (PublicUserDMCapability, error)
+}
+
 type GetPublicUserResult struct {
 	User PublicUser
 }
@@ -82,8 +87,17 @@ type PublicUser struct {
 	Status            string
 	Stats             PublicUserStats
 	Progression       PublicUserProgression
+	DMCapability      PublicUserDMCapability
 	ViewerIsFollowing bool
 	CreatedAt         time.Time
+}
+
+type PublicUserDMCapability struct {
+	CanStart             bool
+	RequiresRequest      bool
+	Reason               *string
+	DirectConversationID *string
+	ViewerRelation       string
 }
 
 type PublicUserProgression struct {
@@ -113,6 +127,10 @@ func NewPublicUserUseCase(users PublicUserRepository) *PublicUserUseCase {
 
 func (uc *PublicUserUseCase) SetProgressionReader(progression PublicProgressionReader) {
 	uc.progression = progression
+}
+
+func (uc *PublicUserUseCase) SetDMCapabilityReader(reader PublicDMCapabilityReader) {
+	uc.dmCapability = reader
 }
 
 func (uc *PublicUserUseCase) GetPublicUser(ctx context.Context, input GetPublicUserInput) (GetPublicUserResult, error) {
@@ -245,10 +263,14 @@ func (uc *PublicUserUseCase) buildPublicUser(ctx context.Context, user userdomai
 			return PublicUser{}, err
 		}
 	}
-	return buildPublicUser(&user, postCount, commentCount, followerCount, followingCount, viewerIsFollowing, progression), nil
+	dmCapability, err := uc.buildDMCapability(ctx, viewerID, user.ID())
+	if err != nil {
+		return PublicUser{}, err
+	}
+	return buildPublicUser(&user, postCount, commentCount, followerCount, followingCount, viewerIsFollowing, progression, dmCapability), nil
 }
 
-func buildPublicUser(user *userdomain.User, postCount int, commentCount int, followerCount int, followingCount int, viewerIsFollowing bool, progression progressionusecase.Progression) PublicUser {
+func buildPublicUser(user *userdomain.User, postCount int, commentCount int, followerCount int, followingCount int, viewerIsFollowing bool, progression progressionusecase.Progression, dmCapability PublicUserDMCapability) PublicUser {
 	return PublicUser{
 		ID:          user.ID().String(),
 		Username:    user.Username().String(),
@@ -267,9 +289,31 @@ func buildPublicUser(user *userdomain.User, postCount int, commentCount int, fol
 			FollowingCount: followingCount,
 		},
 		Progression:       toPublicUserProgression(progression),
+		DMCapability:      dmCapability,
 		ViewerIsFollowing: viewerIsFollowing,
 		CreatedAt:         user.CreatedAt(),
 	}
+}
+
+func (uc *PublicUserUseCase) buildDMCapability(ctx context.Context, viewerID userdomain.UserID, targetID userdomain.UserID) (PublicUserDMCapability, error) {
+	if isBlankUserID(viewerID) {
+		reason := "unauthenticated"
+		return PublicUserDMCapability{CanStart: false, RequiresRequest: true, Reason: &reason, ViewerRelation: "none"}, nil
+	}
+	if viewerID == targetID {
+		reason := "self"
+		return PublicUserDMCapability{CanStart: false, Reason: &reason, ViewerRelation: "self"}, nil
+	}
+	if uc.dmCapability == nil {
+		reason := "unavailable"
+		return PublicUserDMCapability{CanStart: false, Reason: &reason, ViewerRelation: "none"}, nil
+	}
+	return uc.dmCapability.GetPublicUserDMCapability(ctx, viewerID, targetID)
+}
+
+func selfDMCapability() PublicUserDMCapability {
+	reason := "self"
+	return PublicUserDMCapability{CanStart: false, Reason: &reason, ViewerRelation: "self"}
 }
 
 func publicDisplayName(user *userdomain.User) string {
