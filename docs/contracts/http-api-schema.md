@@ -178,6 +178,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/messages/conversations/:id/read | none | `messagehttp.conversationMutationResponse` | 200 |
 | POST | /api/v1/messages/conversations/:id/archive | none | `messagehttp.conversationMutationResponse` | 200 |
 | DELETE | /api/v1/messages/conversations/:id/archive | none | `messagehttp.conversationMutationResponse` | 200 |
+| POST | /api/v1/messages/conversations/:id/pin | none | `messagehttp.conversationMutationResponse` | 200 |
+| DELETE | /api/v1/messages/conversations/:id/pin | none | `messagehttp.conversationMutationResponse` | 200 |
+| POST | /api/v1/messages/conversations/:id/mute | none | `messagehttp.conversationMutationResponse` | 200 |
+| DELETE | /api/v1/messages/conversations/:id/mute | none | `messagehttp.conversationMutationResponse` | 200 |
+| DELETE | /api/v1/messages/conversations/:id | none | none | 204 |
+| POST | /api/v1/messages/conversations/:id/report | `messagehttp.reportMessageRequest` | `messagehttp.reportResponse` | 201 |
 | POST | /api/v1/messages/requests/:id/accept | none | `messagehttp.conversationMutationResponse` | 200 |
 | POST | /api/v1/messages/requests/:id/reject | none | `messagehttp.conversationMutationResponse` | 200 |
 | POST | /api/v1/messages/:id/recall | none | `messagehttp.conversationMutationResponse` | 200 |
@@ -406,7 +412,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `messagehttp` | `summaryResponse` | `unread_total`, `request_count`, `unread_conversations`, `online_status_enabled` |
 | `messagehttp` | `listConversationsResponse` | `conversations`, `box`, `limit`, `offset`, `next_offset`, `has_more` |
 | `messagehttp` | `conversationMutationResponse` | `conversation`, `message` |
-| `messagehttp` | `conversationResponse` | `id`, `box`, `request_id`, `request_status`, `participant`, `last_message`, `unread_count`, `updated_at`, `pinned`, `muted`, `archived`, `blocked`, `can_send`, `disable_reason`, `peer_online_status_visible`, `peer_online` |
+| `messagehttp` | `conversationResponse` | `id`, `box`, `request_id`, `request_status`, `request_direction`, `viewer_can_accept_request`, `viewer_can_reject_request`, `request_created_by_me`, `request_to_me`, `conversation_state`, `participant`, `last_message`, `unread_count`, `updated_at`, `pinned`, `muted`, `archived`, `blocked`, `can_send`, `disable_reason`, `peer_online_status_visible`, `peer_online` |
 | `messagehttp` | `messageSummaryResponse` | `id`, `type`, `text`, `status`, `created_at` |
 | `messagehttp` | `listMessagesResponse` | `messages`, `limit`, `has_more`, `next_before` |
 | `messagehttp` | `messageResponse` | `id`, `conversation_id`, `sender`, `type`, `body`, `image_url`, `share`, `status`, `created_at`, `updated_at`, `recalled_at`, `viewer_deleted` |

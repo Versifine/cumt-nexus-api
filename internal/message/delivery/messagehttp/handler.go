@@ -27,6 +27,10 @@ type MessageUseCase interface {
 	SendMessage(ctx context.Context, input messageusecase.SendMessageInput) (messageusecase.ConversationResult, error)
 	MarkConversationRead(ctx context.Context, input messageusecase.ConversationActionInput) (messageusecase.ConversationResult, error)
 	SetConversationArchived(ctx context.Context, input messageusecase.ConversationActionInput, archived bool) (messageusecase.ConversationResult, error)
+	SetConversationPinned(ctx context.Context, input messageusecase.ConversationActionInput, pinned bool) (messageusecase.ConversationResult, error)
+	SetConversationMuted(ctx context.Context, input messageusecase.ConversationActionInput, muted bool) (messageusecase.ConversationResult, error)
+	DeleteConversation(ctx context.Context, input messageusecase.ConversationActionInput) error
+	ReportConversation(ctx context.Context, input messageusecase.ConversationActionInput) (messageusecase.ReportResult, error)
 	AcceptRequest(ctx context.Context, input messageusecase.RequestActionInput) (messageusecase.ConversationResult, error)
 	RejectRequest(ctx context.Context, input messageusecase.RequestActionInput) (messageusecase.ConversationResult, error)
 	RecallMessage(ctx context.Context, input messageusecase.MessageActionInput) (messageusecase.ConversationResult, error)
@@ -66,6 +70,12 @@ type conversationResponse struct {
 	Box                     string                  `json:"box"`
 	RequestID               *string                 `json:"request_id"`
 	RequestStatus           string                  `json:"request_status"`
+	RequestDirection        string                  `json:"request_direction"`
+	ViewerCanAcceptRequest  bool                    `json:"viewer_can_accept_request"`
+	ViewerCanRejectRequest  bool                    `json:"viewer_can_reject_request"`
+	RequestCreatedByMe      bool                    `json:"request_created_by_me"`
+	RequestToMe             bool                    `json:"request_to_me"`
+	ConversationState       string                  `json:"conversation_state"`
 	Participant             userSummaryResponse     `json:"participant"`
 	LastMessage             *messageSummaryResponse `json:"last_message"`
 	UnreadCount             int                     `json:"unread_count"`
@@ -219,6 +229,12 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/messages/conversations/:id/read", handler.MarkConversationRead)
 	group.POST("/messages/conversations/:id/archive", handler.ArchiveConversation)
 	group.DELETE("/messages/conversations/:id/archive", handler.UnarchiveConversation)
+	group.POST("/messages/conversations/:id/pin", handler.PinConversation)
+	group.DELETE("/messages/conversations/:id/pin", handler.UnpinConversation)
+	group.POST("/messages/conversations/:id/mute", handler.MuteConversation)
+	group.DELETE("/messages/conversations/:id/mute", handler.UnmuteConversation)
+	group.DELETE("/messages/conversations/:id", handler.DeleteConversation)
+	group.POST("/messages/conversations/:id/report", handler.ReportConversation)
 	group.POST("/messages/requests/:id/accept", handler.AcceptRequest)
 	group.POST("/messages/requests/:id/reject", handler.RejectRequest)
 	group.POST("/messages/:id/recall", handler.RecallMessage)
@@ -379,6 +395,60 @@ func (h *Handler) UnarchiveConversation(c *gin.Context) {
 	h.conversationAction(c, func(ctx context.Context, input messageusecase.ConversationActionInput) (messageusecase.ConversationResult, error) {
 		return h.messages.SetConversationArchived(ctx, input, false)
 	})
+}
+
+func (h *Handler) PinConversation(c *gin.Context) {
+	h.conversationAction(c, func(ctx context.Context, input messageusecase.ConversationActionInput) (messageusecase.ConversationResult, error) {
+		return h.messages.SetConversationPinned(ctx, input, true)
+	})
+}
+
+func (h *Handler) UnpinConversation(c *gin.Context) {
+	h.conversationAction(c, func(ctx context.Context, input messageusecase.ConversationActionInput) (messageusecase.ConversationResult, error) {
+		return h.messages.SetConversationPinned(ctx, input, false)
+	})
+}
+
+func (h *Handler) MuteConversation(c *gin.Context) {
+	h.conversationAction(c, func(ctx context.Context, input messageusecase.ConversationActionInput) (messageusecase.ConversationResult, error) {
+		return h.messages.SetConversationMuted(ctx, input, true)
+	})
+}
+
+func (h *Handler) UnmuteConversation(c *gin.Context) {
+	h.conversationAction(c, func(ctx context.Context, input messageusecase.ConversationActionInput) (messageusecase.ConversationResult, error) {
+		return h.messages.SetConversationMuted(ctx, input, false)
+	})
+}
+
+func (h *Handler) DeleteConversation(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	if err := h.messages.DeleteConversation(c.Request.Context(), messageusecase.ConversationActionInput{ViewerID: userID, ConversationID: c.Param("id")}); err != nil {
+		abortWithError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ReportConversation(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	var request reportMessageRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		abortWithError(c, apperr.New(apperr.CodeInvalidArgument, "invalid request body"))
+		return
+	}
+	result, err := h.messages.ReportConversation(c.Request.Context(), messageusecase.ConversationActionInput{ViewerID: userID, ConversationID: c.Param("id"), Reason: request.Reason})
+	if err != nil {
+		abortWithError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, reportResponse{Report: toReportResponse(result.Report)})
 }
 
 func (h *Handler) conversationAction(c *gin.Context, action func(context.Context, messageusecase.ConversationActionInput) (messageusecase.ConversationResult, error)) {
@@ -623,6 +693,12 @@ func toConversationResponse(conversation messageusecase.Conversation) conversati
 		Box:                     conversation.Box,
 		RequestID:               conversation.RequestID,
 		RequestStatus:           conversation.RequestStatus,
+		RequestDirection:        conversation.RequestDirection,
+		ViewerCanAcceptRequest:  conversation.ViewerCanAcceptRequest,
+		ViewerCanRejectRequest:  conversation.ViewerCanRejectRequest,
+		RequestCreatedByMe:      conversation.RequestCreatedByMe,
+		RequestToMe:             conversation.RequestToMe,
+		ConversationState:       conversation.ConversationState,
 		Participant:             toUserSummaryResponse(conversation.Participant),
 		LastMessage:             lastMessage,
 		UnreadCount:             conversation.UnreadCount,

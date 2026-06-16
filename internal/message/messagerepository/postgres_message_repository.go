@@ -253,6 +253,7 @@ func (repo *PostgresMessageRepository) MarkConversationRead(ctx context.Context,
 			updated_at = $3
 		WHERE conversation_id = $1::uuid
 			AND user_id = $2::uuid
+			AND deleted_at IS NULL
 	`
 	tag, err := repo.pool.Exec(ctx, query, conversationID, userID.String(), now)
 	if err != nil {
@@ -272,10 +273,62 @@ func (repo *PostgresMessageRepository) SetConversationArchived(ctx context.Conte
 			updated_at = $4
 		WHERE conversation_id = $1::uuid
 			AND user_id = $2::uuid
+			AND deleted_at IS NULL
 	`
 	tag, err := repo.pool.Exec(ctx, query, conversationID, userID.String(), archivedAt, now)
 	if err != nil {
 		return fmt.Errorf("set message conversation archive: %w", err)
+	}
+	return ensureRows(tag.RowsAffected(), "message conversation not found")
+}
+
+func (repo *PostgresMessageRepository) SetConversationPinned(ctx context.Context, conversationID string, userID userdomain.UserID, pinned bool, now time.Time) error {
+	const query = `
+		UPDATE message_conversation_participants
+		SET pinned = $3,
+			updated_at = $4
+		WHERE conversation_id = $1::uuid
+			AND user_id = $2::uuid
+			AND deleted_at IS NULL
+	`
+	tag, err := repo.pool.Exec(ctx, query, conversationID, userID.String(), pinned, now)
+	if err != nil {
+		return fmt.Errorf("set message conversation pin: %w", err)
+	}
+	return ensureRows(tag.RowsAffected(), "message conversation not found")
+}
+
+func (repo *PostgresMessageRepository) SetConversationMuted(ctx context.Context, conversationID string, userID userdomain.UserID, muted bool, now time.Time) error {
+	const query = `
+		UPDATE message_conversation_participants
+		SET muted = $3,
+			updated_at = $4
+		WHERE conversation_id = $1::uuid
+			AND user_id = $2::uuid
+			AND deleted_at IS NULL
+	`
+	tag, err := repo.pool.Exec(ctx, query, conversationID, userID.String(), muted, now)
+	if err != nil {
+		return fmt.Errorf("set message conversation mute: %w", err)
+	}
+	return ensureRows(tag.RowsAffected(), "message conversation not found")
+}
+
+func (repo *PostgresMessageRepository) HideConversationForUser(ctx context.Context, conversationID string, userID userdomain.UserID, now time.Time) error {
+	const query = `
+		UPDATE message_conversation_participants
+		SET deleted_at = $3,
+			archived_at = NULL,
+			pinned = false,
+			muted = false,
+			updated_at = $3
+		WHERE conversation_id = $1::uuid
+			AND user_id = $2::uuid
+			AND deleted_at IS NULL
+	`
+	tag, err := repo.pool.Exec(ctx, query, conversationID, userID.String(), now)
+	if err != nil {
+		return fmt.Errorf("hide message conversation for user: %w", err)
 	}
 	return ensureRows(tag.RowsAffected(), "message conversation not found")
 }

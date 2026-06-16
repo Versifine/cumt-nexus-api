@@ -58,6 +58,9 @@ type Repository interface {
 	ListMessages(ctx context.Context, conversationID string, userID userdomain.UserID, beforeMessageID string, limit int) ([]MessageRecord, error)
 	MarkConversationRead(ctx context.Context, conversationID string, userID userdomain.UserID, now time.Time) error
 	SetConversationArchived(ctx context.Context, conversationID string, userID userdomain.UserID, archived bool, now time.Time) error
+	SetConversationPinned(ctx context.Context, conversationID string, userID userdomain.UserID, pinned bool, now time.Time) error
+	SetConversationMuted(ctx context.Context, conversationID string, userID userdomain.UserID, muted bool, now time.Time) error
+	HideConversationForUser(ctx context.Context, conversationID string, userID userdomain.UserID, now time.Time) error
 	AcceptMessageRequest(ctx context.Context, requestID string, userID userdomain.UserID, now time.Time) (ConversationRecord, error)
 	RejectMessageRequest(ctx context.Context, requestID string, userID userdomain.UserID, now time.Time) (ConversationRecord, error)
 	GetMessage(ctx context.Context, messageID string, userID userdomain.UserID) (MessageRecord, error)
@@ -124,6 +127,7 @@ type ListMessagesInput struct {
 type ConversationActionInput struct {
 	ViewerID       userdomain.UserID
 	ConversationID string
+	Reason         string
 }
 
 type RequestActionInput struct {
@@ -217,6 +221,12 @@ type Conversation struct {
 	Box                     string
 	RequestID               *string
 	RequestStatus           string
+	RequestDirection        string
+	ViewerCanAcceptRequest  bool
+	ViewerCanRejectRequest  bool
+	RequestCreatedByMe      bool
+	RequestToMe             bool
+	ConversationState       string
 	Participant             UserSummary
 	LastMessage             *MessageSummary
 	UnreadCount             int
@@ -618,6 +628,41 @@ func (uc *UseCase) SetConversationArchived(ctx context.Context, input Conversati
 	return ConversationResult{Conversation: uc.toConversation(conversation, input.ViewerID)}, nil
 }
 
+func (uc *UseCase) SetConversationPinned(ctx context.Context, input ConversationActionInput, pinned bool) (ConversationResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ConversationResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if err := uc.repo.SetConversationPinned(ctx, input.ConversationID, input.ViewerID, pinned, uc.now().UTC()); err != nil {
+		return ConversationResult{}, err
+	}
+	conversation, err := uc.repo.GetConversation(ctx, input.ConversationID, input.ViewerID)
+	if err != nil {
+		return ConversationResult{}, err
+	}
+	return ConversationResult{Conversation: uc.toConversation(conversation, input.ViewerID)}, nil
+}
+
+func (uc *UseCase) SetConversationMuted(ctx context.Context, input ConversationActionInput, muted bool) (ConversationResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ConversationResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	if err := uc.repo.SetConversationMuted(ctx, input.ConversationID, input.ViewerID, muted, uc.now().UTC()); err != nil {
+		return ConversationResult{}, err
+	}
+	conversation, err := uc.repo.GetConversation(ctx, input.ConversationID, input.ViewerID)
+	if err != nil {
+		return ConversationResult{}, err
+	}
+	return ConversationResult{Conversation: uc.toConversation(conversation, input.ViewerID)}, nil
+}
+
+func (uc *UseCase) DeleteConversation(ctx context.Context, input ConversationActionInput) error {
+	if isBlankUserID(input.ViewerID) {
+		return apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	return uc.repo.HideConversationForUser(ctx, input.ConversationID, input.ViewerID, uc.now().UTC())
+}
+
 func (uc *UseCase) AcceptRequest(ctx context.Context, input RequestActionInput) (ConversationResult, error) {
 	if isBlankUserID(input.ViewerID) {
 		return ConversationResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
@@ -695,6 +740,47 @@ func (uc *UseCase) ReportMessage(ctx context.Context, input MessageActionInput) 
 	})
 	if err != nil {
 		return ReportResult{}, fmt.Errorf("create message report: %w", err)
+	}
+	return ReportResult{Report: toReport(report)}, nil
+}
+
+func (uc *UseCase) ReportConversation(ctx context.Context, input ConversationActionInput) (ReportResult, error) {
+	if isBlankUserID(input.ViewerID) {
+		return ReportResult{}, apperr.New(apperr.CodeUnauthenticated, "authentication required")
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		return ReportResult{}, apperr.New(apperr.CodeInvalidArgument, "report reason is required")
+	}
+	conversation, err := uc.repo.GetConversation(ctx, input.ConversationID, input.ViewerID)
+	if err != nil {
+		return ReportResult{}, err
+	}
+	messages, err := uc.repo.ListMessages(ctx, input.ConversationID, input.ViewerID, "", MaxMessagesLimit)
+	if err != nil {
+		return ReportResult{}, err
+	}
+	var target *MessageRecord
+	for i := range messages {
+		if messages[i].Sender.ID() != input.ViewerID {
+			target = &messages[i]
+			break
+		}
+	}
+	if target == nil {
+		return ReportResult{}, apperr.New(apperr.CodeNotFound, "reportable message not found")
+	}
+	report, err := uc.repo.CreateMessageReport(ctx, CreateReportRecord{
+		ID:             uuid.NewString(),
+		ReporterID:     input.ViewerID,
+		ConversationID: conversation.ID,
+		MessageID:      target.ID,
+		ReportedUserID: target.Sender.ID(),
+		Reason:         reason,
+		Now:            uc.now().UTC(),
+	})
+	if err != nil {
+		return ReportResult{}, fmt.Errorf("create conversation report: %w", err)
 	}
 	return ReportResult{Report: toReport(report)}, nil
 }
@@ -909,11 +995,41 @@ func (uc *UseCase) toConversation(record ConversationRecord, viewerID userdomain
 		value := *record.RequestID
 		requestID = &value
 	}
+	requestDirection := "none"
+	requestCreatedByMe := false
+	requestToMe := false
+	viewerCanAcceptRequest := false
+	viewerCanRejectRequest := false
+	conversationState := "normal"
+	if record.RequestID != nil && record.RequestStatus == ConversationStatusPending {
+		if record.CreatedBy == viewerID {
+			requestDirection = "outgoing"
+			requestCreatedByMe = true
+			conversationState = "outgoing_request"
+		} else {
+			requestDirection = "incoming"
+			requestToMe = true
+			viewerCanAcceptRequest = true
+			viewerCanRejectRequest = true
+			conversationState = "incoming_request"
+		}
+	}
+	if record.Blocked {
+		conversationState = "blocked"
+	} else if record.Status != ConversationStatusAccepted && record.Status != ConversationStatusPending {
+		conversationState = "disabled"
+	}
 	conversation := Conversation{
 		ID:                      record.ID,
 		Box:                     conversationBox(record, viewerID),
 		RequestID:               requestID,
 		RequestStatus:           record.RequestStatus,
+		RequestDirection:        requestDirection,
+		ViewerCanAcceptRequest:  viewerCanAcceptRequest,
+		ViewerCanRejectRequest:  viewerCanRejectRequest,
+		RequestCreatedByMe:      requestCreatedByMe,
+		RequestToMe:             requestToMe,
+		ConversationState:       conversationState,
 		Participant:             toUserSummary(record.Peer),
 		UnreadCount:             record.UnreadCount,
 		UpdatedAt:               record.UpdatedAt,

@@ -188,7 +188,7 @@ Add-RoutesFromFile `
     -Path 'internal/message/delivery/messagehttp/handler.go' `
     -Prefix '/api/v1' `
     -Auth 'Bearer' `
-    -IncludeHandlers @('GetSummary', 'ListConversations', 'StartConversation', 'ListMessages', 'SendMessage', 'MarkConversationRead', 'ArchiveConversation', 'UnarchiveConversation', 'AcceptRequest', 'RejectRequest', 'RecallMessage', 'DeleteMessage', 'ReportMessage', 'BlockUser', 'UnblockUser', 'GetPrivacy', 'UpdatePrivacy', 'CreateRealtimeTicket')
+    -IncludeHandlers @('GetSummary', 'ListConversations', 'StartConversation', 'ListMessages', 'SendMessage', 'MarkConversationRead', 'ArchiveConversation', 'UnarchiveConversation', 'PinConversation', 'UnpinConversation', 'MuteConversation', 'UnmuteConversation', 'DeleteConversation', 'ReportConversation', 'AcceptRequest', 'RejectRequest', 'RecallMessage', 'DeleteMessage', 'ReportMessage', 'BlockUser', 'UnblockUser', 'GetPrivacy', 'UpdatePrivacy', 'CreateRealtimeTicket')
 
 Add-RoutesFromFile `
     -Routes $actualRoutes `

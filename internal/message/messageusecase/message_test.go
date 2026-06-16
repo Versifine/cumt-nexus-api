@@ -57,6 +57,13 @@ func TestStartConversationNonMutualCreatesSinglePendingRequest(t *testing.T) {
 	if result.Conversation.RequestID == nil || result.Conversation.RequestStatus != "pending" {
 		t.Fatalf("expected pending request conversation, got %#v", result.Conversation)
 	}
+	if result.Conversation.RequestDirection != "outgoing" || result.Conversation.ViewerCanAcceptRequest || result.Conversation.ConversationState != "outgoing_request" {
+		t.Fatalf("expected outgoing request state for sender, got %#v", result.Conversation)
+	}
+	incoming := uc.toConversation(repo.conversations[result.Conversation.ID], target.ID())
+	if incoming.RequestDirection != "incoming" || !incoming.ViewerCanAcceptRequest || !incoming.ViewerCanRejectRequest || incoming.ConversationState != "incoming_request" {
+		t.Fatalf("expected incoming request state for recipient, got %#v", incoming)
+	}
 
 	_, err = uc.StartConversation(context.Background(), StartConversationInput{
 		ViewerID:       viewer.ID(),
@@ -94,6 +101,46 @@ func TestSendMessageBlockedForbidden(t *testing.T) {
 	})
 	if !apperr.IsCode(err, apperr.CodeForbidden) {
 		t.Fatalf("expected forbidden after block, got %v", err)
+	}
+}
+
+func TestConversationManagementActionsAreViewerLocal(t *testing.T) {
+	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	users.follow(viewer.ID(), target.ID())
+	users.follow(target.ID(), viewer.ID())
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "hello"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+
+	pinned, err := uc.SetConversationPinned(context.Background(), ConversationActionInput{ViewerID: viewer.ID(), ConversationID: created.Conversation.ID}, true)
+	if err != nil {
+		t.Fatalf("SetConversationPinned returned error: %v", err)
+	}
+	if !pinned.Conversation.Pinned {
+		t.Fatalf("expected pinned conversation")
+	}
+	muted, err := uc.SetConversationMuted(context.Background(), ConversationActionInput{ViewerID: viewer.ID(), ConversationID: created.Conversation.ID}, true)
+	if err != nil {
+		t.Fatalf("SetConversationMuted returned error: %v", err)
+	}
+	if !muted.Conversation.Muted {
+		t.Fatalf("expected muted conversation")
+	}
+	if err := uc.DeleteConversation(context.Background(), ConversationActionInput{ViewerID: viewer.ID(), ConversationID: created.Conversation.ID}); err != nil {
+		t.Fatalf("DeleteConversation returned error: %v", err)
+	}
+	if !repo.deletedConversations[conversationKey(viewer.ID(), created.Conversation.ID)] {
+		t.Fatalf("expected local conversation delete marker")
 	}
 }
 
@@ -145,26 +192,63 @@ func TestReportMessageDelegatesLimitedReportCreation(t *testing.T) {
 	}
 }
 
+func TestReportConversationUsesPeerMessageAsLimitedContextAnchor(t *testing.T) {
+	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	users.follow(viewer.ID(), target.ID())
+	users.follow(target.ID(), viewer.ID())
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "hello"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+	peerMessage, err := uc.SendMessage(context.Background(), SendMessageInput{
+		ViewerID:       target.ID(),
+		ConversationID: created.Conversation.ID,
+		Message:        MessageDraft{Type: MessageTypeText, Body: "abuse"},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	report, err := uc.ReportConversation(context.Background(), ConversationActionInput{ViewerID: viewer.ID(), ConversationID: created.Conversation.ID, Reason: "abuse"})
+	if err != nil {
+		t.Fatalf("ReportConversation returned error: %v", err)
+	}
+	if report.Report.MessageID != peerMessage.Message.ID || report.Report.ReportedUserID != target.ID().String() {
+		t.Fatalf("unexpected conversation report: %#v", report.Report)
+	}
+}
+
 type fakeRepo struct {
-	privacy       map[userdomain.UserID]PrivacySettingsRecord
-	blocked       map[string]bool
-	conversations map[string]ConversationRecord
-	pairIndex     map[string]string
-	messages      map[string]MessageRecord
-	reports       map[string]ReportRecord
-	events        []RealtimeEventRecord
-	tickets       map[string]RealtimeTicketRecord
+	privacy              map[userdomain.UserID]PrivacySettingsRecord
+	blocked              map[string]bool
+	conversations        map[string]ConversationRecord
+	deletedConversations map[string]bool
+	pairIndex            map[string]string
+	messages             map[string]MessageRecord
+	reports              map[string]ReportRecord
+	events               []RealtimeEventRecord
+	tickets              map[string]RealtimeTicketRecord
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		privacy:       map[userdomain.UserID]PrivacySettingsRecord{},
-		blocked:       map[string]bool{},
-		conversations: map[string]ConversationRecord{},
-		pairIndex:     map[string]string{},
-		messages:      map[string]MessageRecord{},
-		reports:       map[string]ReportRecord{},
-		tickets:       map[string]RealtimeTicketRecord{},
+		privacy:              map[userdomain.UserID]PrivacySettingsRecord{},
+		blocked:              map[string]bool{},
+		conversations:        map[string]ConversationRecord{},
+		deletedConversations: map[string]bool{},
+		pairIndex:            map[string]string{},
+		messages:             map[string]MessageRecord{},
+		reports:              map[string]ReportRecord{},
+		tickets:              map[string]RealtimeTicketRecord{},
 	}
 }
 
@@ -289,6 +373,28 @@ func (f *fakeRepo) SetConversationArchived(ctx context.Context, conversationID s
 	conversation := f.conversations[conversationID]
 	conversation.Archived = archived
 	f.conversations[conversationID] = conversation
+	return nil
+}
+
+func (f *fakeRepo) SetConversationPinned(ctx context.Context, conversationID string, userID userdomain.UserID, pinned bool, now time.Time) error {
+	conversation := f.conversations[conversationID]
+	conversation.Pinned = pinned
+	f.conversations[conversationID] = conversation
+	return nil
+}
+
+func (f *fakeRepo) SetConversationMuted(ctx context.Context, conversationID string, userID userdomain.UserID, muted bool, now time.Time) error {
+	conversation := f.conversations[conversationID]
+	conversation.Muted = muted
+	f.conversations[conversationID] = conversation
+	return nil
+}
+
+func (f *fakeRepo) HideConversationForUser(ctx context.Context, conversationID string, userID userdomain.UserID, now time.Time) error {
+	if _, ok := f.conversations[conversationID]; !ok {
+		return apperr.New(apperr.CodeNotFound, "message conversation not found")
+	}
+	f.deletedConversations[conversationKey(userID, conversationID)] = true
 	return nil
 }
 
@@ -451,6 +557,10 @@ func fakeUserByID(id userdomain.UserID) userdomain.User {
 
 func key(a userdomain.UserID, b userdomain.UserID) string {
 	return a.String() + ":" + b.String()
+}
+
+func conversationKey(userID userdomain.UserID, conversationID string) string {
+	return userID.String() + ":" + conversationID
 }
 
 func pairKey(a userdomain.UserID, b userdomain.UserID) string {
