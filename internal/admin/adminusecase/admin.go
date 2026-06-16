@@ -38,10 +38,11 @@ const (
 )
 
 type UseCase struct {
-	repository       Repository
-	transactions     TransactionManager
-	passwordComparer PasswordComparer
-	now              func() time.Time
+	repository                 Repository
+	transactions               TransactionManager
+	passwordComparer           PasswordComparer
+	ownerTransferNotifications OwnerTransferNotificationPublisher
+	now                        func() time.Time
 }
 
 type Repository interface {
@@ -54,6 +55,7 @@ type Repository interface {
 	CountPlatformOwners(ctx context.Context) (int, error)
 	FindCurrentOwnerTransfer(ctx context.Context, now time.Time) (OwnerTransfer, error)
 	FindOwnerTransferByID(ctx context.Context, transferID string, now time.Time) (OwnerTransfer, error)
+	ListOwnerTransfersByTarget(ctx context.Context, targetUserID userdomain.UserID, status string, now time.Time, limit int, offset int) ([]OwnerTransfer, error)
 	CreateOwnerTransfer(ctx context.Context, input CreateOwnerTransferRecordInput) (OwnerTransfer, error)
 	CancelOwnerTransfer(ctx context.Context, transferID string, cancelledAt time.Time) (OwnerTransfer, error)
 	AcceptOwnerTransfer(ctx context.Context, transferID string, acceptedAt time.Time) (OwnerTransfer, error)
@@ -85,6 +87,10 @@ type TransactionManager interface {
 
 type PasswordComparer interface {
 	Compare(hash userdomain.PasswordHash, plain userdomain.PlainPassword) error
+}
+
+type OwnerTransferNotificationPublisher interface {
+	NotifyPlatformOwnerTransfer(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, transferID string) error
 }
 
 type UpdateUserRecordInput struct {
@@ -197,19 +203,21 @@ type UserSanction struct {
 }
 
 type OwnerTransfer struct {
-	ID                  string
-	Status              string
-	InitiatedByID       string
-	InitiatedByUsername string
-	TargetUserID        string
-	TargetUsername      string
-	PreviousOwnerRole   string
-	Reason              string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	ExpiresAt           time.Time
-	AcceptedAt          *time.Time
-	CancelledAt         *time.Time
+	ID                     string
+	Status                 string
+	InitiatedByID          string
+	InitiatedByUsername    string
+	InitiatedByDisplayName string
+	TargetUserID           string
+	TargetUsername         string
+	TargetDisplayName      string
+	PreviousOwnerRole      string
+	Reason                 string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	ExpiresAt              time.Time
+	AcceptedAt             *time.Time
+	CancelledAt            *time.Time
 }
 
 type CreateUserSanctionRecordInput struct {
@@ -337,7 +345,9 @@ type GetOwnerTransferInput struct {
 }
 
 type GetOwnerTransferResult struct {
-	Transfer OwnerTransfer
+	Transfer        OwnerTransfer
+	ViewerIsTarget  bool
+	ViewerCanAccept bool
 }
 
 type AcceptOwnerTransferInput struct {
@@ -348,6 +358,22 @@ type AcceptOwnerTransferInput struct {
 
 type AcceptOwnerTransferResult struct {
 	Transfer OwnerTransfer
+}
+
+type ListOwnerTransfersInput struct {
+	ActorID userdomain.UserID
+	Status  string
+	Limit   int
+	Offset  int
+}
+
+type ListOwnerTransfersResult struct {
+	Transfers  []OwnerTransfer
+	Status     string
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
 }
 
 type BootstrapOwnerInput struct {
@@ -555,6 +581,10 @@ func NewUseCase(repository Repository, now func() time.Time) *UseCase {
 
 func (uc *UseCase) SetPasswordComparer(comparer PasswordComparer) {
 	uc.passwordComparer = comparer
+}
+
+func (uc *UseCase) SetOwnerTransferNotificationPublisher(publisher OwnerTransferNotificationPublisher) {
+	uc.ownerTransferNotifications = publisher
 }
 
 func (uc *UseCase) ListUsers(ctx context.Context, input ListUsersInput) (ListUsersResult, error) {

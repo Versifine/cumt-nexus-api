@@ -369,6 +369,31 @@ func TestNotifyCommunityOwnerTransferCreatesSystemNotification(t *testing.T) {
 	}
 }
 
+func TestNotifyPlatformOwnerTransferCreatesSystemNotification(t *testing.T) {
+	recipientID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID()
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository, time.Now)
+	transferID := "7b53252d-65c8-4c68-916c-255701c24b28"
+
+	if err := uc.NotifyPlatformOwnerTransfer(context.Background(), recipientID, actorID, transferID); err != nil {
+		t.Fatalf("NotifyPlatformOwnerTransfer returned error: %v", err)
+	}
+	if !repository.createCalled {
+		t.Fatal("expected notification create")
+	}
+	notification := repository.createdNotification
+	if notification.Type != "system" || notification.SourceType != NotificationSourcePlatformOwnerTransfer {
+		t.Fatalf("unexpected notification type/source: %#v", notification)
+	}
+	if notification.SourceID != transferID || notification.LastActorID != actorID.String() {
+		t.Fatalf("unexpected notification source or actor: %#v", notification)
+	}
+	if notification.Title != "站点负责人交接请求" || notification.Body != "你收到了一条站点负责人交接请求" {
+		t.Fatalf("unexpected notification copy: %#v", notification)
+	}
+}
+
 func TestNotifyMentionedSkipsSelf(t *testing.T) {
 	actorID := userdomain.NewGeneratedUserID()
 	repository := &fakeRepository{}

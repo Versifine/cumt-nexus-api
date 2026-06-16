@@ -3,6 +3,7 @@ package adminusecase
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -430,6 +431,8 @@ func TestOwnerTransferCreateAndAccept(t *testing.T) {
 	}
 	uc := NewUseCase(repo, func() time.Time { return now })
 	uc.SetPasswordComparer(fakePasswordComparer{})
+	notifications := &fakeOwnerTransferNotificationPublisher{}
+	uc.SetOwnerTransferNotificationPublisher(notifications)
 
 	created, err := uc.CreateOwnerTransfer(context.Background(), CreateOwnerTransferInput{
 		ActorID:           ownerID,
@@ -464,8 +467,88 @@ func TestOwnerTransferCreateAndAccept(t *testing.T) {
 	if repo.users[ownerID.String()].PlatformRole != PlatformRoleAdmin {
 		t.Fatalf("expected previous owner to become admin, got %#v", repo.users[ownerID.String()])
 	}
-	if len(repo.auditLogs) != 2 {
-		t.Fatalf("expected create and accept audit logs, got %#v", repo.auditLogs)
+	if len(repo.auditLogs) != 3 {
+		t.Fatalf("expected create, notify and accept audit logs, got %#v", repo.auditLogs)
+	}
+	if repo.auditLogs[1].Action != "admin.owner_transfer.notify_target" ||
+		repo.auditLogs[1].After["notification_source_type"] != "platform_owner_transfer" ||
+		repo.auditLogs[1].After["notification_source_id"] != created.Transfer.ID {
+		t.Fatalf("unexpected notification audit log: %#v", repo.auditLogs[1])
+	}
+	if !notifications.called ||
+		notifications.recipientID != targetID ||
+		notifications.actorID != ownerID ||
+		notifications.transferID != created.Transfer.ID {
+		t.Fatalf("expected platform owner transfer notification, got %#v", notifications)
+	}
+}
+
+func TestListOwnerTransfersReturnsTargetInbox(t *testing.T) {
+	now := time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC)
+	ownerID := userdomain.NewGeneratedUserID()
+	targetID := userdomain.NewGeneratedUserID()
+	otherTargetID := userdomain.NewGeneratedUserID()
+	pendingID := userdomain.NewGeneratedUserID().String()
+	acceptedID := userdomain.NewGeneratedUserID().String()
+	otherID := userdomain.NewGeneratedUserID().String()
+	repo := &fakeRepository{
+		users: map[string]User{
+			ownerID.String():       {ID: ownerID.String(), Username: "owner", Status: "active", IsPlatformStaff: true, PlatformRole: PlatformRoleOwner},
+			targetID.String():      {ID: targetID.String(), Username: "alice", Status: "active"},
+			otherTargetID.String(): {ID: otherTargetID.String(), Username: "bob", Status: "active"},
+		},
+		ownerTransfers: map[string]OwnerTransfer{
+			pendingID: {
+				ID:                  pendingID,
+				Status:              OwnerTransferStatusPending,
+				InitiatedByID:       ownerID.String(),
+				InitiatedByUsername: "owner",
+				TargetUserID:        targetID.String(),
+				TargetUsername:      "alice",
+				CreatedAt:           now.Add(-time.Hour),
+				UpdatedAt:           now.Add(-time.Hour),
+				ExpiresAt:           now.Add(time.Hour),
+			},
+			acceptedID: {
+				ID:                  acceptedID,
+				Status:              OwnerTransferStatusAccepted,
+				InitiatedByID:       ownerID.String(),
+				InitiatedByUsername: "owner",
+				TargetUserID:        targetID.String(),
+				TargetUsername:      "alice",
+				CreatedAt:           now.Add(-2 * time.Hour),
+				UpdatedAt:           now.Add(-time.Hour),
+				ExpiresAt:           now.Add(time.Hour),
+			},
+			otherID: {
+				ID:                  otherID,
+				Status:              OwnerTransferStatusPending,
+				InitiatedByID:       ownerID.String(),
+				InitiatedByUsername: "owner",
+				TargetUserID:        otherTargetID.String(),
+				TargetUsername:      "bob",
+				CreatedAt:           now.Add(-30 * time.Minute),
+				UpdatedAt:           now.Add(-30 * time.Minute),
+				ExpiresAt:           now.Add(time.Hour),
+			},
+		},
+	}
+	uc := NewUseCase(repo, func() time.Time { return now })
+
+	result, err := uc.ListOwnerTransfers(context.Background(), ListOwnerTransfersInput{
+		ActorID: targetID,
+		Status:  "pending",
+		Limit:   20,
+		Offset:  0,
+	})
+	if err != nil {
+		t.Fatalf("ListOwnerTransfers returned error: %v", err)
+	}
+	if result.Status != OwnerTransferStatusPending || len(result.Transfers) != 1 || result.Transfers[0].ID != pendingID {
+		t.Fatalf("unexpected owner transfers: %#v", result)
+	}
+	if result.Transfers[0].TargetUserID != targetID.String() {
+		t.Fatalf("expected only target inbox transfers, got %#v", result.Transfers[0])
 	}
 }
 
@@ -1028,6 +1111,31 @@ func (f *fakeRepository) FindOwnerTransferByID(ctx context.Context, transferID s
 	return transfer, nil
 }
 
+func (f *fakeRepository) ListOwnerTransfersByTarget(ctx context.Context, targetUserID userdomain.UserID, status string, now time.Time, limit int, offset int) ([]OwnerTransfer, error) {
+	transfers := make([]OwnerTransfer, 0, len(f.ownerTransfers))
+	for id, transfer := range f.ownerTransfers {
+		if transfer.Status == OwnerTransferStatusPending && !transfer.ExpiresAt.After(now) {
+			transfer.Status = OwnerTransferStatusExpired
+			transfer.UpdatedAt = now
+			f.ownerTransfers[id] = transfer
+		}
+		if transfer.TargetUserID != targetUserID.String() {
+			continue
+		}
+		if status != "all" && transfer.Status != status {
+			continue
+		}
+		transfers = append(transfers, transfer)
+	}
+	sort.SliceStable(transfers, func(i, j int) bool {
+		if !transfers[i].CreatedAt.Equal(transfers[j].CreatedAt) {
+			return transfers[i].CreatedAt.After(transfers[j].CreatedAt)
+		}
+		return transfers[i].ID > transfers[j].ID
+	})
+	return paginateFake(transfers, limit, offset), nil
+}
+
 func (f *fakeRepository) CreateOwnerTransfer(ctx context.Context, input CreateOwnerTransferRecordInput) (OwnerTransfer, error) {
 	if f.ownerTransfers == nil {
 		f.ownerTransfers = make(map[string]OwnerTransfer)
@@ -1040,17 +1148,19 @@ func (f *fakeRepository) CreateOwnerTransfer(ctx context.Context, input CreateOw
 	initiator := f.users[input.InitiatedByID.String()]
 	target := f.users[input.TargetUserID.String()]
 	transfer := OwnerTransfer{
-		ID:                  input.ID,
-		Status:              OwnerTransferStatusPending,
-		InitiatedByID:       input.InitiatedByID.String(),
-		InitiatedByUsername: initiator.Username,
-		TargetUserID:        input.TargetUserID.String(),
-		TargetUsername:      target.Username,
-		PreviousOwnerRole:   input.PreviousOwnerRole,
-		Reason:              input.Reason,
-		CreatedAt:           input.CreatedAt,
-		UpdatedAt:           input.CreatedAt,
-		ExpiresAt:           input.ExpiresAt,
+		ID:                     input.ID,
+		Status:                 OwnerTransferStatusPending,
+		InitiatedByID:          input.InitiatedByID.String(),
+		InitiatedByUsername:    initiator.Username,
+		InitiatedByDisplayName: initiator.Username,
+		TargetUserID:           input.TargetUserID.String(),
+		TargetUsername:         target.Username,
+		TargetDisplayName:      target.Username,
+		PreviousOwnerRole:      input.PreviousOwnerRole,
+		Reason:                 input.Reason,
+		CreatedAt:              input.CreatedAt,
+		UpdatedAt:              input.CreatedAt,
+		ExpiresAt:              input.ExpiresAt,
 	}
 	f.ownerTransfers[input.ID] = transfer
 	return transfer, nil
@@ -1422,5 +1532,20 @@ func (fakePasswordComparer) Compare(hash userdomain.PasswordHash, plain userdoma
 	if hash.Raw() != plain.String() {
 		return errors.New("password mismatch")
 	}
+	return nil
+}
+
+type fakeOwnerTransferNotificationPublisher struct {
+	called      bool
+	recipientID userdomain.UserID
+	actorID     userdomain.UserID
+	transferID  string
+}
+
+func (f *fakeOwnerTransferNotificationPublisher) NotifyPlatformOwnerTransfer(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, transferID string) error {
+	f.called = true
+	f.recipientID = recipientID
+	f.actorID = actorID
+	f.transferID = transferID
 	return nil
 }

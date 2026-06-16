@@ -44,6 +44,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/me/saved-posts | query | `posthttp.listCommunityPostsResponse` | 200 |
 | GET | /api/v1/me/followed-communities | query | `communityhttp.listFollowedCommunitiesResponse` | 200 |
 | GET | /api/v1/me/community-owner-transfers | query | `communityhttp.listCommunityOwnerTransfersResponse` | 200 |
+| GET | /api/v1/me/owner-transfers | query | `adminhttp.listOwnerTransfersResponse` | 200 |
 | GET | /api/v1/me/followed-users | query | `userhttp.listFollowedUsersResponse` | 200 |
 | GET | /api/v1/me/points | none | `effecthttp.getMyPointsResponse` | 200 |
 | GET | /api/v1/me/point-transactions | query | `effecthttp.listMyPointTransactionsResponse` | 200 |
@@ -309,7 +310,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `adminhttp` | `createOwnerTransferRequest` | `target_user_id`, `previous_owner_role`, `reason`, `current_password` |
 | `adminhttp` | `acceptOwnerTransferRequest` | `current_password` |
 | `adminhttp` | `ownerTransferResponse` | `transfer` |
-| `adminhttp` | `adminOwnerTransferResponse` | `id`, `status`, `initiated_by_id`, `initiated_by_username`, `target_user_id`, `target_username`, `previous_owner_role`, `reason`, `created_at`, `updated_at`, `expires_at`, `accepted_at`, `cancelled_at` |
+| `adminhttp` | `adminOwnerTransferResponse` | `id`, `status`, `initiated_by_id`, `initiated_by_username`, `initiated_by_display_name`, `target_user_id`, `target_username`, `target_display_name`, `previous_owner_role`, `reason`, `created_at`, `updated_at`, `expires_at`, `accepted_at`, `cancelled_at`, `viewer_is_target`, `viewer_can_accept` |
+| `adminhttp` | `listOwnerTransfersResponse` | `transfers`, `status`, `limit`, `offset`, `next_offset`, `has_more` |
 | `adminhttp` | `adminCommunityResponse` | `id`, `slug`, `name`, `description`, `kind`, `status`, `visibility`, `created_by`, `created_at`, `updated_at` |
 | `adminhttp` | `listAdminCommunitiesResponse` | `communities`, `status`, `q`, `limit`, `offset`, `next_offset`, `has_more` |
 | `adminhttp` | `updateAdminCommunityStatusRequest` | `status` |

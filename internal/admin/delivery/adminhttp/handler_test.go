@@ -232,6 +232,61 @@ func TestCreateOwnerTransferParsesBody(t *testing.T) {
 	}
 }
 
+func TestListOwnerTransfersParsesQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC)
+	actorID := userdomain.NewGeneratedUserID()
+	admin := &fakeAdminUseCase{
+		listOwnerTransfersResult: adminusecase.ListOwnerTransfersResult{
+			Transfers: []adminusecase.OwnerTransfer{
+				{
+					ID:                  "8f92e975-5323-4a58-bac1-1336b668183c",
+					Status:              adminusecase.OwnerTransferStatusPending,
+					InitiatedByID:       userdomain.NewGeneratedUserID().String(),
+					InitiatedByUsername: "owner",
+					TargetUserID:        actorID.String(),
+					TargetUsername:      "alice",
+					CreatedAt:           now,
+					UpdatedAt:           now,
+					ExpiresAt:           now.Add(48 * time.Hour),
+				},
+			},
+			Status:     adminusecase.OwnerTransferStatusPending,
+			Limit:      10,
+			Offset:     5,
+			NextOffset: 6,
+		},
+	}
+	router := newAdminTestRouter(admin, actorID)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/me/owner-transfers?status=pending&limit=10&offset=5", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !admin.listOwnerTransfersCalled {
+		t.Fatal("expected ListOwnerTransfers to be called")
+	}
+	if admin.listOwnerTransfersInput.ActorID != actorID ||
+		admin.listOwnerTransfersInput.Status != "pending" ||
+		admin.listOwnerTransfersInput.Limit != 10 ||
+		admin.listOwnerTransfersInput.Offset != 5 {
+		t.Fatalf("unexpected list owner transfers input: %#v", admin.listOwnerTransfersInput)
+	}
+
+	var response listOwnerTransfersResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(response.Transfers) != 1 || !response.Transfers[0].ViewerIsTarget || !response.Transfers[0].ViewerCanAccept {
+		t.Fatalf("unexpected owner transfer list response: %#v", response)
+	}
+}
+
 func newAdminTestRouter(admin UseCase, userID userdomain.UserID) *gin.Engine {
 	router := gin.New()
 	router.Use(httpserver.ErrorMiddleware())
@@ -260,6 +315,10 @@ type fakeAdminUseCase struct {
 	createOwnerTransferInput     adminusecase.CreateOwnerTransferInput
 	createOwnerTransferResult    adminusecase.CreateOwnerTransferResult
 	createOwnerTransferErr       error
+	listOwnerTransfersCalled     bool
+	listOwnerTransfersInput      adminusecase.ListOwnerTransfersInput
+	listOwnerTransfersResult     adminusecase.ListOwnerTransfersResult
+	listOwnerTransfersErr        error
 }
 
 func (f *fakeAdminUseCase) ListUsers(ctx context.Context, input adminusecase.ListUsersInput) (adminusecase.ListUsersResult, error) {
@@ -298,6 +357,12 @@ func (f *fakeAdminUseCase) GetOwnerTransfer(ctx context.Context, input adminusec
 
 func (f *fakeAdminUseCase) AcceptOwnerTransfer(ctx context.Context, input adminusecase.AcceptOwnerTransferInput) (adminusecase.AcceptOwnerTransferResult, error) {
 	return adminusecase.AcceptOwnerTransferResult{}, nil
+}
+
+func (f *fakeAdminUseCase) ListOwnerTransfers(ctx context.Context, input adminusecase.ListOwnerTransfersInput) (adminusecase.ListOwnerTransfersResult, error) {
+	f.listOwnerTransfersCalled = true
+	f.listOwnerTransfersInput = input
+	return f.listOwnerTransfersResult, f.listOwnerTransfersErr
 }
 
 func (f *fakeAdminUseCase) ListCommunities(ctx context.Context, input adminusecase.ListCommunitiesInput) (adminusecase.ListCommunitiesResult, error) {

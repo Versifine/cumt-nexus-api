@@ -47,6 +47,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/me/saved-posts | Bearer | 当前用户保存的公开帖子 |
 | GET | /api/v1/me/followed-communities | Bearer | 当前用户关注的公开社区 |
 | GET | /api/v1/me/community-owner-transfers | Bearer | 当前用户作为目标账号的社区负责人交接收件箱 |
+| GET | /api/v1/me/owner-transfers | Bearer | 当前用户作为目标账号的站点负责人交接收件箱 |
 | GET | /api/v1/me/followed-users | Bearer | 当前用户关注的 active 用户 |
 | GET | /api/v1/me/points | Bearer | 当前用户积分账户 |
 | GET | /api/v1/me/point-transactions | Bearer | 当前用户积分流水 |
@@ -101,7 +102,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/admin/users/:id/titles | Bearer | 平台 staff 查看用户头衔授予 |
 | POST | /api/v1/admin/users/:id/titles | Bearer | 平台 staff 授予用户头衔 |
 | DELETE | /api/v1/admin/users/:id/titles/:grant_id | Bearer | 平台 staff 撤销用户头衔 |
-| GET | /api/v1/owner-transfer/:transfer_id | Bearer | 目标用户或当前平台 owner 查看站点负责人交接 |
+| GET | /api/v1/owner-transfer/:transfer_id | Bearer | 已登录 active 用户查看站点负责人交接接受页上下文 |
 | POST | /api/v1/owner-transfer/:transfer_id/accept | Bearer | 目标用户接受站点负责人交接 |
 | GET | /api/v1/communities/:slug/posts | optional Bearer | 社区帖子列表 |
 | GET | /api/v1/posts | optional Bearer | 全站帖子流 |
@@ -212,6 +213,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/me/saved-posts` | `limit`, `offset` | 当前用户保存的公开 visible 帖子 |
 | `GET /api/v1/me/followed-communities` | `limit`, `offset` | 当前用户关注的 active public 社区 |
 | `GET /api/v1/me/community-owner-transfers` | `status`, `limit`, `offset` | 当前用户作为目标账号的社区负责人交接；`status=pending|accepted|cancelled|expired|all`，默认 `pending` |
+| `GET /api/v1/me/owner-transfers` | `status`, `limit`, `offset` | 当前用户作为目标账号的站点负责人交接；`status=pending|accepted|cancelled|expired|all`，默认 `pending` |
 | `GET /api/v1/me/followed-users` | `limit`, `offset` | 当前用户关注的 active 用户，按关注时间倒序返回 |
 | `GET /api/v1/me/point-transactions` | `limit`, `offset` | 当前用户积分流水，按 `created_at DESC, id DESC` 返回 |
 | `GET /api/v1/me/xp-events` | `limit`, `offset` | 当前用户经验事件流水，按 `created_at DESC, id DESC` 返回 |
@@ -258,7 +260,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 平台管理接口均需要 Bearer，且 usecase 会从数据库确认当前用户是 active 平台 staff。`/api/v1/admin/*` 写操作会写入 `admin_audit_logs`，记录 actor、action、target、before 和 after；离线 owner bootstrap/recovery 使用固定 `actor_ref` 写入系统审计。平台运行开关目前包括 `registration_enabled`、`posting_enabled` 和 `upload_enabled`：关闭后分别阻止注册、发帖/发评论和图片上传；缺失设置行时运行时读取默认按 enabled 处理，避免 migration 未就绪时误关站。`PATCH /api/v1/admin/users/:id` 只能由 owner/admin 按角色边界更新用户状态或 legacy staff 标记：owner 不能通过该接口禁用、恢复或删除 active owner；admin 只能处理无平台角色的普通账号；staff 不能写。`PATCH /api/v1/admin/users/:id/platform-role` 只能由 owner 更新非 owner 用户为 `admin|staff|null`，请求 `role=owner` 或目标当前是 owner 都返回 `forbidden`，owner 创建、交接和恢复必须走 owner-transfer/bootstrap/recovery。管理员手工调分使用 `POST /api/v1/admin/users/:id/points/adjust`，请求体为 `delta` 和 `reason`；`delta` 不能为 0，扣减后余额不能小于 0，成功后写入 `point_transactions`，`source_type=admin_adjustment`，并同步写入平台管理审计日志。用户账号处罚使用 `POST /api/v1/admin/users/:id/sanctions` 创建，当前支持 `type=account_ban` 和固定 `duration=1d|3d|7d|30d|permanent`；非永久处罚的 `expires_at` 由后端计算，永久处罚 `expires_at=null`。active 且未过期的账号封禁会阻止登录和受保护接口；过期封禁按读取时语义返回 `expired`，提前解除使用 `POST /api/v1/admin/user-sanctions/:sanction_id/revoke` 写入 `revoked_by` 和 `revoked_at`，不删除历史记录。创建和解除处罚都写平台管理审计日志；owner 可处罚 owner 以外的用户，admin 只能处罚无平台角色用户，staff 只能查看处罚记录。平台 staff 可通过 `/api/v1/admin/titles` 管理头衔目录，并通过 `/api/v1/admin/users/:id/titles` 给用户授予或撤销头衔；头衔名称最多 20 字符，不能包含官方、管理员、认证、平台、系统、版主、owner、admin、official、verified 等保留词。
 
-站点负责人交接使用 `GET/POST/DELETE /api/v1/admin/owner-transfer` 和 `GET/POST /api/v1/owner-transfer/:transfer_id[/accept]`。只有当前 active owner 能发起交接，发起请求包含 `target_user_id`、可选 `previous_owner_role=admin|null`、`reason` 和 `current_password`；目标用户必须 active 且不能是当前 owner，过期时间由后端固定生成为 48 小时。同一时间最多一个 pending transfer。目标用户接受时提交自己的 `current_password`，后端事务内锁定 transfer 和相关用户，把目标账号设为唯一 active `platform_role=owner`，把原 owner 改为发起时记录的 `previous_owner_role`，并刷新原 owner 的 `tokens_revoked_after`。首个 owner 和被盗号恢复只允许部署侧命令：`go run ./cmd/admin bootstrap-owner --user-id <uuid> --reason <text> --confirm` 和 `go run ./cmd/admin recover-owner --new-owner-user-id <uuid> --compromised-user-id <uuid> --reason <text> --revoke-sessions --disable-compromised --confirm`，不提供网页接管路由。
+站点负责人交接使用 `GET/POST/DELETE /api/v1/admin/owner-transfer`、`GET /api/v1/me/owner-transfers` 和 `GET/POST /api/v1/owner-transfer/:transfer_id[/accept]`。只有当前 active owner 能发起交接，发起请求包含 `target_user_id`、可选 `previous_owner_role=admin|null`、`reason` 和 `current_password`；目标用户必须 active 且不能是当前 owner，过期时间由后端固定生成为 48 小时。同一时间最多一个 pending transfer。创建 pending transfer 后会给目标账号创建 system 通知，`source_type=platform_owner_transfer`，`source_id=<transfer_id>`，标题和正文均明确为“站点负责人交接请求”；创建、通知、接受、取消和过期都会写入 `admin_audit_logs`，通知审计动作为 `admin.owner_transfer.notify_target`，过期审计动作为 `admin.owner_transfer.expire`。`GET /api/v1/me/owner-transfers` 只返回当前登录用户作为 `target_user_id` 的交接，支持 `status=pending|accepted|cancelled|expired|all` 和 `limit/offset/next_offset/has_more`。`GET /api/v1/owner-transfer/:transfer_id` 允许已登录 active 用户读取接受页上下文，并返回 `viewer_is_target` 和 `viewer_can_accept`；非目标账号可据此展示“不是发给当前账号”，但不能接受。目标用户接受时提交自己的 `current_password`，后端事务内锁定 transfer 和相关用户，把目标账号设为唯一 active `platform_role=owner`，把原 owner 改为发起时记录的 `previous_owner_role`，并刷新原 owner 的 `tokens_revoked_after`。首个 owner 和被盗号恢复只允许部署侧命令：`go run ./cmd/admin bootstrap-owner --user-id <uuid> --reason <text> --confirm` 和 `go run ./cmd/admin recover-owner --new-owner-user-id <uuid> --compromised-user-id <uuid> --reason <text> --revoke-sessions --disable-compromised --confirm`，不提供网页接管路由。
 
 全站等级只按用户全站经验 `xp_total` 计算，不做社区等级；等级范围固定 `Lv.1-Lv.30`，后端按固定曲线返回 `level`、`level_name`、`current_level_xp`、`next_level_xp` 和 `level_progress`，前端不自行推导。经验不可消费，积分消费不影响等级。当前自动经验来源包括：每日首次登录 +5（每日最多 5）、发帖发布成功 +20（每日最多 100）、评论发布成功 +5（每日最多 80）、帖子被 upvote +3（每日最多 150）、评论被 upvote +2（每日最多 150）、帖子被收藏 +8（每日最多 120）。经验事件通过 `user_id + source_type + source_id` 去重；同一用户同一天重复登录不会重复获得登录经验；取消点赞、取消收藏、内容删除或审核移除不会撤销已产生的历史经验。
 

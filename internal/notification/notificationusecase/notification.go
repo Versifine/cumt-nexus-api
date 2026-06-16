@@ -27,6 +27,7 @@ const (
 	NotificationSourcePost                   = "post"
 	NotificationSourceComment                = "comment"
 	NotificationSourceCommunityOwnerTransfer = "community_owner_transfer"
+	NotificationSourcePlatformOwnerTransfer  = "platform_owner_transfer"
 )
 
 type StatusFilter string
@@ -240,6 +241,30 @@ func (uc *UseCase) NotifyCommunityOwnerTransfer(ctx context.Context, recipientID
 	)
 	if err := uc.repository.Create(ctx, notification); err != nil {
 		return fmt.Errorf("create community owner transfer notification: %w", err)
+	}
+	return nil
+}
+
+func (uc *UseCase) NotifyPlatformOwnerTransfer(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, transferID string) error {
+	if shouldSkipNotification(recipientID, actorID) {
+		return nil
+	}
+	sourceID := strings.TrimSpace(transferID)
+	if sourceID == "" {
+		return apperr.New(apperr.CodeInvalidArgument, "platform owner transfer notification source is required")
+	}
+	notification := uc.newNotification(
+		recipientID,
+		actorID,
+		"system",
+		"站点负责人交接请求",
+		"你收到了一条站点负责人交接请求",
+		NotificationSourcePlatformOwnerTransfer,
+		sourceID,
+		"",
+	)
+	if err := uc.repository.Create(ctx, notification); err != nil {
+		return fmt.Errorf("create platform owner transfer notification: %w", err)
 	}
 	return nil
 }

@@ -281,6 +281,53 @@ func (repo *PostgresAdminRepository) FindOwnerTransferByID(ctx context.Context, 
 	return transfer, nil
 }
 
+func (repo *PostgresAdminRepository) ListOwnerTransfersByTarget(ctx context.Context, targetUserID userdomain.UserID, status string, now time.Time, limit int, offset int) ([]adminusecase.OwnerTransfer, error) {
+	if err := repo.expireOwnerTransfers(ctx, now); err != nil {
+		return nil, err
+	}
+	query := ownerTransferSelectSQL() + `
+		WHERE platform_owner_transfers.target_user_id = $2::uuid
+	`
+	args := []any{now, targetUserID.String(), limit, offset}
+	switch status {
+	case adminusecase.OwnerTransferStatusPending:
+		query += ` AND platform_owner_transfers.status = 'pending' AND platform_owner_transfers.expires_at > $1`
+	case adminusecase.OwnerTransferStatusAccepted:
+		query += ` AND platform_owner_transfers.status = 'accepted' AND $1::timestamptz IS NOT NULL`
+	case adminusecase.OwnerTransferStatusCancelled:
+		query += ` AND platform_owner_transfers.status IN ('cancelled', 'canceled') AND $1::timestamptz IS NOT NULL`
+	case adminusecase.OwnerTransferStatusExpired:
+		query += ` AND (platform_owner_transfers.status = 'expired' OR (platform_owner_transfers.status = 'pending' AND platform_owner_transfers.expires_at <= $1))`
+	case "all":
+		query += ` AND $1::timestamptz IS NOT NULL`
+	default:
+		return nil, apperr.New(apperr.CodeInvalidArgument, "owner transfer status is invalid")
+	}
+	query += `
+		ORDER BY platform_owner_transfers.created_at DESC, platform_owner_transfers.id DESC
+		LIMIT $3
+		OFFSET $4
+	`
+	rows, err := repo.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list owner transfers by target: %w", err)
+	}
+	defer rows.Close()
+
+	transfers := make([]adminusecase.OwnerTransfer, 0)
+	for rows.Next() {
+		transfer, err := scanOwnerTransfer(rows)
+		if err != nil {
+			return nil, err
+		}
+		transfers = append(transfers, transfer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate owner transfers by target: %w", err)
+	}
+	return transfers, nil
+}
+
 func (repo *PostgresAdminRepository) CreateOwnerTransfer(ctx context.Context, input adminusecase.CreateOwnerTransferRecordInput) (adminusecase.OwnerTransfer, error) {
 	if err := repo.expireOwnerTransfers(ctx, input.CreatedAt); err != nil {
 		return adminusecase.OwnerTransfer{}, err
@@ -306,8 +353,10 @@ func (repo *PostgresAdminRepository) CreateOwnerTransfer(ctx context.Context, in
 			inserted.status,
 			inserted.initiated_by::text,
 			initiator.username,
+			COALESCE(NULLIF(initiator.display_name, ''), initiator.username),
 			inserted.target_user_id::text,
 			target.username,
+			COALESCE(NULLIF(target.display_name, ''), target.username),
 			COALESCE(inserted.previous_owner_role, ''),
 			inserted.reason,
 			inserted.created_at,
@@ -342,8 +391,10 @@ func (repo *PostgresAdminRepository) CancelOwnerTransfer(ctx context.Context, tr
 			updated.status,
 			updated.initiated_by::text,
 			initiator.username,
+			COALESCE(NULLIF(initiator.display_name, ''), initiator.username),
 			updated.target_user_id::text,
 			target.username,
+			COALESCE(NULLIF(target.display_name, ''), target.username),
 			COALESCE(updated.previous_owner_role, ''),
 			updated.reason,
 			updated.created_at,
@@ -435,8 +486,10 @@ func (repo *PostgresAdminRepository) AcceptOwnerTransfer(ctx context.Context, tr
 			updated.status,
 			updated.initiated_by::text,
 			initiator.username,
+			COALESCE(NULLIF(initiator.display_name, ''), initiator.username),
 			updated.target_user_id::text,
 			target.username,
+			COALESCE(NULLIF(target.display_name, ''), target.username),
 			COALESCE(updated.previous_owner_role, ''),
 			updated.reason,
 			updated.created_at,
@@ -1344,8 +1397,10 @@ func scanOwnerTransfer(row rowScanner) (adminusecase.OwnerTransfer, error) {
 		&transfer.Status,
 		&transfer.InitiatedByID,
 		&transfer.InitiatedByUsername,
+		&transfer.InitiatedByDisplayName,
 		&transfer.TargetUserID,
 		&transfer.TargetUsername,
+		&transfer.TargetDisplayName,
 		&transfer.PreviousOwnerRole,
 		&transfer.Reason,
 		&transfer.CreatedAt,
@@ -1542,8 +1597,10 @@ func ownerTransferSelectSQL() string {
 			END AS status,
 			platform_owner_transfers.initiated_by::text,
 			initiator.username,
+			COALESCE(NULLIF(initiator.display_name, ''), initiator.username),
 			platform_owner_transfers.target_user_id::text,
 			target.username,
+			COALESCE(NULLIF(target.display_name, ''), target.username),
 			COALESCE(platform_owner_transfers.previous_owner_role, ''),
 			platform_owner_transfers.reason,
 			platform_owner_transfers.created_at,
@@ -1558,16 +1615,144 @@ func ownerTransferSelectSQL() string {
 }
 
 func (repo *PostgresAdminRepository) expireOwnerTransfers(ctx context.Context, now time.Time) error {
-	if _, err := repo.db.Exec(ctx, `
-		UPDATE platform_owner_transfers
-		SET status = 'expired',
-			updated_at = $1
-		WHERE status = 'pending'
-			AND expires_at <= $1
-	`, now); err != nil {
+	rows, err := repo.db.Query(ctx, `
+		WITH candidates AS (
+			SELECT
+				platform_owner_transfers.id,
+				platform_owner_transfers.status AS previous_status,
+				platform_owner_transfers.initiated_by,
+				initiator.username AS initiated_by_username,
+				COALESCE(NULLIF(initiator.display_name, ''), initiator.username) AS initiated_by_display_name,
+				platform_owner_transfers.target_user_id,
+				target.username AS target_username,
+				COALESCE(NULLIF(target.display_name, ''), target.username) AS target_display_name,
+				COALESCE(platform_owner_transfers.previous_owner_role, '') AS previous_owner_role,
+				platform_owner_transfers.reason,
+				platform_owner_transfers.created_at,
+				platform_owner_transfers.updated_at AS previous_updated_at,
+				platform_owner_transfers.expires_at,
+				platform_owner_transfers.accepted_at,
+				platform_owner_transfers.cancelled_at
+			FROM platform_owner_transfers
+			INNER JOIN users AS initiator ON initiator.id = platform_owner_transfers.initiated_by
+			INNER JOIN users AS target ON target.id = platform_owner_transfers.target_user_id
+			WHERE platform_owner_transfers.status = 'pending'
+				AND platform_owner_transfers.expires_at <= $1
+		),
+		updated AS (
+			UPDATE platform_owner_transfers
+			SET status = 'expired',
+				updated_at = $1
+			FROM candidates
+			WHERE platform_owner_transfers.id = candidates.id
+				AND platform_owner_transfers.status = 'pending'
+			RETURNING
+				platform_owner_transfers.id::text,
+				candidates.previous_status,
+				candidates.initiated_by::text,
+				candidates.initiated_by_username,
+				candidates.initiated_by_display_name,
+				candidates.target_user_id::text,
+				candidates.target_username,
+				candidates.target_display_name,
+				candidates.previous_owner_role,
+				candidates.reason,
+				candidates.created_at,
+				candidates.previous_updated_at,
+				candidates.expires_at,
+				candidates.accepted_at,
+				candidates.cancelled_at,
+				platform_owner_transfers.status,
+				platform_owner_transfers.updated_at
+		)
+		SELECT *
+		FROM updated
+	`, now)
+	if err != nil {
 		return mapAdminWriteError("expire owner transfers", err)
 	}
+	defer rows.Close()
+
+	logs := make([]adminusecase.AuditLog, 0)
+	for rows.Next() {
+		var before adminusecase.OwnerTransfer
+		var afterStatus string
+		var afterUpdatedAt time.Time
+		var acceptedAt pgtype.Timestamptz
+		var cancelledAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&before.ID,
+			&before.Status,
+			&before.InitiatedByID,
+			&before.InitiatedByUsername,
+			&before.InitiatedByDisplayName,
+			&before.TargetUserID,
+			&before.TargetUsername,
+			&before.TargetDisplayName,
+			&before.PreviousOwnerRole,
+			&before.Reason,
+			&before.CreatedAt,
+			&before.UpdatedAt,
+			&before.ExpiresAt,
+			&acceptedAt,
+			&cancelledAt,
+			&afterStatus,
+			&afterUpdatedAt,
+		); err != nil {
+			return err
+		}
+		if acceptedAt.Valid {
+			value := acceptedAt.Time
+			before.AcceptedAt = &value
+		}
+		if cancelledAt.Valid {
+			value := cancelledAt.Time
+			before.CancelledAt = &value
+		}
+		after := before
+		after.Status = afterStatus
+		after.UpdatedAt = afterUpdatedAt
+		logs = append(logs, adminusecase.AuditLog{
+			ID:         uuid.NewString(),
+			ActorID:    "system:owner-transfer-expiry",
+			Action:     "admin.owner_transfer.expire",
+			TargetType: "owner_transfer",
+			TargetID:   after.ID,
+			Before:     ownerTransferRepositoryAuditState(before),
+			After:      ownerTransferRepositoryAuditState(after),
+			CreatedAt:  now,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate expired owner transfers: %w", err)
+	}
+	rows.Close()
+	for _, log := range logs {
+		if err := repo.CreateAuditLog(ctx, log); err != nil {
+			return fmt.Errorf("create owner transfer expire audit log: %w", err)
+		}
+	}
 	return nil
+}
+
+func ownerTransferRepositoryAuditState(transfer adminusecase.OwnerTransfer) map[string]any {
+	return map[string]any{
+		"id":                        transfer.ID,
+		"status":                    transfer.Status,
+		"initiated_by_id":           transfer.InitiatedByID,
+		"initiated_by_username":     transfer.InitiatedByUsername,
+		"initiated_by_display_name": transfer.InitiatedByDisplayName,
+		"target_user_id":            transfer.TargetUserID,
+		"target_username":           transfer.TargetUsername,
+		"target_display_name":       transfer.TargetDisplayName,
+		"previous_owner_role":       transfer.PreviousOwnerRole,
+		"reason":                    transfer.Reason,
+		"created_at":                transfer.CreatedAt,
+		"updated_at":                transfer.UpdatedAt,
+		"expires_at":                transfer.ExpiresAt,
+		"accepted_at":               transfer.AcceptedAt,
+		"cancelled_at":              transfer.CancelledAt,
+	}
 }
 
 func lockOwnerTransferUsers(ctx context.Context, db postgresExecutor, firstUserID string, secondUserID string) error {

@@ -27,6 +27,7 @@ type UseCase interface {
 	CancelOwnerTransfer(ctx context.Context, input adminusecase.CancelOwnerTransferInput) (adminusecase.CancelOwnerTransferResult, error)
 	GetOwnerTransfer(ctx context.Context, input adminusecase.GetOwnerTransferInput) (adminusecase.GetOwnerTransferResult, error)
 	AcceptOwnerTransfer(ctx context.Context, input adminusecase.AcceptOwnerTransferInput) (adminusecase.AcceptOwnerTransferResult, error)
+	ListOwnerTransfers(ctx context.Context, input adminusecase.ListOwnerTransfersInput) (adminusecase.ListOwnerTransfersResult, error)
 	ListCommunities(ctx context.Context, input adminusecase.ListCommunitiesInput) (adminusecase.ListCommunitiesResult, error)
 	UpdateCommunityStatus(ctx context.Context, input adminusecase.UpdateCommunityStatusInput) (adminusecase.UpdateCommunityStatusResult, error)
 	UpdateCommunityOwner(ctx context.Context, input adminusecase.UpdateCommunityOwnerInput) (adminusecase.UpdateCommunityOwnerResult, error)
@@ -95,19 +96,32 @@ type ownerTransferResponse struct {
 }
 
 type adminOwnerTransferResponse struct {
-	ID                  string     `json:"id"`
-	Status              string     `json:"status"`
-	InitiatedByID       string     `json:"initiated_by_id"`
-	InitiatedByUsername string     `json:"initiated_by_username"`
-	TargetUserID        string     `json:"target_user_id"`
-	TargetUsername      string     `json:"target_username"`
-	PreviousOwnerRole   string     `json:"previous_owner_role"`
-	Reason              string     `json:"reason"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-	ExpiresAt           time.Time  `json:"expires_at"`
-	AcceptedAt          *time.Time `json:"accepted_at"`
-	CancelledAt         *time.Time `json:"cancelled_at"`
+	ID                     string     `json:"id"`
+	Status                 string     `json:"status"`
+	InitiatedByID          string     `json:"initiated_by_id"`
+	InitiatedByUsername    string     `json:"initiated_by_username"`
+	InitiatedByDisplayName string     `json:"initiated_by_display_name"`
+	TargetUserID           string     `json:"target_user_id"`
+	TargetUsername         string     `json:"target_username"`
+	TargetDisplayName      string     `json:"target_display_name"`
+	PreviousOwnerRole      string     `json:"previous_owner_role"`
+	Reason                 string     `json:"reason"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+	ExpiresAt              time.Time  `json:"expires_at"`
+	AcceptedAt             *time.Time `json:"accepted_at"`
+	CancelledAt            *time.Time `json:"cancelled_at"`
+	ViewerIsTarget         bool       `json:"viewer_is_target"`
+	ViewerCanAccept        bool       `json:"viewer_can_accept"`
+}
+
+type listOwnerTransfersResponse struct {
+	Transfers  []adminOwnerTransferResponse `json:"transfers"`
+	Status     string                       `json:"status"`
+	Limit      int                          `json:"limit"`
+	Offset     int                          `json:"offset"`
+	NextOffset int                          `json:"next_offset"`
+	HasMore    bool                         `json:"has_more"`
 }
 
 type adminCommunityResponse struct {
@@ -314,6 +328,7 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/admin/owner-transfer", handler.GetCurrentOwnerTransfer)
 	group.POST("/admin/owner-transfer", handler.CreateOwnerTransfer)
 	group.DELETE("/admin/owner-transfer/:transfer_id", handler.CancelOwnerTransfer)
+	group.GET("/me/owner-transfers", handler.ListOwnerTransfers)
 	group.GET("/admin/communities", handler.ListCommunities)
 	group.PATCH("/admin/communities/:id", handler.UpdateCommunityStatus)
 	group.POST("/admin/communities/:id/owner", handler.UpdateCommunityOwner)
@@ -498,6 +513,8 @@ func (h *Handler) GetOwnerTransfer(c *gin.Context) {
 		return
 	}
 	response := toAdminOwnerTransferResponse(result.Transfer)
+	response.ViewerIsTarget = result.ViewerIsTarget
+	response.ViewerCanAccept = result.ViewerCanAccept
 	c.JSON(http.StatusOK, ownerTransferResponse{Transfer: &response})
 }
 
@@ -524,6 +541,48 @@ func (h *Handler) AcceptOwnerTransfer(c *gin.Context) {
 	}
 	response := toAdminOwnerTransferResponse(result.Transfer)
 	c.JSON(http.StatusOK, ownerTransferResponse{Transfer: &response})
+}
+
+func (h *Handler) ListOwnerTransfers(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	result, err := h.admin.ListOwnerTransfers(c.Request.Context(), adminusecase.ListOwnerTransfersInput{
+		ActorID: userID,
+		Status:  c.Query("status"),
+		Limit:   limit,
+		Offset:  offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	response := listOwnerTransfersResponse{
+		Transfers:  make([]adminOwnerTransferResponse, 0, len(result.Transfers)),
+		Status:     result.Status,
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
+	}
+	for _, transfer := range result.Transfers {
+		response.Transfers = append(response.Transfers, toAdminOwnerTransferResponseForViewer(transfer, userID))
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) ListCommunities(c *gin.Context) {
@@ -975,20 +1034,29 @@ func toAdminOwnerTransferResponsePtr(transfer *adminusecase.OwnerTransfer) *admi
 
 func toAdminOwnerTransferResponse(transfer adminusecase.OwnerTransfer) adminOwnerTransferResponse {
 	return adminOwnerTransferResponse{
-		ID:                  transfer.ID,
-		Status:              transfer.Status,
-		InitiatedByID:       transfer.InitiatedByID,
-		InitiatedByUsername: transfer.InitiatedByUsername,
-		TargetUserID:        transfer.TargetUserID,
-		TargetUsername:      transfer.TargetUsername,
-		PreviousOwnerRole:   transfer.PreviousOwnerRole,
-		Reason:              transfer.Reason,
-		CreatedAt:           transfer.CreatedAt,
-		UpdatedAt:           transfer.UpdatedAt,
-		ExpiresAt:           transfer.ExpiresAt,
-		AcceptedAt:          transfer.AcceptedAt,
-		CancelledAt:         transfer.CancelledAt,
+		ID:                     transfer.ID,
+		Status:                 transfer.Status,
+		InitiatedByID:          transfer.InitiatedByID,
+		InitiatedByUsername:    transfer.InitiatedByUsername,
+		InitiatedByDisplayName: transfer.InitiatedByDisplayName,
+		TargetUserID:           transfer.TargetUserID,
+		TargetUsername:         transfer.TargetUsername,
+		TargetDisplayName:      transfer.TargetDisplayName,
+		PreviousOwnerRole:      transfer.PreviousOwnerRole,
+		Reason:                 transfer.Reason,
+		CreatedAt:              transfer.CreatedAt,
+		UpdatedAt:              transfer.UpdatedAt,
+		ExpiresAt:              transfer.ExpiresAt,
+		AcceptedAt:             transfer.AcceptedAt,
+		CancelledAt:            transfer.CancelledAt,
 	}
+}
+
+func toAdminOwnerTransferResponseForViewer(transfer adminusecase.OwnerTransfer, viewerID userdomain.UserID) adminOwnerTransferResponse {
+	response := toAdminOwnerTransferResponse(transfer)
+	response.ViewerIsTarget = transfer.TargetUserID == viewerID.String()
+	response.ViewerCanAccept = response.ViewerIsTarget && transfer.Status == adminusecase.OwnerTransferStatusPending
+	return response
 }
 
 func toAdminCommunityResponse(community adminusecase.Community) adminCommunityResponse {

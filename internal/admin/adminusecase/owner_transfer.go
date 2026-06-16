@@ -101,6 +101,22 @@ func (uc *UseCase) CreateOwnerTransfer(ctx context.Context, input CreateOwnerTra
 	}); err != nil {
 		return CreateOwnerTransferResult{}, err
 	}
+	if uc.ownerTransferNotifications != nil {
+		if err := uc.ownerTransferNotifications.NotifyPlatformOwnerTransfer(ctx, targetID, input.ActorID, transfer.ID); err != nil {
+			return CreateOwnerTransferResult{}, fmt.Errorf("notify owner transfer target: %w", err)
+		}
+		notifiedAt := uc.now().UTC()
+		if err := uc.repository.CreateAuditLog(ctx, newAuditLog(input.ActorID, "admin.owner_transfer.notify_target", "owner_transfer", transfer.ID, ownerTransferAuditState(transfer), map[string]any{
+			"id":                       transfer.ID,
+			"target_user_id":           transfer.TargetUserID,
+			"notification_category":    "system",
+			"notification_source_type": "platform_owner_transfer",
+			"notification_source_id":   transfer.ID,
+			"notified_at":              notifiedAt,
+		}, notifiedAt)); err != nil {
+			return CreateOwnerTransferResult{}, fmt.Errorf("create owner transfer notification audit log: %w", err)
+		}
+	}
 	return CreateOwnerTransferResult{Transfer: transfer}, nil
 }
 
@@ -157,10 +173,36 @@ func (uc *UseCase) GetOwnerTransfer(ctx context.Context, input GetOwnerTransferI
 	if err != nil {
 		return GetOwnerTransferResult{}, fmt.Errorf("find owner transfer: %w", err)
 	}
-	if transfer.TargetUserID != input.ActorID.String() && effectivePlatformRole(actor) != PlatformRoleOwner {
-		return GetOwnerTransferResult{}, apperr.New(apperr.CodeForbidden, "owner transfer is not visible")
+	viewerIsTarget := transfer.TargetUserID == input.ActorID.String()
+	viewerCanAccept := viewerIsTarget && transfer.Status == OwnerTransferStatusPending && actor.Status == "active"
+	return GetOwnerTransferResult{Transfer: transfer, ViewerIsTarget: viewerIsTarget, ViewerCanAccept: viewerCanAccept}, nil
+}
+
+func (uc *UseCase) ListOwnerTransfers(ctx context.Context, input ListOwnerTransfersInput) (ListOwnerTransfersResult, error) {
+	if _, err := uc.findActiveOwnerTransferActor(ctx, uc.repository, input.ActorID); err != nil {
+		return ListOwnerTransfersResult{}, err
 	}
-	return GetOwnerTransferResult{Transfer: transfer}, nil
+	status, err := normalizeOwnerTransferListStatus(input.Status)
+	if err != nil {
+		return ListOwnerTransfersResult{}, err
+	}
+	limit, offset, err := normalizePagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListOwnerTransfersResult{}, err
+	}
+	transfers, err := uc.repository.ListOwnerTransfersByTarget(ctx, input.ActorID, status, uc.now().UTC(), limit+1, offset)
+	if err != nil {
+		return ListOwnerTransfersResult{}, fmt.Errorf("list owner transfers: %w", err)
+	}
+	transfers, hasMore := trimPage(transfers, limit)
+	return ListOwnerTransfersResult{
+		Transfers:  transfers,
+		Status:     status,
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: offset + len(transfers),
+		HasMore:    hasMore,
+	}, nil
 }
 
 func (uc *UseCase) AcceptOwnerTransfer(ctx context.Context, input AcceptOwnerTransferInput) (AcceptOwnerTransferResult, error) {
@@ -400,6 +442,22 @@ func normalizeOwnerTransferID(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
+func normalizeOwnerTransferListStatus(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return OwnerTransferStatusPending, nil
+	}
+	status := strings.ToLower(strings.TrimSpace(raw))
+	if status == "canceled" {
+		status = OwnerTransferStatusCancelled
+	}
+	switch status {
+	case OwnerTransferStatusPending, OwnerTransferStatusAccepted, OwnerTransferStatusCancelled, OwnerTransferStatusExpired, "all":
+		return status, nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "owner transfer status is invalid")
+	}
+}
+
 func newSystemAuditLog(actorRef string, action string, targetType string, targetID string, before map[string]any, after map[string]any, createdAt time.Time) AuditLog {
 	return AuditLog{
 		ID:         uuid.NewString(),
@@ -415,18 +473,20 @@ func newSystemAuditLog(actorRef string, action string, targetType string, target
 
 func ownerTransferAuditState(transfer OwnerTransfer) map[string]any {
 	return map[string]any{
-		"id":                    transfer.ID,
-		"status":                transfer.Status,
-		"initiated_by_id":       transfer.InitiatedByID,
-		"initiated_by_username": transfer.InitiatedByUsername,
-		"target_user_id":        transfer.TargetUserID,
-		"target_username":       transfer.TargetUsername,
-		"previous_owner_role":   transfer.PreviousOwnerRole,
-		"reason":                transfer.Reason,
-		"created_at":            transfer.CreatedAt,
-		"updated_at":            transfer.UpdatedAt,
-		"expires_at":            transfer.ExpiresAt,
-		"accepted_at":           transfer.AcceptedAt,
-		"cancelled_at":          transfer.CancelledAt,
+		"id":                        transfer.ID,
+		"status":                    transfer.Status,
+		"initiated_by_id":           transfer.InitiatedByID,
+		"initiated_by_username":     transfer.InitiatedByUsername,
+		"initiated_by_display_name": transfer.InitiatedByDisplayName,
+		"target_user_id":            transfer.TargetUserID,
+		"target_username":           transfer.TargetUsername,
+		"target_display_name":       transfer.TargetDisplayName,
+		"previous_owner_role":       transfer.PreviousOwnerRole,
+		"reason":                    transfer.Reason,
+		"created_at":                transfer.CreatedAt,
+		"updated_at":                transfer.UpdatedAt,
+		"expires_at":                transfer.ExpiresAt,
+		"accepted_at":               transfer.AcceptedAt,
+		"cancelled_at":              transfer.CancelledAt,
 	}
 }

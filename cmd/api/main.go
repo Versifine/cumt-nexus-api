@@ -210,6 +210,7 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	effectUC := effectusecase.NewUseCase(effectRepo, commentRepo, time.Now)
 	adminUC := adminusecase.NewUseCase(adminRepo, time.Now)
 	adminUC.SetPasswordComparer(passwordHasher)
+	adminUC.SetOwnerTransferNotificationPublisher(notificationUC)
 	if err := publicCommunityUC.EnsurePublicCommunity(ctx); err != nil {
 		return fmt.Errorf("ensure public community: %w", err)
 	}
