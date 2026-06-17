@@ -242,7 +242,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 |---|---|---|
 | `authhttp` | `registerRequest` | `username`, `password` |
 | `authhttp` | `registerResponse` | `access_token`, `token_type`, `expires_in`, `user` |
-| `authhttp` | `userResponse` | `id`, `username`, `status`, `email`, `email_verified`, `created_at` |
+| `authhttp` | `userResponse` | `id`, `username`, `status`, `email`, `email_verified`, `is_platform_staff`, `platform_role`, `created_at` |
 | `authhttp` | `loginRequest` | `identifier`, `username`, `password` |
 | `authhttp` | `loginResponse` | `access_token`, `token_type`, `expires_in`, `user` |
 | `authhttp` | `emailCodeRequest` | `email` |
@@ -258,7 +258,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `authhttp` | `passwordUpdatedResponse` | `updated` |
 | `authhttp` | `deleteAccountCodeRequest` | `email` |
 | `authhttp` | `deleteAccountRequest` | `code`, `current_password`, `confirmation` |
-| `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `created_at` |
+| `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `platform_role`, `created_at` |
 | `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `progression`, `dm_capability`, `viewer_is_following`, `created_at` |
 | `userhttp` | `publicUserDMCapabilityResponse` | `can_start`, `requires_request`, `reason`, `direct_conversation_id`, `viewer_relation` |
 | `userhttp` | `publicUserProgressionResponse` | `level`, `level_name`, `xp_total`, `current_level_xp`, `next_level_xp`, `level_progress`, `active_title`, `titles_count` |
@@ -303,7 +303,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `communityhttp` | `rejectCommunityApplicationResponse` | `application` |
 | `communityhttp` | `communityResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `kind`, `status`, `visibility`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions`, `created_at`, `updated_at` |
 | `communityhttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate`, `platform_owner_override` |
-| `adminhttp` | `adminUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `platform_role`, `created_at`, `updated_at` |
+| `adminhttp` | `adminUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `status`, `is_platform_staff`, `platform_role`, `created_at`, `updated_at` |
 | `adminhttp` | `listAdminUsersResponse` | `users`, `status`, `q`, `limit`, `offset`, `next_offset`, `has_more` |
 | `adminhttp` | `updateAdminUserRequest` | `status`, `is_platform_staff` |
 | `adminhttp` | `updateAdminUserResponse` | `user` |

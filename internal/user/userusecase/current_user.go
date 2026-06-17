@@ -20,7 +20,12 @@ type CurrentUserFinder interface {
 }
 
 type CurrentUserStaffFinder interface {
-	IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error)
+	FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (PlatformAccess, error)
+}
+
+type PlatformAccess struct {
+	IsPlatformStaff bool
+	PlatformRole    string
 }
 
 type CurrentUserInput struct {
@@ -36,6 +41,7 @@ type CurrentUser struct {
 	Username        string
 	Status          string
 	IsPlatformStaff bool
+	PlatformRole    string
 	CreatedAt       time.Time
 }
 
@@ -63,9 +69,9 @@ func (uc *CurrentUserUseCase) GetCurrentUser(ctx context.Context, input CurrentU
 		return CurrentUserResult{}, apperr.New(apperr.CodeForbidden, "user is forbidden")
 	}
 
-	isPlatformStaff, err := uc.staff.IsPlatformStaff(ctx, input.UserID)
+	access, err := uc.staff.FindPlatformAccess(ctx, input.UserID)
 	if err != nil {
-		return CurrentUserResult{}, fmt.Errorf("check current user platform staff: %w", err)
+		return CurrentUserResult{}, fmt.Errorf("find current user platform access: %w", err)
 	}
 
 	return CurrentUserResult{
@@ -73,7 +79,8 @@ func (uc *CurrentUserUseCase) GetCurrentUser(ctx context.Context, input CurrentU
 			ID:              user.ID().String(),
 			Username:        user.Username().String(),
 			Status:          user.Status().String(),
-			IsPlatformStaff: isPlatformStaff,
+			IsPlatformStaff: access.IsPlatformStaff,
+			PlatformRole:    access.PlatformRole,
 			CreatedAt:       user.CreatedAt(),
 		},
 	}, nil

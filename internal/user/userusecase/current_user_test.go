@@ -16,6 +16,7 @@ func TestGetCurrentUserSuccess(t *testing.T) {
 	repo := &fakeCurrentUserRepository{
 		user:            user,
 		isPlatformStaff: true,
+		platformRole:    "owner",
 	}
 	uc := NewCurrentUserUseCase(repo, repo)
 
@@ -44,6 +45,9 @@ func TestGetCurrentUserSuccess(t *testing.T) {
 	if !result.User.IsPlatformStaff {
 		t.Fatal("expected current user to be platform staff")
 	}
+	if result.User.PlatformRole != "owner" {
+		t.Fatalf("expected platform role %q, got %q", "owner", result.User.PlatformRole)
+	}
 	if !result.User.CreatedAt.Equal(now) {
 		t.Fatalf("expected created_at %s, got %s", now, result.User.CreatedAt)
 	}
@@ -60,8 +64,8 @@ func TestGetCurrentUserRejectsMissingUserID(t *testing.T) {
 	if repo.findByIDCalled {
 		t.Fatal("FindByID should not be called for missing user id")
 	}
-	if repo.isPlatformStaffCalled {
-		t.Fatal("IsPlatformStaff should not be called for missing user id")
+	if repo.findPlatformAccessCalled {
+		t.Fatal("FindPlatformAccess should not be called for missing user id")
 	}
 }
 
@@ -96,8 +100,8 @@ func TestGetCurrentUserDisabledReturnsForbidden(t *testing.T) {
 	if !hasAppCode(err, apperr.CodeForbidden) {
 		t.Fatalf("expected forbidden, got %v", err)
 	}
-	if repo.isPlatformStaffCalled {
-		t.Fatal("IsPlatformStaff should not be called for disabled user")
+	if repo.findPlatformAccessCalled {
+		t.Fatal("FindPlatformAccess should not be called for disabled user")
 	}
 }
 
@@ -134,20 +138,21 @@ func TestGetCurrentUserPropagatesPlatformStaffError(t *testing.T) {
 	if !errors.Is(err, staffErr) {
 		t.Fatalf("expected staff lookup error to be wrapped, got %v", err)
 	}
-	if !repo.isPlatformStaffCalled {
-		t.Fatal("expected IsPlatformStaff to be called")
+	if !repo.findPlatformAccessCalled {
+		t.Fatal("expected FindPlatformAccess to be called")
 	}
 }
 
 type fakeCurrentUserRepository struct {
-	findByIDCalled        bool
-	isPlatformStaffCalled bool
-	findByID              userdomain.UserID
-	staffUserID           userdomain.UserID
-	user                  *userdomain.User
-	isPlatformStaff       bool
-	err                   error
-	staffErr              error
+	findByIDCalled           bool
+	findPlatformAccessCalled bool
+	findByID                 userdomain.UserID
+	staffUserID              userdomain.UserID
+	user                     *userdomain.User
+	isPlatformStaff          bool
+	platformRole             string
+	err                      error
+	staffErr                 error
 }
 
 func (f *fakeCurrentUserRepository) FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error) {
@@ -156,13 +161,13 @@ func (f *fakeCurrentUserRepository) FindByID(ctx context.Context, id userdomain.
 	return f.user, f.err
 }
 
-func (f *fakeCurrentUserRepository) IsPlatformStaff(ctx context.Context, userID userdomain.UserID) (bool, error) {
-	f.isPlatformStaffCalled = true
+func (f *fakeCurrentUserRepository) FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (PlatformAccess, error) {
+	f.findPlatformAccessCalled = true
 	f.staffUserID = userID
 	if f.staffErr != nil {
-		return false, f.staffErr
+		return PlatformAccess{}, f.staffErr
 	}
-	return f.isPlatformStaff, nil
+	return PlatformAccess{IsPlatformStaff: f.isPlatformStaff, PlatformRole: f.platformRole}, nil
 }
 
 func newCurrentUserTestUser(t *testing.T, username string, status string, now time.Time) *userdomain.User {

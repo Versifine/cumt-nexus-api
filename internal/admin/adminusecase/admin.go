@@ -102,6 +102,9 @@ type UpdateUserRecordInput struct {
 type User struct {
 	ID              string
 	Username        string
+	DisplayName     string
+	AvatarURL       string
+	Headline        string
 	Status          string
 	IsPlatformStaff bool
 	PlatformRole    string
@@ -1426,6 +1429,9 @@ func userAuditState(user User) map[string]any {
 	return map[string]any{
 		"id":                user.ID,
 		"username":          user.Username,
+		"display_name":      user.DisplayName,
+		"avatar_url":        user.AvatarURL,
+		"headline":          user.Headline,
 		"status":            user.Status,
 		"is_platform_staff": user.IsPlatformStaff,
 		"platform_role":     user.PlatformRole,

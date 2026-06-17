@@ -46,6 +46,9 @@ type UseCase interface {
 type adminUserResponse struct {
 	ID              string    `json:"id"`
 	Username        string    `json:"username"`
+	DisplayName     string    `json:"display_name"`
+	AvatarURL       string    `json:"avatar_url"`
+	Headline        string    `json:"headline"`
 	Status          string    `json:"status"`
 	IsPlatformStaff bool      `json:"is_platform_staff"`
 	PlatformRole    string    `json:"platform_role"`
@@ -1016,6 +1019,9 @@ func toAdminUserResponse(user adminusecase.User) adminUserResponse {
 	return adminUserResponse{
 		ID:              user.ID,
 		Username:        user.Username,
+		DisplayName:     user.DisplayName,
+		AvatarURL:       user.AvatarURL,
+		Headline:        user.Headline,
 		Status:          user.Status,
 		IsPlatformStaff: user.IsPlatformStaff,
 		PlatformRole:    user.PlatformRole,

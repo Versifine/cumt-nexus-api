@@ -420,6 +420,9 @@ func TestPostgresPlatformStaffRepository(t *testing.T) {
 
 	staffID := insertTestUser(ctx, t, pool, true)
 	normalID := insertTestUser(ctx, t, pool, false)
+	if _, err := pool.Exec(ctx, `UPDATE users SET platform_role = 'owner' WHERE id = $1::uuid`, staffID.String()); err != nil {
+		t.Fatalf("set staff platform role: %v", err)
+	}
 
 	isStaff, err := repo.IsPlatformStaff(ctx, staffID)
 	if err != nil {
@@ -437,8 +440,27 @@ func TestPostgresPlatformStaffRepository(t *testing.T) {
 		t.Fatal("expected normal user not to be platform staff")
 	}
 
+	access, err := repo.FindPlatformAccess(ctx, staffID)
+	if err != nil {
+		t.Fatalf("FindPlatformAccess staff returned error: %v", err)
+	}
+	if !access.IsPlatformStaff || access.PlatformRole != "owner" {
+		t.Fatalf("expected owner platform access, got %#v", access)
+	}
+
+	access, err = repo.FindPlatformAccess(ctx, normalID)
+	if err != nil {
+		t.Fatalf("FindPlatformAccess normal user returned error: %v", err)
+	}
+	if access.IsPlatformStaff || access.PlatformRole != "" {
+		t.Fatalf("expected empty platform access, got %#v", access)
+	}
+
 	if _, err := repo.IsPlatformStaff(ctx, userdomain.NewGeneratedUserID()); !hasAppCode(err, apperr.CodeNotFound) {
 		t.Fatalf("expected not_found for missing user, got %v", err)
+	}
+	if _, err := repo.FindPlatformAccess(ctx, userdomain.NewGeneratedUserID()); !hasAppCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected not_found for missing platform access user, got %v", err)
 	}
 }
 

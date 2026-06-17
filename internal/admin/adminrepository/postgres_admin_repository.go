@@ -87,17 +87,7 @@ func (repo *PostgresAdminRepository) IsPlatformStaff(ctx context.Context, userID
 }
 
 func (repo *PostgresAdminRepository) ListUsers(ctx context.Context, status string, searchQuery string, limit int, offset int) ([]adminusecase.User, error) {
-	query := `
-		SELECT
-			id::text,
-			username,
-			status,
-			is_platform_staff,
-			COALESCE(platform_role, ''),
-			created_at,
-			updated_at
-		FROM users
-	`
+	query := "SELECT " + adminUserSelectFields("") + " FROM users"
 	args := []any{limit, offset}
 	where := make([]string, 0, 2)
 	if status != "all" {
@@ -107,7 +97,7 @@ func (repo *PostgresAdminRepository) ListUsers(ctx context.Context, status strin
 	if searchQuery != "" {
 		args = append(args, "%"+escapeLikePattern(strings.ToLower(searchQuery))+"%")
 		placeholder := fmt.Sprintf("$%d", len(args))
-		where = append(where, fmt.Sprintf("(LOWER(username) LIKE %s ESCAPE '\\' OR id::text ILIKE %s ESCAPE '\\')", placeholder, placeholder))
+		where = append(where, fmt.Sprintf("(LOWER(username) LIKE %[1]s ESCAPE '\\' OR LOWER(display_name) LIKE %[1]s ESCAPE '\\' OR id::text ILIKE %[1]s ESCAPE '\\')", placeholder))
 	}
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
@@ -135,19 +125,7 @@ func (repo *PostgresAdminRepository) ListUsers(ctx context.Context, status strin
 }
 
 func (repo *PostgresAdminRepository) FindUserByID(ctx context.Context, userID userdomain.UserID) (adminusecase.User, error) {
-	const query = `
-		SELECT
-			id::text,
-			username,
-			status,
-			is_platform_staff,
-			COALESCE(platform_role, ''),
-			created_at,
-			updated_at
-		FROM users
-		WHERE id = $1::uuid
-		LIMIT 1
-	`
+	query := "SELECT " + adminUserSelectFields("") + " FROM users WHERE id = $1::uuid LIMIT 1"
 	user, err := scanUser(repo.db.QueryRow(ctx, query, userID.String()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -180,22 +158,14 @@ func (repo *PostgresAdminRepository) FindUserPasswordHash(ctx context.Context, u
 }
 
 func (repo *PostgresAdminRepository) UpdateUser(ctx context.Context, userID userdomain.UserID, input adminusecase.UpdateUserRecordInput) (adminusecase.User, error) {
-	const query = `
+	query := `
 		UPDATE users
 		SET status = $2,
 			is_platform_staff = $3,
 			platform_role = CASE WHEN $3 THEN COALESCE(platform_role, 'staff') ELSE NULL END,
 			updated_at = $4
 		WHERE id = $1::uuid
-		RETURNING
-			id::text,
-			username,
-			status,
-			is_platform_staff,
-			COALESCE(platform_role, ''),
-			created_at,
-			updated_at
-	`
+		RETURNING ` + adminUserSelectFields("")
 	user, err := scanUser(repo.db.QueryRow(ctx, query, userID.String(), input.Status, input.IsPlatformStaff, input.UpdatedAt))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -207,21 +177,13 @@ func (repo *PostgresAdminRepository) UpdateUser(ctx context.Context, userID user
 }
 
 func (repo *PostgresAdminRepository) UpdateUserPlatformRole(ctx context.Context, userID userdomain.UserID, role string, updatedAt time.Time) (adminusecase.User, error) {
-	const query = `
+	query := `
 		UPDATE users
 		SET platform_role = NULLIF($2, ''),
 			is_platform_staff = ($2 <> ''),
 			updated_at = $3
 		WHERE id = $1::uuid
-		RETURNING
-			id::text,
-			username,
-			status,
-			is_platform_staff,
-			COALESCE(platform_role, ''),
-			created_at,
-			updated_at
-	`
+		RETURNING ` + adminUserSelectFields("")
 	user, err := scanUser(repo.db.QueryRow(ctx, query, userID.String(), role, updatedAt))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -508,22 +470,15 @@ func (repo *PostgresAdminRepository) AcceptOwnerTransfer(ctx context.Context, tr
 }
 
 func (repo *PostgresAdminRepository) BootstrapOwner(ctx context.Context, input adminusecase.BootstrapOwnerRecordInput) (adminusecase.User, error) {
-	user, err := scanUser(repo.db.QueryRow(ctx, `
+	query := `
 		UPDATE users
 		SET platform_role = 'owner',
 			is_platform_staff = true,
 			updated_at = $2
 		WHERE id = $1::uuid
 			AND status = 'active'
-		RETURNING
-			id::text,
-			username,
-			status,
-			is_platform_staff,
-			COALESCE(platform_role, ''),
-			created_at,
-			updated_at
-	`, input.UserID.String(), input.UpdatedAt))
+		RETURNING ` + adminUserSelectFields("")
+	user, err := scanUser(repo.db.QueryRow(ctx, query, input.UserID.String(), input.UpdatedAt))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return adminusecase.User{}, apperr.New(apperr.CodeNotFound, "user not found")
@@ -565,35 +520,21 @@ func (repo *PostgresAdminRepository) RecoverOwner(ctx context.Context, input adm
 			tokens_revoked_after = %s,
 			updated_at = $2
 		WHERE id = $1::uuid
-		RETURNING
-			id::text,
-			username,
-			status,
-			is_platform_staff,
-			COALESCE(platform_role, ''),
-			created_at,
-			updated_at
-	`, compromisedStatusExpr, revokeExpr)
+		RETURNING %s
+	`, compromisedStatusExpr, revokeExpr, adminUserSelectFields(""))
 	compromised, err := scanUser(repo.db.QueryRow(ctx, compromisedQuery, input.CompromisedUserID.String(), input.UpdatedAt))
 	if err != nil {
 		return adminusecase.OwnerRecoveryRecordResult{}, mapAdminWriteError("remove compromised platform owner", err)
 	}
-	newOwner, err := scanUser(repo.db.QueryRow(ctx, `
+	newOwnerQuery := `
 		UPDATE users
 		SET platform_role = 'owner',
 			is_platform_staff = true,
 			updated_at = $2
 		WHERE id = $1::uuid
 			AND status = 'active'
-		RETURNING
-			id::text,
-			username,
-			status,
-			is_platform_staff,
-			COALESCE(platform_role, ''),
-			created_at,
-			updated_at
-	`, input.NewOwnerID.String(), input.UpdatedAt))
+		RETURNING ` + adminUserSelectFields("")
+	newOwner, err := scanUser(repo.db.QueryRow(ctx, newOwnerQuery, input.NewOwnerID.String(), input.UpdatedAt))
 	if err != nil {
 		return adminusecase.OwnerRecoveryRecordResult{}, mapAdminWriteError("promote recovered platform owner", err)
 	}
@@ -1374,11 +1315,32 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+func adminUserSelectFields(prefix string) string {
+	if prefix != "" && !strings.HasSuffix(prefix, ".") {
+		prefix += "."
+	}
+	return fmt.Sprintf(`
+			%[1]sid::text,
+			%[1]susername,
+			%[1]sdisplay_name,
+			%[1]savatar_url,
+			%[1]sheadline,
+			%[1]sstatus,
+			%[1]sis_platform_staff,
+			COALESCE(%[1]splatform_role, ''),
+			%[1]screated_at,
+			%[1]supdated_at
+	`, prefix)
+}
+
 func scanUser(row rowScanner) (adminusecase.User, error) {
 	var user adminusecase.User
 	err := row.Scan(
 		&user.ID,
 		&user.Username,
+		&user.DisplayName,
+		&user.AvatarURL,
+		&user.Headline,
 		&user.Status,
 		&user.IsPlatformStaff,
 		&user.PlatformRole,

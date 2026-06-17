@@ -10,6 +10,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -1497,6 +1498,26 @@ func (repo *PostgresPlatformStaffRepository) IsPlatformStaff(ctx context.Context
 	}
 
 	return isPlatformStaff, nil
+}
+
+func (repo *PostgresPlatformStaffRepository) FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (userusecase.PlatformAccess, error) {
+	const query = `
+		SELECT is_platform_staff, COALESCE(platform_role, '')
+		FROM users
+		WHERE id = $1::uuid
+			AND status = 'active'
+		LIMIT 1
+	`
+
+	var access userusecase.PlatformAccess
+	if err := repo.db.QueryRow(ctx, query, userID.String()).Scan(&access.IsPlatformStaff, &access.PlatformRole); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return userusecase.PlatformAccess{}, apperr.New(apperr.CodeNotFound, "user not found")
+		}
+		return userusecase.PlatformAccess{}, fmt.Errorf("find platform access: %w", err)
+	}
+
+	return access, nil
 }
 
 func (repo *PostgresPlatformStaffRepository) IsPlatformOwner(ctx context.Context, userID userdomain.UserID) (bool, error) {

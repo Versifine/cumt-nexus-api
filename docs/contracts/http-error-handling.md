@@ -52,9 +52,13 @@ domain/usecase 可以返回 `apperr`，但不能决定 HTTP 状态码。
 | `invalid_argument` | 400 | 请求格式或输入不合法 |
 | `unauthenticated` | 401 | 未登录或认证信息无效 |
 | `forbidden` | 403 | 已认证但当前状态不允许 |
+| `account_banned` | 403 | 账号存在有效封禁，禁止登录或访问受保护资源 |
+| `account_disabled` | 403 | 账号已被禁用，禁止登录 |
+| `account_deleted` | 403 | 账号已注销，禁止登录 |
 | `not_found` | 404 | 资源不存在 |
 | `conflict` | 409 | 唯一约束、状态冲突或重复操作 |
 | `rate_limited` | 429 | 当前用户短时间内触发频率限制 |
+| `login_rate_limited` | 429 | 密码登录按账号或 IP 命中滚动窗口限流 |
 | `internal` | 500 | 未预期系统错误 |
 
 ## handler 规则
@@ -101,7 +105,8 @@ ErrorMiddleware
 - repository 可以返回 `not_found`。
 - 登录 usecase 必须把“用户不存在”和“密码错误”统一成 `unauthenticated`。
 - 数据库唯一约束冲突应映射成 `conflict`。
-- disabled 用户登录应返回 `forbidden`。
+- disabled 用户登录应返回 `account_disabled`，deleted 用户登录应返回 `account_deleted`，有效账号封禁登录应返回 `account_banned`。
+- 密码登录按账号或 IP 触发失败次数限制时应返回 `login_rate_limited`。
 - token 缺失、格式错误、过期或签名错误应返回 `unauthenticated`。
 
 ## 测试要求

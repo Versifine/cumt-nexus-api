@@ -32,6 +32,8 @@ func TestLoginWithEmailCodeGrantsDailyLoginXP(t *testing.T) {
 	now := time.Date(2026, 6, 14, 8, 0, 0, 0, time.UTC)
 	repo := newFakeSecurityRepository(t, userID, "student@cumt.edu.cn", now)
 	repo.authUser = newLoginTestUser(t, "student", "hashed-password", "active", now.Add(-24*time.Hour))
+	repo.isPlatformStaff = true
+	repo.platformRole = "admin"
 	repo.pendingCode = &EmailCodeRecord{
 		ID:        userdomain.NewGeneratedUserID().String(),
 		Email:     "student@cumt.edu.cn",
@@ -56,6 +58,12 @@ func TestLoginWithEmailCodeGrantsDailyLoginXP(t *testing.T) {
 	if result.AccessToken != "token" {
 		t.Fatalf("expected access token %q, got %q", "token", result.AccessToken)
 	}
+	if !result.User.IsPlatformStaff {
+		t.Fatal("expected is_platform_staff=true")
+	}
+	if result.User.PlatformRole != "admin" {
+		t.Fatalf("expected platform role %q, got %q", "admin", result.User.PlatformRole)
+	}
 	if !repo.codeUsed {
 		t.Fatal("expected email code to be consumed")
 	}
@@ -71,6 +79,71 @@ func TestLoginWithEmailCodeGrantsDailyLoginXP(t *testing.T) {
 	}
 	if input.SourceID != "2026-06-14" {
 		t.Fatalf("expected source id %q, got %q", "2026-06-14", input.SourceID)
+	}
+}
+
+func TestLoginWithEmailCodeReturnsAccountStatusCodesAfterValidCode(t *testing.T) {
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 14, 8, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		status string
+		code   apperr.Code
+	}{
+		{name: "disabled", status: "disabled", code: apperr.CodeAccountDisabled},
+		{name: "deleted", status: "deleted", code: apperr.CodeAccountDeleted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeSecurityRepository(t, userID, "student@cumt.edu.cn", now)
+			repo.authUser = newLoginTestUser(t, "student", "hashed-password", tt.status, now.Add(-24*time.Hour))
+			repo.pendingCode = &EmailCodeRecord{
+				ID:        userdomain.NewGeneratedUserID().String(),
+				Email:     "student@cumt.edu.cn",
+				Purpose:   EmailPurposeLogin,
+				CodeHash:  "123456",
+				Status:    "pending",
+				ExpiresAt: now.Add(10 * time.Minute),
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			uc := newTestSecurityUseCase(t, repo, now)
+
+			_, err := uc.LoginWithEmailCode(context.Background(), LoginWithEmailCodeInput{
+				Email: "student@cumt.edu.cn",
+				Code:  "123456",
+			})
+			if !hasAppCode(err, tt.code) {
+				t.Fatalf("expected %s, got %v", tt.code, err)
+			}
+		})
+	}
+}
+
+func TestLoginWithEmailCodeReturnsAccountBanned(t *testing.T) {
+	userID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 14, 8, 0, 0, 0, time.UTC)
+	repo := newFakeSecurityRepository(t, userID, "student@cumt.edu.cn", now)
+	repo.authUser = newLoginTestUser(t, "student", "hashed-password", "active", now.Add(-24*time.Hour))
+	repo.activeBan = true
+	repo.pendingCode = &EmailCodeRecord{
+		ID:        userdomain.NewGeneratedUserID().String(),
+		Email:     "student@cumt.edu.cn",
+		Purpose:   EmailPurposeLogin,
+		CodeHash:  "123456",
+		Status:    "pending",
+		ExpiresAt: now.Add(10 * time.Minute),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	uc := newTestSecurityUseCase(t, repo, now)
+
+	_, err := uc.LoginWithEmailCode(context.Background(), LoginWithEmailCodeInput{
+		Email: "student@cumt.edu.cn",
+		Code:  "123456",
+	})
+	if !hasAppCode(err, apperr.CodeAccountBanned) {
+		t.Fatalf("expected account_banned, got %v", err)
 	}
 }
 
@@ -242,15 +315,18 @@ func newTestSecurityUseCase(t *testing.T, repo *fakeSecurityRepository, now time
 }
 
 type fakeSecurityRepository struct {
-	userID         userdomain.UserID
-	authUser       *userdomain.User
-	security       SecurityInfo
-	pendingCode    *EmailCodeRecord
-	createdCode    *EmailCodeRecord
-	codeUsed       bool
-	codeFailed     bool
-	accountDeleted bool
-	events         []SecurityEvent
+	userID          userdomain.UserID
+	authUser        *userdomain.User
+	security        SecurityInfo
+	pendingCode     *EmailCodeRecord
+	createdCode     *EmailCodeRecord
+	codeUsed        bool
+	codeFailed      bool
+	accountDeleted  bool
+	activeBan       bool
+	isPlatformStaff bool
+	platformRole    string
+	events          []SecurityEvent
 }
 
 func newFakeSecurityRepository(t *testing.T, userID userdomain.UserID, email string, now time.Time) *fakeSecurityRepository {
@@ -279,6 +355,8 @@ func (f *fakeSecurityRepository) FindAuthUserByEmail(ctx context.Context, email 
 			User:            f.authUser,
 			Email:           f.security.Email,
 			EmailVerifiedAt: f.security.EmailVerifiedAt,
+			IsPlatformStaff: f.isPlatformStaff,
+			PlatformRole:    f.platformRole,
 		}, nil
 	}
 	return AuthUserRecord{}, apperr.New(apperr.CodeNotFound, "user not found")
@@ -325,6 +403,10 @@ func (f *fakeSecurityRepository) MarkEmailCodeFailed(ctx context.Context, id str
 		f.pendingCode.UpdatedAt = now
 	}
 	return nil
+}
+
+func (f *fakeSecurityRepository) HasActiveAccountBan(ctx context.Context, userID userdomain.UserID, now time.Time) (bool, error) {
+	return f.activeBan, nil
 }
 
 func (f *fakeSecurityRepository) CreateUserWithEmail(ctx context.Context, user userdomain.User, email string, verifiedAt time.Time, passwordUpdatedAt time.Time) error {

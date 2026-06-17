@@ -24,12 +24,14 @@ type LoginResult struct {
 	User        LoginUser
 }
 type LoginUser struct {
-	ID            string
-	Username      string
-	Status        string
-	Email         string
-	EmailVerified bool
-	CreatedAt     time.Time
+	ID              string
+	Username        string
+	Status          string
+	Email           string
+	EmailVerified   bool
+	IsPlatformStaff bool
+	PlatformRole    string
+	CreatedAt       time.Time
 }
 type PasswordComparer interface {
 	Compare(hash userdomain.PasswordHash, plain userdomain.PlainPassword) error
@@ -119,7 +121,7 @@ func (uc *LoginUserCase) Login(ctx context.Context, input LoginInput) (LoginResu
 		if recordErr := uc.recordLoginEvent(ctx, &userIDValue{value: user.ID()}, loginEventIdentity(identifier, record.Email), loginPasswordFailedAction, input.RequestIP, input.UserAgent, now); recordErr != nil {
 			return LoginResult{}, recordErr
 		}
-		return LoginResult{}, apperr.New(apperr.CodeForbidden, "user is forbidden")
+		return LoginResult{}, loginUserStatusError(user)
 	}
 	banned, err := uc.userFinder.HasActiveAccountBan(ctx, user.ID(), now)
 	if err != nil {
@@ -129,7 +131,7 @@ func (uc *LoginUserCase) Login(ctx context.Context, input LoginInput) (LoginResu
 		if recordErr := uc.recordLoginEvent(ctx, &userIDValue{value: user.ID()}, loginEventIdentity(identifier, record.Email), loginPasswordFailedAction, input.RequestIP, input.UserAgent, now); recordErr != nil {
 			return LoginResult{}, recordErr
 		}
-		return LoginResult{}, apperr.New(apperr.CodeForbidden, "user is forbidden")
+		return LoginResult{}, apperr.New(apperr.CodeAccountBanned, "account is banned")
 	}
 	tokenValue, tokenType, expiresIn, err := uc.tokenIssuer.IssueAccessToken(user.ID(), now)
 	if err != nil {
@@ -150,12 +152,14 @@ func (uc *LoginUserCase) Login(ctx context.Context, input LoginInput) (LoginResu
 		TokenType:   tokenType,
 		ExpiresIn:   int64(expiresIn.Seconds()),
 		User: LoginUser{
-			ID:            user.ID().String(),
-			Username:      user.Username().String(),
-			Status:        user.Status().String(),
-			Email:         record.Email,
-			EmailVerified: record.EmailVerifiedAt != nil,
-			CreatedAt:     user.CreatedAt(),
+			ID:              user.ID().String(),
+			Username:        user.Username().String(),
+			Status:          user.Status().String(),
+			Email:           record.Email,
+			EmailVerified:   record.EmailVerifiedAt != nil,
+			IsPlatformStaff: record.IsPlatformStaff,
+			PlatformRole:    record.PlatformRole,
+			CreatedAt:       user.CreatedAt(),
 		},
 	}, nil
 }
@@ -167,7 +171,7 @@ func (uc *LoginUserCase) enforceLoginFailureLimit(ctx context.Context, identifie
 		return fmt.Errorf("count account login failures: %w", err)
 	}
 	if accountCount >= loginFailureAccountLimit {
-		return apperr.New(apperr.CodeForbidden, "too many login attempts")
+		return apperr.New(apperr.CodeLoginRateLimited, "login rate limited")
 	}
 	if strings.TrimSpace(requestIP) == "" {
 		return nil
@@ -177,9 +181,21 @@ func (uc *LoginUserCase) enforceLoginFailureLimit(ctx context.Context, identifie
 		return fmt.Errorf("count ip login failures: %w", err)
 	}
 	if ipCount >= loginFailureIPLimit {
-		return apperr.New(apperr.CodeForbidden, "too many login attempts")
+		return apperr.New(apperr.CodeLoginRateLimited, "login rate limited")
 	}
 	return nil
+}
+
+func loginUserStatusError(user *userdomain.User) error {
+	if user == nil {
+		return apperr.New(apperr.CodeUnauthenticated, "invalid username or password")
+	}
+	switch user.Status().String() {
+	case "deleted":
+		return apperr.New(apperr.CodeAccountDeleted, "account is deleted")
+	default:
+		return apperr.New(apperr.CodeAccountDisabled, "account is disabled")
+	}
 }
 
 func (uc *LoginUserCase) recordLoginEvent(ctx context.Context, userID *userIDValue, identity string, action string, requestIP string, userAgent string, now time.Time) error {

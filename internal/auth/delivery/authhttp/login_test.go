@@ -25,10 +25,12 @@ func TestLoginReturnsOK(t *testing.T) {
 			TokenType:   "Bearer",
 			ExpiresIn:   86400,
 			User: authusecase.LoginUser{
-				ID:        "9c40e96a-7b3f-4652-a77b-d4b69bb61d2e",
-				Username:  "alice",
-				Status:    "active",
-				CreatedAt: createdAt,
+				ID:              "9c40e96a-7b3f-4652-a77b-d4b69bb61d2e",
+				Username:        "alice",
+				Status:          "active",
+				IsPlatformStaff: true,
+				PlatformRole:    "owner",
+				CreatedAt:       createdAt,
 			},
 		},
 	}
@@ -77,6 +79,12 @@ func TestLoginReturnsOK(t *testing.T) {
 	}
 	if response.User.Status != "active" {
 		t.Fatalf("expected status %q, got %q", "active", response.User.Status)
+	}
+	if !response.User.IsPlatformStaff {
+		t.Fatal("expected is_platform_staff=true")
+	}
+	if response.User.PlatformRole != "owner" {
+		t.Fatalf("expected platform role %q, got %q", "owner", response.User.PlatformRole)
 	}
 	if !response.User.CreatedAt.Equal(createdAt) {
 		t.Fatalf("expected created_at %s, got %s", createdAt, response.User.CreatedAt)
@@ -152,6 +160,18 @@ func TestLoginUseCaseErrorMapsToHTTPError(t *testing.T) {
 			err:        apperr.New(apperr.CodeForbidden, "user is forbidden"),
 			wantStatus: http.StatusForbidden,
 			wantCode:   apperr.CodeForbidden,
+		},
+		{
+			name:       "account banned",
+			err:        apperr.New(apperr.CodeAccountBanned, "account is banned"),
+			wantStatus: http.StatusForbidden,
+			wantCode:   apperr.CodeAccountBanned,
+		},
+		{
+			name:       "login rate limited",
+			err:        apperr.New(apperr.CodeLoginRateLimited, "login rate limited"),
+			wantStatus: http.StatusTooManyRequests,
+			wantCode:   apperr.CodeLoginRateLimited,
 		},
 	}
 

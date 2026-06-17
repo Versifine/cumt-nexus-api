@@ -41,6 +41,7 @@ type currentUserResponse struct {
 	Username        string    `json:"username"`
 	Status          string    `json:"status"`
 	IsPlatformStaff bool      `json:"is_platform_staff"`
+	PlatformRole    string    `json:"platform_role"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
@@ -169,6 +170,7 @@ func (h *Handler) Me(c *gin.Context) {
 		Username:        result.User.Username,
 		Status:          result.User.Status,
 		IsPlatformStaff: result.User.IsPlatformStaff,
+		PlatformRole:    result.User.PlatformRole,
 		CreatedAt:       result.User.CreatedAt,
 	})
 }

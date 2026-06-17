@@ -489,7 +489,9 @@ func authUserSelectSQL() string {
 			email_verified_at,
 			last_login_at,
 			password_updated_at,
-			tokens_revoked_after
+			tokens_revoked_after,
+			is_platform_staff,
+			COALESCE(platform_role, '')
 		FROM users
 	`
 }
@@ -511,6 +513,8 @@ func scanAuthUser(row pgx.Row) (authusecase.AuthUserRecord, error) {
 	var lastLoginAt pgtype.Timestamptz
 	var passwordUpdatedAt pgtype.Timestamptz
 	var tokensRevokedAfter pgtype.Timestamptz
+	var isPlatformStaff bool
+	var platformRole string
 
 	if err := row.Scan(
 		&rawID,
@@ -529,6 +533,8 @@ func scanAuthUser(row pgx.Row) (authusecase.AuthUserRecord, error) {
 		&lastLoginAt,
 		&passwordUpdatedAt,
 		&tokensRevokedAfter,
+		&isPlatformStaff,
+		&platformRole,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return authusecase.AuthUserRecord{}, apperr.New(apperr.CodeNotFound, "user not found")
@@ -547,6 +553,8 @@ func scanAuthUser(row pgx.Row) (authusecase.AuthUserRecord, error) {
 		LastLoginAt:        nullableTime(lastLoginAt),
 		PasswordUpdatedAt:  nullableTime(passwordUpdatedAt),
 		TokensRevokedAfter: nullableTime(tokensRevokedAfter),
+		IsPlatformStaff:    isPlatformStaff,
+		PlatformRole:       platformRole,
 	}, nil
 }
 

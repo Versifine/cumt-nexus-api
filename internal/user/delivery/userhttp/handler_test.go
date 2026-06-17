@@ -31,6 +31,7 @@ func TestMeReturnsCurrentUser(t *testing.T) {
 				Username:        "alice",
 				Status:          "active",
 				IsPlatformStaff: true,
+				PlatformRole:    "owner",
 				CreatedAt:       createdAt,
 			},
 		},
@@ -73,6 +74,9 @@ func TestMeReturnsCurrentUser(t *testing.T) {
 	}
 	if !response.IsPlatformStaff {
 		t.Fatal("expected is_platform_staff=true")
+	}
+	if response.PlatformRole != "owner" {
+		t.Fatalf("expected platform role %q, got %q", "owner", response.PlatformRole)
 	}
 	if !response.CreatedAt.Equal(createdAt) {
 		t.Fatalf("expected created_at %s, got %s", createdAt, response.CreatedAt)

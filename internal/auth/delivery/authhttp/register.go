@@ -17,12 +17,14 @@ type registerResponse struct {
 	User        userResponse `json:"user"`
 }
 type userResponse struct {
-	ID            string    `json:"id"`
-	Username      string    `json:"username"`
-	Status        string    `json:"status"`
-	Email         string    `json:"email"`
-	EmailVerified bool      `json:"email_verified"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	Username        string    `json:"username"`
+	Status          string    `json:"status"`
+	Email           string    `json:"email"`
+	EmailVerified   bool      `json:"email_verified"`
+	IsPlatformStaff bool      `json:"is_platform_staff"`
+	PlatformRole    string    `json:"platform_role"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {

@@ -15,7 +15,9 @@ func TestLoginUserSuccess(t *testing.T) {
 	fixedNow := time.Date(2026, 5, 29, 10, 30, 0, 0, time.UTC)
 	user := newLoginTestUser(t, "alice", "hashed-password", "active", fixedNow)
 	finder := &fakeLoginUserFinder{
-		user: user,
+		user:            user,
+		isPlatformStaff: true,
+		platformRole:    "owner",
 	}
 	comparer := &fakeLoginPasswordComparer{}
 	issuer := &fakeLoginTokenIssuer{
@@ -53,6 +55,12 @@ func TestLoginUserSuccess(t *testing.T) {
 	}
 	if result.User.Status != "active" {
 		t.Fatalf("expected status %q, got %q", "active", result.User.Status)
+	}
+	if !result.User.IsPlatformStaff {
+		t.Fatal("expected is_platform_staff=true")
+	}
+	if result.User.PlatformRole != "owner" {
+		t.Fatalf("expected platform role %q, got %q", "owner", result.User.PlatformRole)
 	}
 	if !result.User.CreatedAt.Equal(fixedNow) {
 		t.Fatalf("expected created_at %s, got %s", fixedNow, result.User.CreatedAt)
@@ -246,8 +254,8 @@ func TestLoginUserBlockedByAccountFailureLimit(t *testing.T) {
 		Username: "alice",
 		Password: "password123",
 	})
-	if !hasAppCode(err, apperr.CodeForbidden) {
-		t.Fatalf("expected forbidden, got %v", err)
+	if !hasAppCode(err, apperr.CodeLoginRateLimited) {
+		t.Fatalf("expected login_rate_limited, got %v", err)
 	}
 	if finder.called {
 		t.Fatal("user finder should not be called when account is rate limited")
@@ -270,8 +278,8 @@ func TestLoginUserBlockedByIPFailureLimit(t *testing.T) {
 		Password:  "password123",
 		RequestIP: "127.0.0.1",
 	})
-	if !hasAppCode(err, apperr.CodeForbidden) {
-		t.Fatalf("expected forbidden, got %v", err)
+	if !hasAppCode(err, apperr.CodeLoginRateLimited) {
+		t.Fatalf("expected login_rate_limited, got %v", err)
 	}
 	if finder.called {
 		t.Fatal("user finder should not be called when ip is rate limited")
@@ -281,7 +289,7 @@ func TestLoginUserBlockedByIPFailureLimit(t *testing.T) {
 	}
 }
 
-func TestLoginUserDisabledReturnsForbidden(t *testing.T) {
+func TestLoginUserDisabledReturnsAccountDisabled(t *testing.T) {
 	user := newLoginTestUser(t, "alice", "hashed-password", "disabled", time.Now().UTC())
 	finder := &fakeLoginUserFinder{
 		user: user,
@@ -294,8 +302,8 @@ func TestLoginUserDisabledReturnsForbidden(t *testing.T) {
 		Username: "alice",
 		Password: "password123",
 	})
-	if !hasAppCode(err, apperr.CodeForbidden) {
-		t.Fatalf("expected forbidden, got %v", err)
+	if !hasAppCode(err, apperr.CodeAccountDisabled) {
+		t.Fatalf("expected account_disabled, got %v", err)
 	}
 	if !comparer.called {
 		t.Fatal("expected password comparer to be called")
@@ -305,7 +313,31 @@ func TestLoginUserDisabledReturnsForbidden(t *testing.T) {
 	}
 }
 
-func TestLoginUserActiveBanReturnsForbidden(t *testing.T) {
+func TestLoginUserDeletedReturnsAccountDeleted(t *testing.T) {
+	user := newLoginTestUser(t, "alice", "hashed-password", "deleted", time.Now().UTC())
+	finder := &fakeLoginUserFinder{
+		user: user,
+	}
+	comparer := &fakeLoginPasswordComparer{}
+	issuer := &fakeLoginTokenIssuer{}
+	uc := NewLoginUserCase(finder, comparer, issuer, fixedClock())
+
+	_, err := uc.Login(context.Background(), LoginInput{
+		Username: "alice",
+		Password: "password123",
+	})
+	if !hasAppCode(err, apperr.CodeAccountDeleted) {
+		t.Fatalf("expected account_deleted, got %v", err)
+	}
+	if !comparer.called {
+		t.Fatal("expected password comparer to be called")
+	}
+	if issuer.called {
+		t.Fatal("token issuer should not be called for deleted user")
+	}
+}
+
+func TestLoginUserActiveBanReturnsAccountBanned(t *testing.T) {
 	user := newLoginTestUser(t, "alice", "hashed-password", "active", time.Now().UTC())
 	finder := &fakeLoginUserFinder{
 		user:      user,
@@ -319,8 +351,8 @@ func TestLoginUserActiveBanReturnsForbidden(t *testing.T) {
 		Username: "alice",
 		Password: "password123",
 	})
-	if !hasAppCode(err, apperr.CodeForbidden) {
-		t.Fatalf("expected forbidden, got %v", err)
+	if !hasAppCode(err, apperr.CodeAccountBanned) {
+		t.Fatalf("expected account_banned, got %v", err)
 	}
 	if !comparer.called {
 		t.Fatal("expected password comparer to be called")
@@ -366,6 +398,8 @@ type fakeLoginUserFinder struct {
 	accountFailureCount   int
 	ipFailureCount        int
 	activeBan             bool
+	isPlatformStaff       bool
+	platformRole          string
 	events                []SecurityEvent
 }
 
@@ -375,7 +409,7 @@ func (f *fakeLoginUserFinder) FindAuthUserByIdentifier(ctx context.Context, iden
 	if f.err != nil {
 		return AuthUserRecord{}, f.err
 	}
-	return AuthUserRecord{User: f.user}, nil
+	return AuthUserRecord{User: f.user, IsPlatformStaff: f.isPlatformStaff, PlatformRole: f.platformRole}, nil
 }
 
 func (f *fakeLoginUserFinder) UpdateLastLogin(ctx context.Context, userID userdomain.UserID, loginAt time.Time, loginIP string) error {

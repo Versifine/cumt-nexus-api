@@ -89,6 +89,18 @@ func TestErrorMiddlewareMapsAppErrors(t *testing.T) {
 			wantStatus: http.StatusForbidden,
 		},
 		{
+			name:       "account banned",
+			code:       apperr.CodeAccountBanned,
+			message:    "account is banned",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "login rate limited",
+			code:       apperr.CodeLoginRateLimited,
+			message:    "login rate limited",
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
 			name:       "not found",
 			code:       apperr.CodeNotFound,
 			message:    "post not found",

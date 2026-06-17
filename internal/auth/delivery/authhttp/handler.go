@@ -106,12 +106,14 @@ func (h *Handler) Login(c *gin.Context) {
 		TokenType:   result.TokenType,
 		ExpiresIn:   result.ExpiresIn,
 		User: userResponse{
-			ID:            result.User.ID,
-			Username:      result.User.Username,
-			Status:        result.User.Status,
-			Email:         result.User.Email,
-			EmailVerified: result.User.EmailVerified,
-			CreatedAt:     result.User.CreatedAt,
+			ID:              result.User.ID,
+			Username:        result.User.Username,
+			Status:          result.User.Status,
+			Email:           result.User.Email,
+			EmailVerified:   result.User.EmailVerified,
+			IsPlatformStaff: result.User.IsPlatformStaff,
+			PlatformRole:    result.User.PlatformRole,
+			CreatedAt:       result.User.CreatedAt,
 		},
 	})
 }
@@ -247,12 +249,14 @@ func toSecurityAuthResponse(result authusecase.SecurityAuthResult) loginResponse
 		TokenType:   result.TokenType,
 		ExpiresIn:   result.ExpiresIn,
 		User: userResponse{
-			ID:            result.User.ID,
-			Username:      result.User.Username,
-			Status:        result.User.Status,
-			Email:         result.User.Email,
-			EmailVerified: result.User.EmailVerified,
-			CreatedAt:     result.User.CreatedAt,
+			ID:              result.User.ID,
+			Username:        result.User.Username,
+			Status:          result.User.Status,
+			Email:           result.User.Email,
+			EmailVerified:   result.User.EmailVerified,
+			IsPlatformStaff: result.User.IsPlatformStaff,
+			PlatformRole:    result.User.PlatformRole,
+			CreatedAt:       result.User.CreatedAt,
 		},
 	}
 }

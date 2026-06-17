@@ -55,6 +55,7 @@ type AuthSecurityRepository interface {
 	MarkEmailCodeUsed(ctx context.Context, id string, now time.Time) error
 	MarkEmailCodeAttempt(ctx context.Context, id string, attemptCount int, status string, now time.Time) error
 	MarkEmailCodeFailed(ctx context.Context, id string, now time.Time) error
+	HasActiveAccountBan(ctx context.Context, userID userdomain.UserID, now time.Time) (bool, error)
 	CreateUserWithEmail(ctx context.Context, user userdomain.User, email string, verifiedAt time.Time, passwordUpdatedAt time.Time) error
 	UpdateLastLogin(ctx context.Context, userID userdomain.UserID, loginAt time.Time, loginIP string) error
 	UpdatePasswordByEmail(ctx context.Context, email string, passwordHash userdomain.PasswordHash, updatedAt time.Time) error
@@ -73,6 +74,8 @@ type AuthUserRecord struct {
 	LastLoginAt        *time.Time
 	PasswordUpdatedAt  *time.Time
 	TokensRevokedAfter *time.Time
+	IsPlatformStaff    bool
+	PlatformRole       string
 }
 
 type EmailCodeRecord struct {
@@ -244,12 +247,14 @@ type SecurityAuthResult struct {
 }
 
 type AuthResultUser struct {
-	ID            string
-	Username      string
-	Status        string
-	Email         string
-	EmailVerified bool
-	CreatedAt     time.Time
+	ID              string
+	Username        string
+	Status          string
+	Email           string
+	EmailVerified   bool
+	IsPlatformStaff bool
+	PlatformRole    string
+	CreatedAt       time.Time
 }
 
 func NewSecurityUseCase(
@@ -339,7 +344,7 @@ func (uc *SecurityUseCase) RegisterWithEmail(ctx context.Context, input Register
 	if err := uc.recordEvent(ctx, &userIDValue{value: user.ID()}, email, "registered_with_email", input.RequestIP, input.UserAgent, now); err != nil {
 		return SecurityAuthResult{}, err
 	}
-	return uc.issueSecurityAuthResult(user, email, true, now)
+	return uc.issueSecurityAuthResult(user, email, true, false, "", now)
 }
 
 func (uc *SecurityUseCase) SendLoginEmailCode(ctx context.Context, input EmailCodeDispatchInput) (EmailCodeDispatchResult, error) {
@@ -374,7 +379,17 @@ func (uc *SecurityUseCase) LoginWithEmailCode(ctx context.Context, input LoginWi
 		return SecurityAuthResult{}, apperr.New(apperr.CodeUnauthenticated, "invalid email or code")
 	}
 	if record.User == nil || !record.User.CanLogin() || record.EmailVerifiedAt == nil {
+		if record.User != nil && record.EmailVerifiedAt != nil {
+			return SecurityAuthResult{}, loginUserStatusError(record.User)
+		}
 		return SecurityAuthResult{}, apperr.New(apperr.CodeUnauthenticated, "invalid email or code")
+	}
+	banned, err := uc.repository.HasActiveAccountBan(ctx, record.User.ID(), now)
+	if err != nil {
+		return SecurityAuthResult{}, fmt.Errorf("check active account ban: %w", err)
+	}
+	if banned {
+		return SecurityAuthResult{}, apperr.New(apperr.CodeAccountBanned, "account is banned")
 	}
 	if err := uc.repository.UpdateLastLogin(ctx, record.User.ID(), now, input.RequestIP); err != nil {
 		return SecurityAuthResult{}, fmt.Errorf("update email code login time: %w", err)
@@ -385,7 +400,7 @@ func (uc *SecurityUseCase) LoginWithEmailCode(ctx context.Context, input LoginWi
 	if err := grantDailyLoginXP(ctx, uc.xpRecorder, record.User.ID(), now); err != nil {
 		return SecurityAuthResult{}, err
 	}
-	return uc.issueSecurityAuthResult(record.User, email, true, now)
+	return uc.issueSecurityAuthResult(record.User, email, true, record.IsPlatformStaff, record.PlatformRole, now)
 }
 
 func (uc *SecurityUseCase) SendPasswordResetEmailCode(ctx context.Context, input EmailCodeDispatchInput) (EmailCodeDispatchResult, error) {
@@ -704,7 +719,7 @@ func (uc *SecurityUseCase) dispatchResult(email string, purpose EmailPurpose) Em
 	}
 }
 
-func (uc *SecurityUseCase) issueSecurityAuthResult(user *userdomain.User, email string, emailVerified bool, now time.Time) (SecurityAuthResult, error) {
+func (uc *SecurityUseCase) issueSecurityAuthResult(user *userdomain.User, email string, emailVerified bool, isPlatformStaff bool, platformRole string, now time.Time) (SecurityAuthResult, error) {
 	tokenValue, tokenType, expiresIn, err := uc.tokenIssuer.IssueAccessToken(user.ID(), now)
 	if err != nil {
 		return SecurityAuthResult{}, fmt.Errorf("issue access token: %w", err)
@@ -714,12 +729,14 @@ func (uc *SecurityUseCase) issueSecurityAuthResult(user *userdomain.User, email 
 		TokenType:   tokenType,
 		ExpiresIn:   int64(expiresIn.Seconds()),
 		User: AuthResultUser{
-			ID:            user.ID().String(),
-			Username:      user.Username().String(),
-			Status:        user.Status().String(),
-			Email:         email,
-			EmailVerified: emailVerified,
-			CreatedAt:     user.CreatedAt(),
+			ID:              user.ID().String(),
+			Username:        user.Username().String(),
+			Status:          user.Status().String(),
+			Email:           email,
+			EmailVerified:   emailVerified,
+			IsPlatformStaff: isPlatformStaff,
+			PlatformRole:    platformRole,
+			CreatedAt:       user.CreatedAt(),
 		},
 	}, nil
 }
