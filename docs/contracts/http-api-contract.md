@@ -252,7 +252,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 所有使用 `limit/offset` 的列表响应都返回 `limit`、`offset`、`next_offset` 和 `has_more`。后端用 `limit + 1` 读取来判断是否还有下一页，响应数组最多返回 `limit` 条；当前页未满时 `has_more=false`，`next_offset=offset+当前返回条数`。`GET /api/v1/search?scope=all` 仍按 communities/posts/users 三个分区分别应用同一组 `limit/offset`，其 `has_more` 表示任一分区还有下一页。
 
-评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；`category=interactions` 严格返回回复、提及和点赞类用户互动通知，不混入 `system`。点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，并在通知响应中返回 `aggregate_count`、`last_actor_id`、`actor` 和 `last_actor` 摘要。帖子/评论来源通知会尽量返回 `context.post_id`、`context.comment_id`、`context.permalink`、`context.post_title`、`context.comment_excerpt`、`context.comment_depth` 和 `context.community`，前端可直接跳转评论锚点。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，`source_type` 为 `post` 或 `comment`。
+评论、回复、帖子点赞、评论点赞和正文 `@username` 提及会写入站内通知；`category=interactions` 严格返回回复、提及和点赞类用户互动通知，不混入 `system`。点赞通知按收件人、通知类型、目标内容和小时窗口聚合未读计数，并在通知响应中返回 `aggregate_count`、`last_actor_id`、`actor` 和 `last_actor` 摘要。`PUT /api/v1/posts/:id/vote` 和 `PUT /api/v1/comments/:id/vote` 以主投票写入为成功边界：`post_votes` / `comment_votes` 写入成功后稳定返回当前 vote；点赞通知、经验、成长事件等副作用失败不会把主投票 HTTP 响应改成失败。只有主投票校验、可见性读取或写入失败时才返回错误，前端可据此可靠回滚。帖子/评论来源通知会尽量返回 `context.post_id`、`context.comment_id`、`context.permalink`、`context.post_title`、`context.comment_excerpt`、`context.comment_depth` 和 `context.community`，前端可直接跳转评论锚点。提及通知在帖子 / 评论发布时生成，编辑时只为新增提及生成，`source_type` 为 `post` 或 `comment`。
 
 社区管理设置和规则接口均需要 Bearer。设置读取允许 owner/moderator 进入管理上下文，设置更新允许社区 owner 或平台 owner 覆盖权限修改 `name`、`description`、`avatar_url` 和 `banner_url`；四个字段均为可选字段但请求至少提供一项，媒体 URL 为空字符串表示清空，非空值必须是绝对 `http/https` URL 且最多 2048 字节。规则列表和 CRUD 允许 owner/moderator 使用，规则按 `position ASC, created_at ASC, id ASC` 返回。
 

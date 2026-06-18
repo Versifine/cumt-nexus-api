@@ -12,6 +12,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediadomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
@@ -1181,6 +1182,79 @@ func TestSetCommentVoteDoesNotNotifyRepeatedUpvote(t *testing.T) {
 	}
 }
 
+func TestSetCommentVoteIgnoresCommentUpvoteNotificationError(t *testing.T) {
+	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	comment := mustComment(t, post.ID(), userdomain.NewGeneratedUserID(), nil, "Body", now)
+	userID := userdomain.NewGeneratedUserID()
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	notifications := &fakeNotificationPublisher{err: errors.New("notification store unavailable")}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	result, err := uc.SetCommentVote(context.Background(), SetCommentVoteInput{
+		CommentID: comment.ID().String(),
+		UserID:    userID,
+		Value:     1,
+	})
+	if err != nil {
+		t.Fatalf("SetCommentVote should ignore notification error after vote write, got %v", err)
+	}
+	if !comments.upsertVoteCalled || result.Vote.Value != 1 {
+		t.Fatalf("expected successful comment vote write, got called=%v result=%#v", comments.upsertVoteCalled, result.Vote)
+	}
+	if !notifications.commentUpvotedCalled {
+		t.Fatal("expected notification side effect to be attempted")
+	}
+}
+
+func TestSetCommentVoteIgnoresCommentUpvoteXPError(t *testing.T) {
+	now := time.Date(2026, 6, 18, 10, 5, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	comment := mustComment(t, post.ID(), userdomain.NewGeneratedUserID(), nil, "Body", now)
+	userID := userdomain.NewGeneratedUserID()
+	comments := &fakeCommentRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error) {
+			return comment, nil
+		},
+	}
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	xp := &fakeXPRecorder{err: errors.New("xp store unavailable")}
+	uc := NewCommentUseCase(comments, posts, func() time.Time { return now })
+	uc.SetXPRecorder(xp)
+
+	result, err := uc.SetCommentVote(context.Background(), SetCommentVoteInput{
+		CommentID: comment.ID().String(),
+		UserID:    userID,
+		Value:     1,
+	})
+	if err != nil {
+		t.Fatalf("SetCommentVote should ignore xp error after vote write, got %v", err)
+	}
+	if !comments.upsertVoteCalled || result.Vote.Value != 1 {
+		t.Fatalf("expected successful comment vote write, got called=%v result=%#v", comments.upsertVoteCalled, result.Vote)
+	}
+	if len(xp.inputs) != 1 {
+		t.Fatalf("expected one xp side effect attempt, got %d", len(xp.inputs))
+	}
+	if xp.inputs[0].SourceType != progressionusecase.XPSourceCommentUpvote {
+		t.Fatalf("expected comment upvote xp source, got %q", xp.inputs[0].SourceType)
+	}
+}
+
 type fakeCommentRepository struct {
 	createFunc                func(ctx context.Context, comment commentdomain.Comment) error
 	findVisibleByIDFunc       func(ctx context.Context, id commentdomain.CommentID) (*commentdomain.Comment, error)
@@ -1350,6 +1424,7 @@ type fakeNotificationPublisher struct {
 	postID               string
 	commentID            string
 	mentions             []fakeMentionNotification
+	err                  error
 }
 
 type fakeMentionNotification struct {
@@ -1380,7 +1455,7 @@ func (f *fakeNotificationPublisher) NotifyCommentUpvoted(ctx context.Context, re
 	f.recipientID = recipientID
 	f.actorID = actorID
 	f.commentID = commentID
-	return nil
+	return f.err
 }
 
 func (f *fakeNotificationPublisher) NotifyMentioned(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
@@ -1391,6 +1466,16 @@ func (f *fakeNotificationPublisher) NotifyMentioned(ctx context.Context, recipie
 		sourceID:    sourceID,
 	})
 	return nil
+}
+
+type fakeXPRecorder struct {
+	inputs []progressionusecase.GrantXPInput
+	err    error
+}
+
+func (f *fakeXPRecorder) GrantXP(ctx context.Context, input progressionusecase.GrantXPInput) error {
+	f.inputs = append(f.inputs, input)
+	return f.err
 }
 
 type fakePublicUserFinder struct {

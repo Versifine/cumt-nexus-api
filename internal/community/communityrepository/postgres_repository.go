@@ -477,6 +477,8 @@ func (repo *PostgresCommunityRepository) ListFollowedActivePublic(ctx context.Co
 			communities.slug,
 			communities.name,
 			communities.description,
+			communities.avatar_url,
+			communities.banner_url,
 			communities.kind,
 			communities.status,
 			communities.visibility,

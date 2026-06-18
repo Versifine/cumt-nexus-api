@@ -711,14 +711,10 @@ func (uc *CommentUseCase) SetCommentVote(ctx context.Context, input SetCommentVo
 		return SetCommentVoteResult{}, fmt.Errorf("upsert comment vote: %w", err)
 	}
 	if uc.shouldNotifyCommentUpvote(comment.AuthorID(), input.UserID, value, previousVotes[comment.ID()]) {
-		if err := uc.notifications.NotifyCommentUpvoted(ctx, comment.AuthorID(), input.UserID, comment.ID().String()); err != nil {
-			return SetCommentVoteResult{}, err
-		}
+		_ = uc.notifications.NotifyCommentUpvoted(ctx, comment.AuthorID(), input.UserID, comment.ID().String())
 	}
 	if comment.AuthorID() != input.UserID && value == votedomain.VoteValueUp && previousVotes[comment.ID()] != votedomain.VoteValueUp {
-		if err := uc.grantXP(ctx, comment.AuthorID(), input.UserID, progressionusecase.XPSourceCommentUpvote, comment.ID().String()+":"+input.UserID.String()); err != nil {
-			return SetCommentVoteResult{}, err
-		}
+		_ = uc.grantXP(ctx, comment.AuthorID(), input.UserID, progressionusecase.XPSourceCommentUpvote, comment.ID().String()+":"+input.UserID.String())
 	}
 
 	return SetCommentVoteResult{

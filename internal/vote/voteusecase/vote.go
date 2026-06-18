@@ -109,14 +109,10 @@ func (uc *PostVoteUseCase) SetPostVote(ctx context.Context, input SetPostVoteInp
 		return SetPostVoteResult{}, fmt.Errorf("upsert post vote: %w", err)
 	}
 	if uc.shouldNotifyPostUpvote(post.AuthorID(), input.UserID, value, previousVote) {
-		if err := uc.notifications.NotifyPostUpvoted(ctx, post.AuthorID(), input.UserID, post.ID().String()); err != nil {
-			return SetPostVoteResult{}, err
-		}
+		_ = uc.notifications.NotifyPostUpvoted(ctx, post.AuthorID(), input.UserID, post.ID().String())
 	}
 	if post.AuthorID() != input.UserID && value == votedomain.VoteValueUp && (previousVote == nil || previousVote.Value() != votedomain.VoteValueUp) {
-		if err := uc.grantXP(ctx, post.AuthorID(), input.UserID, progressionusecase.XPSourcePostUpvote, post.ID().String()+":"+input.UserID.String()); err != nil {
-			return SetPostVoteResult{}, err
-		}
+		_ = uc.grantXP(ctx, post.AuthorID(), input.UserID, progressionusecase.XPSourcePostUpvote, post.ID().String()+":"+input.UserID.String())
 	}
 
 	return SetPostVoteResult{

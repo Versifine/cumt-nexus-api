@@ -243,6 +243,46 @@ func TestPostgresCommunityRepositoryUpdateDetails(t *testing.T) {
 	}
 }
 
+func TestPostgresCommunityRepositoryListFollowedActivePublicScansMediaColumns(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresCommunityRepository(pool)
+	now := testNow()
+
+	userID := insertTestUser(ctx, t, pool, false)
+	community := mustSystemCommunity(t, mustCommunitySlug(t, "repo-"+randomSuffix()), now)
+	if err := community.UpdateSettings(
+		community.Name(),
+		community.Description(),
+		"https://example.com/community-avatar.png",
+		"https://example.com/community-banner.png",
+		now,
+	); err != nil {
+		t.Fatalf("UpdateSettings domain returned error: %v", err)
+	}
+	if err := repo.Create(ctx, *community); err != nil {
+		t.Fatalf("Create community returned error: %v", err)
+	}
+	cleanupCommunity(ctx, t, pool, community.ID())
+
+	if err := repo.FollowCommunity(ctx, community.ID(), userID, now); err != nil {
+		t.Fatalf("FollowCommunity returned error: %v", err)
+	}
+	cleanupCommunityFollow(ctx, t, pool, community.ID(), userID)
+
+	communities, err := repo.ListFollowedActivePublic(ctx, userID, 20, 0)
+	if err != nil {
+		t.Fatalf("ListFollowedActivePublic returned error: %v", err)
+	}
+
+	got := findCommunityByID(communities, community.ID())
+	if got == nil {
+		t.Fatalf("expected followed community %q in list", community.ID().String())
+	}
+	if got.AvatarURL() != "https://example.com/community-avatar.png" || got.BannerURL() != "https://example.com/community-banner.png" {
+		t.Fatalf("expected followed community media fields, got avatar=%q banner=%q", got.AvatarURL(), got.BannerURL())
+	}
+}
+
 func TestPostgresCommunityRepositoryRuleCRUD(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresCommunityRepository(pool)
@@ -755,6 +795,20 @@ func cleanupMembership(ctx context.Context, t *testing.T, pool *pgxpool.Pool, co
 	})
 }
 
+func cleanupCommunityFollow(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, userID userdomain.UserID) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, `
+			DELETE FROM community_follows
+			WHERE community_id = $1::uuid
+				AND user_id = $2::uuid
+		`, communityID.String(), userID.String()); err != nil {
+			t.Fatalf("cleanup community follow community=%q user=%q: %v", communityID.String(), userID.String(), err)
+		}
+	})
+}
+
 func cleanupApplication(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id communitydomain.CommunityApplicationID) {
 	t.Helper()
 
@@ -994,6 +1048,15 @@ func containsApplicationID(applications []communitydomain.CommunityApplication, 
 		}
 	}
 	return false
+}
+
+func findCommunityByID(communities []communitydomain.Community, id communitydomain.CommunityID) *communitydomain.Community {
+	for index := range communities {
+		if communities[index].ID() == id {
+			return &communities[index]
+		}
+	}
+	return nil
 }
 
 func hasAppCode(err error, code apperr.Code) bool {

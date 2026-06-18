@@ -9,6 +9,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/vote/votedomain"
 )
@@ -105,6 +106,69 @@ func TestSetPostVoteDoesNotNotifyRepeatedUpvote(t *testing.T) {
 	}
 	if notifications.postUpvotedCalled {
 		t.Fatal("did not expect repeated upvote notification")
+	}
+}
+
+func TestSetPostVoteIgnoresPostUpvoteNotificationError(t *testing.T) {
+	now := time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	userID := userdomain.NewGeneratedUserID()
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	votes := &fakePostVoteRepository{}
+	notifications := &fakeNotificationPublisher{err: errors.New("notification store unavailable")}
+	uc := NewPostVoteUseCase(posts, votes, func() time.Time { return now })
+	uc.SetNotificationPublisher(notifications)
+
+	result, err := uc.SetPostVote(context.Background(), SetPostVoteInput{
+		PostID: post.ID().String(),
+		UserID: userID,
+		Value:  1,
+	})
+	if err != nil {
+		t.Fatalf("SetPostVote should ignore notification error after vote write, got %v", err)
+	}
+	if !votes.upsertCalled || result.Vote.Value != 1 {
+		t.Fatalf("expected successful vote write, got called=%v result=%#v", votes.upsertCalled, result.Vote)
+	}
+	if !notifications.postUpvotedCalled {
+		t.Fatal("expected notification side effect to be attempted")
+	}
+}
+
+func TestSetPostVoteIgnoresPostUpvoteXPError(t *testing.T) {
+	now := time.Date(2026, 6, 18, 9, 5, 0, 0, time.UTC)
+	post := mustPost(t, now)
+	userID := userdomain.NewGeneratedUserID()
+	posts := &fakePostRepository{
+		findVisibleByIDFunc: func(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+			return post, nil
+		},
+	}
+	votes := &fakePostVoteRepository{}
+	xp := &fakeXPRecorder{err: errors.New("xp store unavailable")}
+	uc := NewPostVoteUseCase(posts, votes, func() time.Time { return now })
+	uc.SetXPRecorder(xp)
+
+	result, err := uc.SetPostVote(context.Background(), SetPostVoteInput{
+		PostID: post.ID().String(),
+		UserID: userID,
+		Value:  1,
+	})
+	if err != nil {
+		t.Fatalf("SetPostVote should ignore xp error after vote write, got %v", err)
+	}
+	if !votes.upsertCalled || result.Vote.Value != 1 {
+		t.Fatalf("expected successful vote write, got called=%v result=%#v", votes.upsertCalled, result.Vote)
+	}
+	if len(xp.inputs) != 1 {
+		t.Fatalf("expected one xp side effect attempt, got %d", len(xp.inputs))
+	}
+	if xp.inputs[0].SourceType != progressionusecase.XPSourcePostUpvote {
+		t.Fatalf("expected post upvote xp source, got %q", xp.inputs[0].SourceType)
 	}
 }
 
@@ -243,6 +307,7 @@ type fakeNotificationPublisher struct {
 	recipientID       userdomain.UserID
 	actorID           userdomain.UserID
 	postID            string
+	err               error
 }
 
 func (f *fakeNotificationPublisher) NotifyPostUpvoted(ctx context.Context, recipientID userdomain.UserID, actorID userdomain.UserID, postID string) error {
@@ -250,7 +315,17 @@ func (f *fakeNotificationPublisher) NotifyPostUpvoted(ctx context.Context, recip
 	f.recipientID = recipientID
 	f.actorID = actorID
 	f.postID = postID
-	return nil
+	return f.err
+}
+
+type fakeXPRecorder struct {
+	inputs []progressionusecase.GrantXPInput
+	err    error
+}
+
+func (f *fakeXPRecorder) GrantXP(ctx context.Context, input progressionusecase.GrantXPInput) error {
+	f.inputs = append(f.inputs, input)
+	return f.err
 }
 
 func mustPost(t *testing.T, now time.Time) *postdomain.Post {
