@@ -307,8 +307,25 @@ func (repo *PostgresPostRepository) ListFollowingInPublicCommunities(ctx context
 	return repo.listVisiblePosts(
 		ctx,
 		"list following posts in public communities",
-		"INNER JOIN communities ON communities.id = posts.community_id INNER JOIN community_follows ON community_follows.community_id = posts.community_id",
-		"community_follows.user_id = $1::uuid AND posts.status = 'visible' AND communities.status = 'active' AND communities.visibility = 'public'",
+		"INNER JOIN communities ON communities.id = posts.community_id INNER JOIN users AS authors ON authors.id = posts.author_id",
+		`posts.status = 'visible'
+			AND communities.status = 'active'
+			AND communities.visibility = 'public'
+			AND authors.status = 'active'
+			AND (
+				EXISTS (
+					SELECT 1
+					FROM community_follows
+					WHERE community_follows.community_id = posts.community_id
+						AND community_follows.user_id = $1::uuid
+				)
+				OR EXISTS (
+					SELECT 1
+					FROM user_follows
+					WHERE user_follows.following_id = posts.author_id
+						AND user_follows.follower_id = $1::uuid
+				)
+			)`,
 		[]any{viewerID.String()},
 		sort,
 		createdAfter,

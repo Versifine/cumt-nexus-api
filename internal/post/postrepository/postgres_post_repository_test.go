@@ -190,15 +190,34 @@ func TestPostgresPostRepositoryListFollowingInPublicCommunities(t *testing.T) {
 	repo := NewPostgresPostRepository(pool)
 	now := testNow()
 
-	authorID := insertTestUser(ctx, t, pool)
 	viewerID := insertTestUser(ctx, t, pool)
-	followedCommunityID := insertTestCommunity(ctx, t, pool, authorID, "followed-"+randomSuffix())
-	unfollowedCommunityID := insertTestCommunity(ctx, t, pool, authorID, "unfollowed-"+randomSuffix())
-	insertTestCommunityFollow(ctx, t, pool, followedCommunityID, viewerID)
+	communityAuthorID := insertTestUser(ctx, t, pool)
+	followedAuthorID := insertTestUser(ctx, t, pool)
+	bothFollowedAuthorID := insertTestUser(ctx, t, pool)
+	disabledFollowedAuthorID := insertTestUser(ctx, t, pool)
+	unfollowedAuthorID := insertTestUser(ctx, t, pool)
 
-	followedPost := mustPost(t, followedCommunityID, authorID, "Followed latest", now.Add(time.Minute))
-	unfollowedPost := mustPost(t, unfollowedCommunityID, authorID, "Unfollowed latest", now.Add(2*time.Minute))
-	for _, post := range []*postdomain.Post{followedPost, unfollowedPost} {
+	followedCommunityID := insertTestCommunity(ctx, t, pool, communityAuthorID, "followed-"+randomSuffix())
+	authorOnlyCommunityID := insertTestCommunity(ctx, t, pool, followedAuthorID, "author-"+randomSuffix())
+	bothFollowedCommunityID := insertTestCommunity(ctx, t, pool, bothFollowedAuthorID, "both-"+randomSuffix())
+	disabledAuthorCommunityID := insertTestCommunity(ctx, t, pool, disabledFollowedAuthorID, "disabled-author-"+randomSuffix())
+	unfollowedCommunityID := insertTestCommunity(ctx, t, pool, unfollowedAuthorID, "unfollowed-"+randomSuffix())
+	suspendedCommunityID := insertTestCommunityWithStatus(ctx, t, pool, followedAuthorID, "suspended-following-"+randomSuffix(), "suspended")
+
+	insertTestCommunityFollow(ctx, t, pool, followedCommunityID, viewerID)
+	insertTestCommunityFollow(ctx, t, pool, bothFollowedCommunityID, viewerID)
+	insertTestUserFollow(ctx, t, pool, viewerID, followedAuthorID)
+	insertTestUserFollow(ctx, t, pool, viewerID, bothFollowedAuthorID)
+	insertTestUserFollow(ctx, t, pool, viewerID, disabledFollowedAuthorID)
+	updateTestUserStatus(ctx, t, pool, disabledFollowedAuthorID, "disabled")
+
+	followedCommunityPost := mustPost(t, followedCommunityID, communityAuthorID, "Followed community latest", now.Add(time.Minute))
+	followedAuthorPost := mustPost(t, authorOnlyCommunityID, followedAuthorID, "Followed author latest", now.Add(2*time.Minute))
+	bothFollowedPost := mustPost(t, bothFollowedCommunityID, bothFollowedAuthorID, "Both followed latest", now.Add(3*time.Minute))
+	disabledAuthorPost := mustPost(t, disabledAuthorCommunityID, disabledFollowedAuthorID, "Disabled author latest", now.Add(4*time.Minute))
+	suspendedCommunityPost := mustPost(t, suspendedCommunityID, followedAuthorID, "Suspended community latest", now.Add(5*time.Minute))
+	unfollowedPost := mustPost(t, unfollowedCommunityID, unfollowedAuthorID, "Unfollowed latest", now.Add(6*time.Minute))
+	for _, post := range []*postdomain.Post{followedCommunityPost, followedAuthorPost, bothFollowedPost, disabledAuthorPost, suspendedCommunityPost, unfollowedPost} {
 		if err := repo.Create(ctx, *post); err != nil {
 			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
 		}
@@ -213,12 +232,13 @@ func TestPostgresPostRepositoryListFollowingInPublicCommunities(t *testing.T) {
 	var gotIDs []postdomain.PostID
 	for _, post := range posts {
 		switch post.ID() {
-		case followedPost.ID(), unfollowedPost.ID():
+		case followedCommunityPost.ID(), followedAuthorPost.ID(), bothFollowedPost.ID(), disabledAuthorPost.ID(), suspendedCommunityPost.ID(), unfollowedPost.ID():
 			gotIDs = append(gotIDs, post.ID())
 		}
 	}
-	if len(gotIDs) != 1 || gotIDs[0] != followedPost.ID() {
-		t.Fatalf("expected only followed community post, got %#v", gotIDs)
+	wantIDs := []postdomain.PostID{bothFollowedPost.ID(), followedAuthorPost.ID(), followedCommunityPost.ID()}
+	if !samePostIDs(gotIDs, wantIDs) {
+		t.Fatalf("expected following feed ids %#v, got %#v", wantIDs, gotIDs)
 	}
 }
 
@@ -586,7 +606,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requirePostSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "community_follows", "post_content_refs"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "community_follows", "user_follows", "post_content_refs"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -681,6 +701,18 @@ func updateTestUserProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool
 	}
 }
 
+func updateTestUserStatus(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID userdomain.UserID, status string) {
+	t.Helper()
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE users
+		SET status = $2, updated_at = $3
+		WHERE id = $1::uuid
+	`, userID.String(), status, testNow()); err != nil {
+		t.Fatalf("update test user status: %v", err)
+	}
+}
+
 func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, createdBy userdomain.UserID, rawSlug string) communitydomain.CommunityID {
 	return insertTestCommunityWithStatus(ctx, t, pool, createdBy, rawSlug, "active")
 }
@@ -771,6 +803,32 @@ func insertTestCommunityFollow(ctx context.Context, t *testing.T, pool *pgxpool.
 	})
 }
 
+func insertTestUserFollow(ctx context.Context, t *testing.T, pool *pgxpool.Pool, followerID userdomain.UserID, followingID userdomain.UserID) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO user_follows (
+			follower_id,
+			following_id,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3)
+	`, followerID.String(), followingID.String(), testNow())
+	if err != nil {
+		t.Fatalf("insert test user follow: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `
+			DELETE FROM user_follows
+			WHERE follower_id = $1::uuid
+				AND following_id = $2::uuid
+		`, followerID.String(), followingID.String()); err != nil {
+			t.Fatalf("cleanup test user follow follower=%q following=%q: %v", followerID.String(), followingID.String(), err)
+		}
+	})
+}
+
 func insertTestCommunityMembership(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, userID userdomain.UserID, role communitydomain.MembershipRole) {
 	t.Helper()
 
@@ -816,6 +874,18 @@ func postIDs(posts []postdomain.Post) []postdomain.PostID {
 		ids = append(ids, post.ID())
 	}
 	return ids
+}
+
+func samePostIDs(got []postdomain.PostID, want []postdomain.PostID) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func assertPostRepositoryContentRefs(t *testing.T, got []postusecase.ContentRef, want []postusecase.ContentRef) {
