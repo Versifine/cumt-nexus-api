@@ -174,6 +174,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/communities/:slug/moderation/automod/dry-run | Bearer | 社区 Automod dry-run |
 | GET | /api/v1/communities/:slug/moderation/content-controls | Bearer | 社区内容控制配置 |
 | PATCH | /api/v1/communities/:slug/moderation/content-controls | Bearer | 更新社区内容控制配置 |
+| GET | /api/v1/communities/:slug/modmail/conversations | Bearer | 社区 Modmail 会话列表 |
+| POST | /api/v1/communities/:slug/modmail/conversations | Bearer | 创建社区 Modmail 会话 |
+| GET | /api/v1/communities/:slug/modmail/conversations/:conversation_id | Bearer | 社区 Modmail 会话详情 |
+| POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/messages | Bearer | 发送社区 Modmail 回复 |
+| POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/internal-notes | Bearer | 新增社区 Modmail 内部 note |
+| PATCH | /api/v1/communities/:slug/modmail/conversations/:conversation_id | Bearer | 更新社区 Modmail 会话状态 |
 | GET | /api/v1/communities/:slug/moderation/logs | Bearer | 社区 Mod Log |
 | GET | /api/v1/moderation/reports | Bearer | 审核台举报列表 |
 | GET | /api/v1/moderation/reports/:id | Bearer | 审核台举报详情 |
@@ -259,6 +265,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `POST /api/v1/communities/:slug/moderation/automod/dry-run` | none | 社区 owner/moderator 或平台 owner；输入 `target_type=post|comment`、`title`、`body`、`author_id`、`links`，返回命中规则、建议动作和原因 |
 | `GET /api/v1/communities/:slug/moderation/content-controls` | none | 社区 owner/moderator 或平台 owner；返回关键词、域名、账号年龄、频率和新账号/链接过滤开关 |
 | `PATCH /api/v1/communities/:slug/moderation/content-controls` | none | 社区 owner/moderator 或平台 owner；更新内容控制并写入 `community_moderation_logs` |
+| `GET /api/v1/communities/:slug/modmail/conversations` | `folder`, `limit`, `offset` | 社区 owner/moderator 或平台 owner；`folder=inbox|needs_reply|in_progress|archived`，返回会话摘要和当前 actor 未读数 |
+| `POST /api/v1/communities/:slug/modmail/conversations` | none | 社区 owner/moderator 或平台 owner；创建会话并写入首条消息 |
+| `GET /api/v1/communities/:slug/modmail/conversations/:conversation_id` | none | 社区 owner/moderator 或平台 owner；返回会话摘要和消息列表，内部 note 对管理团队可见 |
+| `POST /api/v1/communities/:slug/modmail/conversations/:conversation_id/messages` | none | 社区 owner/moderator 或平台 owner；新增公开 Modmail 回复 |
+| `POST /api/v1/communities/:slug/modmail/conversations/:conversation_id/internal-notes` | none | 社区 owner/moderator 或平台 owner；新增仅管理团队可见内部 note |
+| `PATCH /api/v1/communities/:slug/modmail/conversations/:conversation_id` | none | 社区 owner/moderator 或平台 owner；支持更新 `folder/status/assigned_to` 和 `mark_read` |
 | `GET /api/v1/communities/:slug/moderation/logs` | `action`, `actor_id`, `target_type`, `target_id`, `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/search` | `q`, `scope`, `limit`, `offset` | `scope=all|communities|posts|users`；`all` 当前按 communities/posts/users 三个分区各返回最多 `limit` 条；PostgreSQL full-text search 结合字段权重、精确/前缀/子串命中和轻量时间衰减排序，帖子字段权重为标题 > 社区名/slug > 正文 |
 | `GET /api/v1/notifications` | `category`, `status`, `limit`, `offset` | `category=all|interactions|replies|mentions|likes|system`；不传 `status` 默认 `all`，可显式传 `status=all|unread|read` |

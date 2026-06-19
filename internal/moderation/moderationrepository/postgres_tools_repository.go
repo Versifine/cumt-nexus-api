@@ -332,6 +332,328 @@ func contentControlsState(controls moderationusecase.ContentControls) map[string
 	}
 }
 
+func (repo *PostgresModerationRepository) ListModmailConversations(ctx context.Context, input moderationusecase.ListModmailConversationsRecordInput) ([]moderationusecase.ModmailConversation, error) {
+	const query = `
+		SELECT
+			c.id::text, c.community_id::text, c.subject, c.user_id::text, c.status, c.folder,
+			COALESCE(c.assigned_to::text, ''), c.last_message_at,
+			(
+				SELECT COUNT(*)::int
+				FROM community_modmail_messages m
+				LEFT JOIN community_modmail_reads r ON r.conversation_id = c.id AND r.user_id = $3::uuid
+				WHERE m.conversation_id = c.id
+					AND m.author_id <> $3::uuid
+					AND (r.read_at IS NULL OR m.created_at > r.read_at)
+			) AS unread_count,
+			c.created_at, c.updated_at
+		FROM community_modmail_conversations c
+		WHERE c.community_id = $1::uuid
+			AND c.folder = $2
+		ORDER BY c.last_message_at DESC, c.id DESC
+		LIMIT $4
+		OFFSET $5
+	`
+	rows, err := repo.pool.Query(ctx, query, input.CommunityID.String(), input.Folder, input.ActorID.String(), input.Limit, input.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	conversations := make([]moderationusecase.ModmailConversation, 0)
+	for rows.Next() {
+		conversation, err := scanModmailConversation(rows)
+		if err != nil {
+			return nil, err
+		}
+		conversations = append(conversations, conversation)
+	}
+	return conversations, rows.Err()
+}
+
+func (repo *PostgresModerationRepository) CreateModmailConversation(ctx context.Context, input moderationusecase.CreateModmailConversationRecordInput) (moderationusecase.ModmailConversationDetail, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return moderationusecase.ModmailConversationDetail{}, fmt.Errorf("begin modmail conversation transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	const insertConversation = `
+		INSERT INTO community_modmail_conversations (
+			id, community_id, user_id, subject, status, folder, created_by, last_message_at, created_at, updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'open', 'inbox', $5::uuid, $6, $6, $6)
+	`
+	if _, err := tx.Exec(ctx, insertConversation, input.ID, input.CommunityID.String(), input.UserID.String(), input.Subject, input.ActorID.String(), input.CreatedAt); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, mapPostgresWriteError("insert modmail conversation", err)
+	}
+	if err := insertModmailMessage(ctx, tx, input.MessageID, input.ID, input.ActorID.String(), input.Body, false, input.CreatedAt); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	if err := upsertModmailRead(ctx, tx, input.ID, input.ActorID.String(), input.CreatedAt); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	if err := insertCommunityModLog(ctx, tx, input.CommunityID, moderationusecase.ApplyModerationActionRecordInput{
+		ActorID:    input.ActorID,
+		TargetType: moderationdomain.TargetType("modmail_conversation"),
+		TargetID:   input.ID,
+		Action:     moderationdomain.ActionType("create_modmail_conversation"),
+		CreatedAt:  input.CreatedAt,
+	}, map[string]any{}, map[string]any{"subject": input.Subject, "user_id": input.UserID.String()}); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, fmt.Errorf("commit modmail conversation transaction: %w", err)
+	}
+	committed = true
+	return repo.GetModmailConversation(ctx, moderationusecase.GetModmailConversationRecordInput{
+		CommunityID:    input.CommunityID,
+		ActorID:        input.ActorID,
+		ConversationID: input.ID,
+	})
+}
+
+func (repo *PostgresModerationRepository) GetModmailConversation(ctx context.Context, input moderationusecase.GetModmailConversationRecordInput) (moderationusecase.ModmailConversationDetail, error) {
+	const conversationQuery = `
+		SELECT
+			c.id::text, c.community_id::text, c.subject, c.user_id::text, c.status, c.folder,
+			COALESCE(c.assigned_to::text, ''), c.last_message_at,
+			(
+				SELECT COUNT(*)::int
+				FROM community_modmail_messages m
+				LEFT JOIN community_modmail_reads r ON r.conversation_id = c.id AND r.user_id = $3::uuid
+				WHERE m.conversation_id = c.id
+					AND m.author_id <> $3::uuid
+					AND (r.read_at IS NULL OR m.created_at > r.read_at)
+			) AS unread_count,
+			c.created_at, c.updated_at
+		FROM community_modmail_conversations c
+		WHERE c.community_id = $1::uuid
+			AND c.id = $2::uuid
+	`
+	conversation, err := scanModmailConversation(repo.pool.QueryRow(ctx, conversationQuery, input.CommunityID.String(), input.ConversationID, input.ActorID.String()))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return moderationusecase.ModmailConversationDetail{}, apperr.New(apperr.CodeNotFound, "modmail conversation not found")
+		}
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	messages, err := repo.listModmailMessages(ctx, input.ConversationID)
+	if err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	return moderationusecase.ModmailConversationDetail{Conversation: conversation, Messages: messages}, nil
+}
+
+func (repo *PostgresModerationRepository) AddModmailMessage(ctx context.Context, input moderationusecase.AddModmailMessageRecordInput) (moderationusecase.ModmailConversationDetail, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return moderationusecase.ModmailConversationDetail{}, fmt.Errorf("begin modmail message transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err := ensureModmailConversation(ctx, tx, input.CommunityID, input.ConversationID); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	if err := insertModmailMessage(ctx, tx, input.ID, input.ConversationID, input.ActorID.String(), input.Body, input.IsInternal, input.CreatedAt); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE community_modmail_conversations
+		SET last_message_at = $3, updated_at = $3
+		WHERE community_id = $1::uuid AND id = $2::uuid
+	`, input.CommunityID.String(), input.ConversationID, input.CreatedAt); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, mapPostgresWriteError("update modmail conversation timestamp", err)
+	}
+	if err := upsertModmailRead(ctx, tx, input.ConversationID, input.ActorID.String(), input.CreatedAt); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	action := "add_modmail_message"
+	if input.IsInternal {
+		action = "add_modmail_internal_note"
+	}
+	if err := insertCommunityModLog(ctx, tx, input.CommunityID, moderationusecase.ApplyModerationActionRecordInput{
+		ActorID:    input.ActorID,
+		TargetType: moderationdomain.TargetType("modmail_conversation"),
+		TargetID:   input.ConversationID,
+		Action:     moderationdomain.ActionType(action),
+		CreatedAt:  input.CreatedAt,
+	}, map[string]any{}, map[string]any{"message_id": input.ID, "is_internal": input.IsInternal}); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return moderationusecase.ModmailConversationDetail{}, fmt.Errorf("commit modmail message transaction: %w", err)
+	}
+	committed = true
+	return repo.GetModmailConversation(ctx, moderationusecase.GetModmailConversationRecordInput{
+		CommunityID:    input.CommunityID,
+		ActorID:        input.ActorID,
+		ConversationID: input.ConversationID,
+	})
+}
+
+func (repo *PostgresModerationRepository) UpdateModmailConversation(ctx context.Context, input moderationusecase.UpdateModmailConversationRecordInput) (moderationusecase.ModmailConversation, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return moderationusecase.ModmailConversation{}, fmt.Errorf("begin modmail update transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	before, err := scanModmailConversation(tx.QueryRow(ctx, `
+		SELECT id::text, community_id::text, subject, user_id::text, status, folder, COALESCE(assigned_to::text, ''), last_message_at, 0, created_at, updated_at
+		FROM community_modmail_conversations
+		WHERE community_id = $1::uuid AND id = $2::uuid
+		FOR UPDATE
+	`, input.CommunityID.String(), input.ConversationID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return moderationusecase.ModmailConversation{}, apperr.New(apperr.CodeNotFound, "modmail conversation not found")
+		}
+		return moderationusecase.ModmailConversation{}, err
+	}
+	assignedTo := any(nil)
+	if input.AssignedTo != "" {
+		assignedTo = input.AssignedTo
+	}
+	const query = `
+		UPDATE community_modmail_conversations
+		SET folder = $3,
+			status = $4,
+			assigned_to = $5::uuid,
+			updated_at = $6
+		WHERE community_id = $1::uuid AND id = $2::uuid
+		RETURNING id::text, community_id::text, subject, user_id::text, status, folder, COALESCE(assigned_to::text, ''), last_message_at, 0, created_at, updated_at
+	`
+	conversation, err := scanModmailConversation(tx.QueryRow(ctx, query, input.CommunityID.String(), input.ConversationID, input.Folder, input.Status, assignedTo, input.UpdatedAt))
+	if err != nil {
+		return moderationusecase.ModmailConversation{}, mapPostgresWriteError("update modmail conversation", err)
+	}
+	if input.MarkRead {
+		if err := upsertModmailRead(ctx, tx, input.ConversationID, input.ActorID.String(), input.UpdatedAt); err != nil {
+			return moderationusecase.ModmailConversation{}, err
+		}
+	}
+	if err := insertCommunityModLog(ctx, tx, input.CommunityID, moderationusecase.ApplyModerationActionRecordInput{
+		ActorID:    input.ActorID,
+		TargetType: moderationdomain.TargetType("modmail_conversation"),
+		TargetID:   input.ConversationID,
+		Action:     moderationdomain.ActionType("update_modmail_conversation"),
+		CreatedAt:  input.UpdatedAt,
+	}, modmailConversationState(before), modmailConversationState(conversation)); err != nil {
+		return moderationusecase.ModmailConversation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return moderationusecase.ModmailConversation{}, fmt.Errorf("commit modmail update transaction: %w", err)
+	}
+	committed = true
+	detail, err := repo.GetModmailConversation(ctx, moderationusecase.GetModmailConversationRecordInput{
+		CommunityID:    input.CommunityID,
+		ActorID:        input.ActorID,
+		ConversationID: input.ConversationID,
+	})
+	if err != nil {
+		return moderationusecase.ModmailConversation{}, err
+	}
+	return detail.Conversation, nil
+}
+
+func scanModmailConversation(row rowScanner) (moderationusecase.ModmailConversation, error) {
+	var conversation moderationusecase.ModmailConversation
+	if err := row.Scan(
+		&conversation.ID,
+		&conversation.CommunityID,
+		&conversation.Subject,
+		&conversation.UserID,
+		&conversation.Status,
+		&conversation.Folder,
+		&conversation.AssignedTo,
+		&conversation.LastMessageAt,
+		&conversation.UnreadCount,
+		&conversation.CreatedAt,
+		&conversation.UpdatedAt,
+	); err != nil {
+		return moderationusecase.ModmailConversation{}, err
+	}
+	return conversation, nil
+}
+
+func (repo *PostgresModerationRepository) listModmailMessages(ctx context.Context, conversationID string) ([]moderationusecase.ModmailMessage, error) {
+	rows, err := repo.pool.Query(ctx, `
+		SELECT id::text, conversation_id::text, author_id::text, body, is_internal, created_at
+		FROM community_modmail_messages
+		WHERE conversation_id = $1::uuid
+		ORDER BY created_at ASC, id ASC
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	messages := make([]moderationusecase.ModmailMessage, 0)
+	for rows.Next() {
+		var message moderationusecase.ModmailMessage
+		if err := rows.Scan(&message.ID, &message.ConversationID, &message.AuthorID, &message.Body, &message.IsInternal, &message.CreatedAt); err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, rows.Err()
+}
+
+func ensureModmailConversation(ctx context.Context, tx pgx.Tx, communityID communitydomain.CommunityID, conversationID string) error {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM community_modmail_conversations
+			WHERE community_id = $1::uuid AND id = $2::uuid
+		)
+	`, communityID.String(), conversationID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return apperr.New(apperr.CodeNotFound, "modmail conversation not found")
+	}
+	return nil
+}
+
+func insertModmailMessage(ctx context.Context, db postgresExecutor, id string, conversationID string, authorID string, body string, isInternal bool, createdAt time.Time) error {
+	_, err := db.Exec(ctx, `
+		INSERT INTO community_modmail_messages (id, conversation_id, author_id, body, is_internal, created_at)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6)
+	`, id, conversationID, authorID, body, isInternal, createdAt)
+	if err != nil {
+		return mapPostgresWriteError("insert modmail message", err)
+	}
+	return nil
+}
+
+func upsertModmailRead(ctx context.Context, db postgresExecutor, conversationID string, userID string, readAt time.Time) error {
+	_, err := db.Exec(ctx, `
+		INSERT INTO community_modmail_reads (conversation_id, user_id, read_at)
+		VALUES ($1::uuid, $2::uuid, $3)
+		ON CONFLICT (conversation_id, user_id) DO UPDATE
+		SET read_at = EXCLUDED.read_at
+	`, conversationID, userID, readAt)
+	return err
+}
+
+func modmailConversationState(conversation moderationusecase.ModmailConversation) map[string]any {
+	return map[string]any{
+		"status":      conversation.Status,
+		"folder":      conversation.Folder,
+		"assigned_to": conversation.AssignedTo,
+	}
+}
+
 func (repo *PostgresModerationRepository) listReportQueue(ctx context.Context, communityID any, queue string, limit int, offset int) ([]moderationusecase.ModQueueItem, error) {
 	const query = `
 		WITH report_targets AS (

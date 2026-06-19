@@ -28,6 +28,8 @@ const (
 	MaxModFlairRunes         = 64
 	MaxAutomodConfigRunes    = 20000
 	MaxContentControlItems   = 100
+	MaxModmailSubjectRunes   = 160
+	MaxModmailBodyRunes      = 4000
 	UserStateBanned          = "banned"
 	UserStateMuted           = "muted"
 	UserStateApproved        = "approved"
@@ -89,6 +91,11 @@ type ToolsRepository interface {
 	ListAutomodVersions(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]AutomodVersion, error)
 	GetContentControls(ctx context.Context, communityID communitydomain.CommunityID) (ContentControls, error)
 	UpsertContentControls(ctx context.Context, input UpsertContentControlsRecordInput) (ContentControls, error)
+	ListModmailConversations(ctx context.Context, input ListModmailConversationsRecordInput) ([]ModmailConversation, error)
+	CreateModmailConversation(ctx context.Context, input CreateModmailConversationRecordInput) (ModmailConversationDetail, error)
+	GetModmailConversation(ctx context.Context, input GetModmailConversationRecordInput) (ModmailConversationDetail, error)
+	AddModmailMessage(ctx context.Context, input AddModmailMessageRecordInput) (ModmailConversationDetail, error)
+	UpdateModmailConversation(ctx context.Context, input UpdateModmailConversationRecordInput) (ModmailConversation, error)
 }
 
 type PlatformOwnerRepository interface {
@@ -190,6 +197,52 @@ type UpsertContentControlsRecordInput struct {
 	BlockNewAccounts        bool
 	FilterLinks             bool
 	UpdatedAt               time.Time
+}
+
+type ListModmailConversationsRecordInput struct {
+	CommunityID communitydomain.CommunityID
+	ActorID     userdomain.UserID
+	Folder      string
+	Limit       int
+	Offset      int
+}
+
+type CreateModmailConversationRecordInput struct {
+	ID          string
+	MessageID   string
+	CommunityID communitydomain.CommunityID
+	ActorID     userdomain.UserID
+	UserID      userdomain.UserID
+	Subject     string
+	Body        string
+	CreatedAt   time.Time
+}
+
+type GetModmailConversationRecordInput struct {
+	CommunityID    communitydomain.CommunityID
+	ActorID        userdomain.UserID
+	ConversationID string
+}
+
+type AddModmailMessageRecordInput struct {
+	ID             string
+	CommunityID    communitydomain.CommunityID
+	ActorID        userdomain.UserID
+	ConversationID string
+	Body           string
+	IsInternal     bool
+	CreatedAt      time.Time
+}
+
+type UpdateModmailConversationRecordInput struct {
+	CommunityID    communitydomain.CommunityID
+	ActorID        userdomain.UserID
+	ConversationID string
+	Folder         string
+	Status         string
+	AssignedTo     string
+	MarkRead       bool
+	UpdatedAt      time.Time
 }
 
 type ListModQueueInput struct {
@@ -451,6 +504,63 @@ type ContentControlsResult struct {
 	Controls ContentControls
 }
 
+type ListModmailConversationsInput struct {
+	ActorID       userdomain.UserID
+	CommunitySlug string
+	Folder        string
+	Limit         int
+	Offset        int
+}
+
+type ListModmailConversationsResult struct {
+	Conversations []ModmailConversation
+	Folder        string
+	Limit         int
+	Offset        int
+	NextOffset    int
+	HasMore       bool
+}
+
+type CreateModmailConversationInput struct {
+	ActorID       userdomain.UserID
+	CommunitySlug string
+	UserID        string
+	Subject       string
+	Body          string
+}
+
+type ModmailConversationResult struct {
+	Detail ModmailConversationDetail
+}
+
+type GetModmailConversationInput struct {
+	ActorID        userdomain.UserID
+	CommunitySlug  string
+	ConversationID string
+}
+
+type ModmailMessageInput struct {
+	ActorID        userdomain.UserID
+	CommunitySlug  string
+	ConversationID string
+	Body           string
+	IsInternal     bool
+}
+
+type UpdateModmailConversationInput struct {
+	ActorID        userdomain.UserID
+	CommunitySlug  string
+	ConversationID string
+	Folder         string
+	Status         string
+	AssignedTo     string
+	MarkRead       bool
+}
+
+type UpdateModmailConversationResult struct {
+	Conversation ModmailConversation
+}
+
 type ModQueueItem struct {
 	ID            string
 	TargetType    string
@@ -598,6 +708,34 @@ type ContentControls struct {
 	FilterLinks             bool
 	UpdatedBy               string
 	UpdatedAt               time.Time
+}
+
+type ModmailConversation struct {
+	ID            string
+	CommunityID   string
+	Subject       string
+	UserID        string
+	Status        string
+	Folder        string
+	AssignedTo    string
+	LastMessageAt time.Time
+	UnreadCount   int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type ModmailMessage struct {
+	ID             string
+	ConversationID string
+	AuthorID       string
+	Body           string
+	IsInternal     bool
+	CreatedAt      time.Time
+}
+
+type ModmailConversationDetail struct {
+	Conversation ModmailConversation
+	Messages     []ModmailMessage
 }
 
 func (uc *ToolsUseCase) ListModQueue(ctx context.Context, input ListModQueueInput) (ListModQueueResult, error) {
@@ -1099,6 +1237,156 @@ func (uc *ToolsUseCase) UpdateContentControls(ctx context.Context, input Content
 	return ContentControlsResult{Controls: controls}, nil
 }
 
+func (uc *ToolsUseCase) ListModmailConversations(ctx context.Context, input ListModmailConversationsInput) (ListModmailConversationsResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return ListModmailConversationsResult{}, err
+	}
+	folder, err := normalizeModmailFolder(input.Folder)
+	if err != nil {
+		return ListModmailConversationsResult{}, err
+	}
+	limit, offset, err := normalizeModToolsPagination(input.Limit, input.Offset)
+	if err != nil {
+		return ListModmailConversationsResult{}, err
+	}
+	conversations, err := uc.tools.ListModmailConversations(ctx, ListModmailConversationsRecordInput{
+		CommunityID: communityID,
+		ActorID:     input.ActorID,
+		Folder:      folder,
+		Limit:       limit + 1,
+		Offset:      offset,
+	})
+	if err != nil {
+		return ListModmailConversationsResult{}, fmt.Errorf("list modmail conversations: %w", err)
+	}
+	conversations, hasMore := trimToolsPage(conversations, limit)
+	return ListModmailConversationsResult{Conversations: conversations, Folder: folder, Limit: limit, Offset: offset, NextOffset: offset + len(conversations), HasMore: hasMore}, nil
+}
+
+func (uc *ToolsUseCase) CreateModmailConversation(ctx context.Context, input CreateModmailConversationInput) (ModmailConversationResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return ModmailConversationResult{}, err
+	}
+	userID, err := userdomain.NewUserID(input.UserID)
+	if err != nil {
+		return ModmailConversationResult{}, err
+	}
+	subject, err := textlimit.TrimmedRequiredMaxRunes(input.Subject, "modmail subject", MaxModmailSubjectRunes)
+	if err != nil {
+		return ModmailConversationResult{}, err
+	}
+	body, err := textlimit.TrimmedRequiredMaxRunes(input.Body, "modmail body", MaxModmailBodyRunes)
+	if err != nil {
+		return ModmailConversationResult{}, err
+	}
+	now := uc.now().UTC()
+	detail, err := uc.tools.CreateModmailConversation(ctx, CreateModmailConversationRecordInput{
+		ID:          uuid.NewString(),
+		MessageID:   uuid.NewString(),
+		CommunityID: communityID,
+		ActorID:     input.ActorID,
+		UserID:      userID,
+		Subject:     subject,
+		Body:        body,
+		CreatedAt:   now,
+	})
+	if err != nil {
+		return ModmailConversationResult{}, fmt.Errorf("create modmail conversation: %w", err)
+	}
+	return ModmailConversationResult{Detail: detail}, nil
+}
+
+func (uc *ToolsUseCase) GetModmailConversation(ctx context.Context, input GetModmailConversationInput) (ModmailConversationResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return ModmailConversationResult{}, err
+	}
+	conversationID := normalizeOptionalUUID(input.ConversationID)
+	if conversationID == "" {
+		return ModmailConversationResult{}, apperr.New(apperr.CodeInvalidArgument, "modmail conversation id is invalid")
+	}
+	detail, err := uc.tools.GetModmailConversation(ctx, GetModmailConversationRecordInput{
+		CommunityID:    communityID,
+		ActorID:        input.ActorID,
+		ConversationID: conversationID,
+	})
+	if err != nil {
+		return ModmailConversationResult{}, fmt.Errorf("get modmail conversation: %w", err)
+	}
+	return ModmailConversationResult{Detail: detail}, nil
+}
+
+func (uc *ToolsUseCase) AddModmailMessage(ctx context.Context, input ModmailMessageInput) (ModmailConversationResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return ModmailConversationResult{}, err
+	}
+	conversationID := normalizeOptionalUUID(input.ConversationID)
+	if conversationID == "" {
+		return ModmailConversationResult{}, apperr.New(apperr.CodeInvalidArgument, "modmail conversation id is invalid")
+	}
+	body, err := textlimit.TrimmedRequiredMaxRunes(input.Body, "modmail body", MaxModmailBodyRunes)
+	if err != nil {
+		return ModmailConversationResult{}, err
+	}
+	detail, err := uc.tools.AddModmailMessage(ctx, AddModmailMessageRecordInput{
+		ID:             uuid.NewString(),
+		CommunityID:    communityID,
+		ActorID:        input.ActorID,
+		ConversationID: conversationID,
+		Body:           body,
+		IsInternal:     input.IsInternal,
+		CreatedAt:      uc.now().UTC(),
+	})
+	if err != nil {
+		return ModmailConversationResult{}, fmt.Errorf("add modmail message: %w", err)
+	}
+	return ModmailConversationResult{Detail: detail}, nil
+}
+
+func (uc *ToolsUseCase) UpdateModmailConversation(ctx context.Context, input UpdateModmailConversationInput) (UpdateModmailConversationResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return UpdateModmailConversationResult{}, err
+	}
+	conversationID := normalizeOptionalUUID(input.ConversationID)
+	if conversationID == "" {
+		return UpdateModmailConversationResult{}, apperr.New(apperr.CodeInvalidArgument, "modmail conversation id is invalid")
+	}
+	folder, err := normalizeModmailFolder(input.Folder)
+	if err != nil {
+		return UpdateModmailConversationResult{}, err
+	}
+	status, err := normalizeModmailStatus(input.Status, folder)
+	if err != nil {
+		return UpdateModmailConversationResult{}, err
+	}
+	assignedTo := ""
+	if strings.TrimSpace(input.AssignedTo) != "" {
+		userID, err := userdomain.NewUserID(input.AssignedTo)
+		if err != nil {
+			return UpdateModmailConversationResult{}, err
+		}
+		assignedTo = userID.String()
+	}
+	conversation, err := uc.tools.UpdateModmailConversation(ctx, UpdateModmailConversationRecordInput{
+		CommunityID:    communityID,
+		ActorID:        input.ActorID,
+		ConversationID: conversationID,
+		Folder:         folder,
+		Status:         status,
+		AssignedTo:     assignedTo,
+		MarkRead:       input.MarkRead,
+		UpdatedAt:      uc.now().UTC(),
+	})
+	if err != nil {
+		return UpdateModmailConversationResult{}, fmt.Errorf("update modmail conversation: %w", err)
+	}
+	return UpdateModmailConversationResult{Conversation: conversation}, nil
+}
+
 func (uc *ToolsUseCase) writeTemplate(ctx context.Context, input ModerationTemplateInput, kind string, create bool) (ModerationTemplateResult, error) {
 	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
 	if err != nil {
@@ -1287,6 +1575,41 @@ func normalizeStringList(values []string, label string) ([]string, error) {
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+func normalizeModmailFolder(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		value = "inbox"
+	}
+	switch value {
+	case "inbox", "needs_reply", "in_progress", "archived":
+		return value, nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "modmail folder is invalid")
+	}
+}
+
+func normalizeModmailStatus(raw string, folder string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		switch folder {
+		case "archived":
+			value = "archived"
+		case "needs_reply":
+			value = "needs_reply"
+		case "in_progress":
+			value = "in_progress"
+		default:
+			value = "open"
+		}
+	}
+	switch value {
+	case "open", "needs_reply", "in_progress", "archived", "closed":
+		return value, nil
+	default:
+		return "", apperr.New(apperr.CodeInvalidArgument, "modmail status is invalid")
+	}
 }
 
 func parseModQueueItemID(raw string) (moderationdomain.TargetType, string, error) {

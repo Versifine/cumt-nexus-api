@@ -169,6 +169,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/communities/:slug/moderation/automod/dry-run | `moderationhttp.automodDryRunRequest` | `moderationhttp.automodDryRunResponse` | 200 |
 | GET | /api/v1/communities/:slug/moderation/content-controls | none | `moderationhttp.contentControlsResponse` | 200 |
 | PATCH | /api/v1/communities/:slug/moderation/content-controls | `moderationhttp.contentControlsRequest` | `moderationhttp.contentControlsResponse` | 200 |
+| GET | /api/v1/communities/:slug/modmail/conversations | query | `moderationhttp.modmailConversationListResponse` | 200 |
+| POST | /api/v1/communities/:slug/modmail/conversations | `moderationhttp.modmailConversationMutationRequest` | `moderationhttp.modmailConversationResponse` | 201 |
+| GET | /api/v1/communities/:slug/modmail/conversations/:conversation_id | none | `moderationhttp.modmailConversationResponse` | 200 |
+| POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/messages | `moderationhttp.modmailMessageRequest` | `moderationhttp.modmailConversationResponse` | 201 |
+| POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/internal-notes | `moderationhttp.modmailMessageRequest` | `moderationhttp.modmailConversationResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/modmail/conversations/:conversation_id | `moderationhttp.modmailConversationPatchRequest` | `moderationhttp.modmailConversationPatchResponse` | 200 |
 | GET | /api/v1/communities/:slug/moderation/logs | query | `moderationhttp.modLogsResponse` | 200 |
 | GET | /api/v1/moderation/reports | query | `moderationhttp.listReportsResponse` | 200 |
 | GET | /api/v1/moderation/reports/:id | none | `moderationhttp.reportContentResponse` | 200 |
@@ -241,6 +247,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp.userStateRequest` | `user_id` |
 | `moderationhttp.moderatorNoteRequest` | `body` |
 | `moderationhttp.automodDryRunRequest` | `target_type` |
+| `moderationhttp.modmailConversationMutationRequest` | `user_id`, `subject`, `body` |
+| `moderationhttp.modmailMessageRequest` | `body` |
 | `posthttp.publishPostRequest` | `title`, `body` |
 | `posthttp.updatePostRequest` | `title`, `body` |
 | `votehttp.setPostVoteRequest` | `value` |
@@ -421,6 +429,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp` | `contentControlsRequest` | `blocked_keywords`, `blocked_domains`, `min_account_age_days`, `post_rate_limit_per_hour`, `comment_rate_limit_per_hour`, `block_new_accounts`, `filter_links` |
 | `moderationhttp` | `contentControlsResponse` | `controls` |
 | `moderationhttp` | `contentControlsView` | `community_id`, `blocked_keywords`, `blocked_domains`, `min_account_age_days`, `post_rate_limit_per_hour`, `comment_rate_limit_per_hour`, `block_new_accounts`, `filter_links`, `updated_by`, `updated_at` |
+| `moderationhttp` | `modmailConversationListResponse` | `conversations`, `folder`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `modmailConversationMutationRequest` | `user_id`, `subject`, `body` |
+| `moderationhttp` | `modmailMessageRequest` | `body` |
+| `moderationhttp` | `modmailConversationPatchRequest` | `folder`, `status`, `assigned_to`, `mark_read` |
+| `moderationhttp` | `modmailConversationResponse` | `conversation`, `messages` |
+| `moderationhttp` | `modmailConversationPatchResponse` | `conversation` |
+| `moderationhttp` | `modmailConversationView` | `id`, `community_id`, `subject`, `user_id`, `status`, `folder`, `assigned_to`, `last_message_at`, `unread_count`, `created_at`, `updated_at` |
+| `moderationhttp` | `modmailMessageView` | `id`, `conversation_id`, `author_id`, `body`, `is_internal`, `created_at` |
 | `moderationhttp` | `modLogsResponse` | `logs`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `modLogResponse` | `id`, `community_id`, `actor_id`, `action`, `target_type`, `target_id`, `batch_id`, `before`, `after`, `metadata`, `created_at` |
 | `searchhttp` | `searchResponse` | `query`, `scope`, `limit`, `offset`, `next_offset`, `has_more`, `communities`, `posts`, `users` |

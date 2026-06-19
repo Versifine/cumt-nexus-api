@@ -68,6 +68,11 @@ type ToolsUseCase interface {
 	DryRunAutomod(ctx context.Context, input moderationusecase.AutomodDryRunInput) (moderationusecase.AutomodDryRunResult, error)
 	GetContentControls(ctx context.Context, actorID userdomain.UserID, slug string) (moderationusecase.ContentControlsResult, error)
 	UpdateContentControls(ctx context.Context, input moderationusecase.ContentControlsInput) (moderationusecase.ContentControlsResult, error)
+	ListModmailConversations(ctx context.Context, input moderationusecase.ListModmailConversationsInput) (moderationusecase.ListModmailConversationsResult, error)
+	CreateModmailConversation(ctx context.Context, input moderationusecase.CreateModmailConversationInput) (moderationusecase.ModmailConversationResult, error)
+	GetModmailConversation(ctx context.Context, input moderationusecase.GetModmailConversationInput) (moderationusecase.ModmailConversationResult, error)
+	AddModmailMessage(ctx context.Context, input moderationusecase.ModmailMessageInput) (moderationusecase.ModmailConversationResult, error)
+	UpdateModmailConversation(ctx context.Context, input moderationusecase.UpdateModmailConversationInput) (moderationusecase.UpdateModmailConversationResult, error)
 }
 
 type reportContentRequest struct {
@@ -196,6 +201,12 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/communities/:slug/moderation/automod/dry-run", handler.DryRunAutomod)
 	group.GET("/communities/:slug/moderation/content-controls", handler.GetContentControls)
 	group.PATCH("/communities/:slug/moderation/content-controls", handler.UpdateContentControls)
+	group.GET("/communities/:slug/modmail/conversations", handler.ListModmailConversations)
+	group.POST("/communities/:slug/modmail/conversations", handler.CreateModmailConversation)
+	group.GET("/communities/:slug/modmail/conversations/:conversation_id", handler.GetModmailConversation)
+	group.POST("/communities/:slug/modmail/conversations/:conversation_id/messages", handler.AddModmailMessage)
+	group.POST("/communities/:slug/modmail/conversations/:conversation_id/internal-notes", handler.AddModmailInternalNote)
+	group.PATCH("/communities/:slug/modmail/conversations/:conversation_id", handler.UpdateModmailConversation)
 }
 
 func (h *Handler) ReportPost(c *gin.Context) {

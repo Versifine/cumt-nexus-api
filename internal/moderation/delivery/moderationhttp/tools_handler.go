@@ -322,6 +322,64 @@ type contentControlsView struct {
 	UpdatedAt               time.Time `json:"updated_at"`
 }
 
+type modmailConversationListResponse struct {
+	Conversations []modmailConversationView `json:"conversations"`
+	Folder        string                    `json:"folder"`
+	Limit         int                       `json:"limit"`
+	Offset        int                       `json:"offset"`
+	NextOffset    int                       `json:"next_offset"`
+	HasMore       bool                      `json:"has_more"`
+}
+
+type modmailConversationMutationRequest struct {
+	UserID  string `json:"user_id" binding:"required"`
+	Subject string `json:"subject" binding:"required"`
+	Body    string `json:"body" binding:"required"`
+}
+
+type modmailMessageRequest struct {
+	Body string `json:"body" binding:"required"`
+}
+
+type modmailConversationPatchRequest struct {
+	Folder     string `json:"folder"`
+	Status     string `json:"status"`
+	AssignedTo string `json:"assigned_to"`
+	MarkRead   bool   `json:"mark_read"`
+}
+
+type modmailConversationResponse struct {
+	Conversation modmailConversationView `json:"conversation"`
+	Messages     []modmailMessageView    `json:"messages"`
+}
+
+type modmailConversationPatchResponse struct {
+	Conversation modmailConversationView `json:"conversation"`
+}
+
+type modmailConversationView struct {
+	ID            string    `json:"id"`
+	CommunityID   string    `json:"community_id"`
+	Subject       string    `json:"subject"`
+	UserID        string    `json:"user_id"`
+	Status        string    `json:"status"`
+	Folder        string    `json:"folder"`
+	AssignedTo    string    `json:"assigned_to,omitempty"`
+	LastMessageAt time.Time `json:"last_message_at"`
+	UnreadCount   int       `json:"unread_count"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type modmailMessageView struct {
+	ID             string    `json:"id"`
+	ConversationID string    `json:"conversation_id"`
+	AuthorID       string    `json:"author_id"`
+	Body           string    `json:"body"`
+	IsInternal     bool      `json:"is_internal"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 func (h *Handler) ListAdminModQueue(c *gin.Context) {
 	h.listModQueue(c, "")
 }
@@ -488,6 +546,155 @@ func (h *Handler) UpdateContentControls(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, contentControlsResponse{Controls: toContentControlsView(result.Controls)})
+}
+
+func (h *Handler) ListModmailConversations(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	result, err := h.tools.ListModmailConversations(c.Request.Context(), moderationusecase.ListModmailConversationsInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		Folder:        c.Query("folder"),
+		Limit:         limit,
+		Offset:        offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	response := modmailConversationListResponse{
+		Conversations: make([]modmailConversationView, 0, len(result.Conversations)),
+		Folder:        result.Folder,
+		Limit:         result.Limit,
+		Offset:        result.Offset,
+		NextOffset:    result.NextOffset,
+		HasMore:       result.HasMore,
+	}
+	for _, conversation := range result.Conversations {
+		response.Conversations = append(response.Conversations, toModmailConversationView(conversation))
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) CreateModmailConversation(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	var req modmailConversationMutationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid modmail conversation request"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.CreateModmailConversation(c.Request.Context(), moderationusecase.CreateModmailConversationInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		UserID:        req.UserID,
+		Subject:       req.Subject,
+		Body:          req.Body,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusCreated, toModmailConversationResponse(result.Detail))
+}
+
+func (h *Handler) GetModmailConversation(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	result, err := h.tools.GetModmailConversation(c.Request.Context(), moderationusecase.GetModmailConversationInput{
+		ActorID:        userID,
+		CommunitySlug:  c.Param("slug"),
+		ConversationID: c.Param("conversation_id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, toModmailConversationResponse(result.Detail))
+}
+
+func (h *Handler) AddModmailMessage(c *gin.Context) {
+	h.addModmailMessage(c, false)
+}
+
+func (h *Handler) AddModmailInternalNote(c *gin.Context) {
+	h.addModmailMessage(c, true)
+}
+
+func (h *Handler) addModmailMessage(c *gin.Context, internal bool) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	var req modmailMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid modmail message request"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.AddModmailMessage(c.Request.Context(), moderationusecase.ModmailMessageInput{
+		ActorID:        userID,
+		CommunitySlug:  c.Param("slug"),
+		ConversationID: c.Param("conversation_id"),
+		Body:           req.Body,
+		IsInternal:     internal,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusCreated, toModmailConversationResponse(result.Detail))
+}
+
+func (h *Handler) UpdateModmailConversation(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	var req modmailConversationPatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid modmail conversation patch request"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.UpdateModmailConversation(c.Request.Context(), moderationusecase.UpdateModmailConversationInput{
+		ActorID:        userID,
+		CommunitySlug:  c.Param("slug"),
+		ConversationID: c.Param("conversation_id"),
+		Folder:         req.Folder,
+		Status:         req.Status,
+		AssignedTo:     req.AssignedTo,
+		MarkRead:       req.MarkRead,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, modmailConversationPatchResponse{Conversation: toModmailConversationView(result.Conversation)})
 }
 
 func (h *Handler) GetAdminModQueueItem(c *gin.Context) {
@@ -1193,6 +1400,44 @@ func toContentControlsView(controls moderationusecase.ContentControls) contentCo
 		FilterLinks:             controls.FilterLinks,
 		UpdatedBy:               controls.UpdatedBy,
 		UpdatedAt:               controls.UpdatedAt,
+	}
+}
+
+func toModmailConversationResponse(detail moderationusecase.ModmailConversationDetail) modmailConversationResponse {
+	response := modmailConversationResponse{
+		Conversation: toModmailConversationView(detail.Conversation),
+		Messages:     make([]modmailMessageView, 0, len(detail.Messages)),
+	}
+	for _, message := range detail.Messages {
+		response.Messages = append(response.Messages, toModmailMessageView(message))
+	}
+	return response
+}
+
+func toModmailConversationView(conversation moderationusecase.ModmailConversation) modmailConversationView {
+	return modmailConversationView{
+		ID:            conversation.ID,
+		CommunityID:   conversation.CommunityID,
+		Subject:       conversation.Subject,
+		UserID:        conversation.UserID,
+		Status:        conversation.Status,
+		Folder:        conversation.Folder,
+		AssignedTo:    conversation.AssignedTo,
+		LastMessageAt: conversation.LastMessageAt,
+		UnreadCount:   conversation.UnreadCount,
+		CreatedAt:     conversation.CreatedAt,
+		UpdatedAt:     conversation.UpdatedAt,
+	}
+}
+
+func toModmailMessageView(message moderationusecase.ModmailMessage) modmailMessageView {
+	return modmailMessageView{
+		ID:             message.ID,
+		ConversationID: message.ConversationID,
+		AuthorID:       message.AuthorID,
+		Body:           message.Body,
+		IsInternal:     message.IsInternal,
+		CreatedAt:      message.CreatedAt,
 	}
 }
 

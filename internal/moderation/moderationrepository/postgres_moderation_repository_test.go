@@ -355,6 +355,96 @@ func TestPostgresModerationRepositoryAutomodAndContentControls(t *testing.T) {
 	}
 }
 
+func TestPostgresModerationRepositoryModmail(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	actorID := insertTestUser(ctx, t, pool)
+	userID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, actorID, "modmail-"+randomSuffix())
+
+	created, err := repo.CreateModmailConversation(ctx, moderationusecase.CreateModmailConversationRecordInput{
+		ID:          uuid.NewString(),
+		MessageID:   uuid.NewString(),
+		CommunityID: communityID,
+		ActorID:     actorID,
+		UserID:      userID,
+		Subject:     "Need help",
+		Body:        "Initial message",
+		CreatedAt:   now,
+	})
+	if err != nil {
+		t.Fatalf("CreateModmailConversation returned error: %v", err)
+	}
+	cleanupCommunityModLogs(ctx, t, pool, communityID)
+	if created.Conversation.Subject != "Need help" || created.Conversation.Folder != "inbox" || len(created.Messages) != 1 {
+		t.Fatalf("unexpected created modmail detail: %#v", created)
+	}
+
+	conversations, err := repo.ListModmailConversations(ctx, moderationusecase.ListModmailConversationsRecordInput{
+		CommunityID: communityID,
+		ActorID:     actorID,
+		Folder:      "inbox",
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("ListModmailConversations returned error: %v", err)
+	}
+	if len(conversations) != 1 || conversations[0].ID != created.Conversation.ID {
+		t.Fatalf("unexpected modmail conversations: %#v", conversations)
+	}
+
+	withMessage, err := repo.AddModmailMessage(ctx, moderationusecase.AddModmailMessageRecordInput{
+		ID:             uuid.NewString(),
+		CommunityID:    communityID,
+		ActorID:        actorID,
+		ConversationID: created.Conversation.ID,
+		Body:           "Public reply",
+		IsInternal:     false,
+		CreatedAt:      now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("AddModmailMessage returned error: %v", err)
+	}
+	if len(withMessage.Messages) != 2 {
+		t.Fatalf("expected two messages, got %#v", withMessage.Messages)
+	}
+
+	withNote, err := repo.AddModmailMessage(ctx, moderationusecase.AddModmailMessageRecordInput{
+		ID:             uuid.NewString(),
+		CommunityID:    communityID,
+		ActorID:        actorID,
+		ConversationID: created.Conversation.ID,
+		Body:           "Internal note",
+		IsInternal:     true,
+		CreatedAt:      now.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("AddModmailMessage internal returned error: %v", err)
+	}
+	if len(withNote.Messages) != 3 || !withNote.Messages[2].IsInternal {
+		t.Fatalf("expected internal note in detail, got %#v", withNote.Messages)
+	}
+
+	updated, err := repo.UpdateModmailConversation(ctx, moderationusecase.UpdateModmailConversationRecordInput{
+		CommunityID:    communityID,
+		ActorID:        actorID,
+		ConversationID: created.Conversation.ID,
+		Folder:         "in_progress",
+		Status:         "in_progress",
+		AssignedTo:     actorID.String(),
+		MarkRead:       true,
+		UpdatedAt:      now.Add(3 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("UpdateModmailConversation returned error: %v", err)
+	}
+	if updated.Folder != "in_progress" || updated.Status != "in_progress" || updated.AssignedTo != actorID.String() {
+		t.Fatalf("unexpected updated modmail conversation: %#v", updated)
+	}
+}
+
 func TestPostgresModerationRepositoryDismissReport(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresModerationRepository(pool)
@@ -582,7 +672,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireModerationSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "content_reports", "moderation_actions", "community_moderation_logs", "community_automod_configs", "community_automod_config_versions", "community_content_controls"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "content_reports", "moderation_actions", "community_moderation_logs", "community_automod_configs", "community_automod_config_versions", "community_content_controls", "community_modmail_conversations", "community_modmail_messages", "community_modmail_reads"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
