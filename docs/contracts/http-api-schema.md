@@ -175,6 +175,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/messages | `moderationhttp.modmailMessageRequest` | `moderationhttp.modmailConversationResponse` | 201 |
 | POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/internal-notes | `moderationhttp.modmailMessageRequest` | `moderationhttp.modmailConversationResponse` | 201 |
 | PATCH | /api/v1/communities/:slug/modmail/conversations/:conversation_id | `moderationhttp.modmailConversationPatchRequest` | `moderationhttp.modmailConversationPatchResponse` | 200 |
+| GET | /api/v1/communities/:slug/insights/summary | query | `moderationhttp.communityInsightsSummaryResponse` | 200 |
+| GET | /api/v1/communities/:slug/insights/moderation | query | `moderationhttp.communityModerationInsightsResponse` | 200 |
+| GET | /api/v1/communities/:slug/insights/training-queue | query | `moderationhttp.communityTrainingQueueResponse` | 200 |
 | GET | /api/v1/communities/:slug/moderation/logs | query | `moderationhttp.modLogsResponse` | 200 |
 | GET | /api/v1/moderation/reports | query | `moderationhttp.listReportsResponse` | 200 |
 | GET | /api/v1/moderation/reports/:id | none | `moderationhttp.reportContentResponse` | 200 |
@@ -437,6 +440,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp` | `modmailConversationPatchResponse` | `conversation` |
 | `moderationhttp` | `modmailConversationView` | `id`, `community_id`, `subject`, `user_id`, `status`, `folder`, `assigned_to`, `last_message_at`, `unread_count`, `created_at`, `updated_at` |
 | `moderationhttp` | `modmailMessageView` | `id`, `conversation_id`, `author_id`, `body`, `is_internal`, `created_at` |
+| `moderationhttp` | `communityInsightsSummaryResponse` | `summary` |
+| `moderationhttp` | `communityInsightsSummaryView` | `community_id`, `range`, `since`, `members_total`, `posts_created`, `comments_made`, `active_authors` |
+| `moderationhttp` | `communityModerationInsightsResponse` | `moderation` |
+| `moderationhttp` | `communityModerationInsightsView` | `community_id`, `range`, `since`, `pending_reports`, `resolved_reports`, `removed_posts`, `removed_comments`, `spam_posts`, `spam_comments`, `actions_count` |
+| `moderationhttp` | `communityTrainingQueueResponse` | `items`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `communityTrainingQueueItemView` | `id`, `target_type`, `target_id`, `community_id`, `preview`, `suggested_action`, `reason`, `created_at` |
 | `moderationhttp` | `modLogsResponse` | `logs`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `modLogResponse` | `id`, `community_id`, `actor_id`, `action`, `target_type`, `target_id`, `batch_id`, `before`, `after`, `metadata`, `created_at` |
 | `searchhttp` | `searchResponse` | `query`, `scope`, `limit`, `offset`, `next_offset`, `has_more`, `communities`, `posts`, `users` |

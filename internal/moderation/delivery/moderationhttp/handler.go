@@ -73,6 +73,9 @@ type ToolsUseCase interface {
 	GetModmailConversation(ctx context.Context, input moderationusecase.GetModmailConversationInput) (moderationusecase.ModmailConversationResult, error)
 	AddModmailMessage(ctx context.Context, input moderationusecase.ModmailMessageInput) (moderationusecase.ModmailConversationResult, error)
 	UpdateModmailConversation(ctx context.Context, input moderationusecase.UpdateModmailConversationInput) (moderationusecase.UpdateModmailConversationResult, error)
+	GetCommunityInsightsSummary(ctx context.Context, input moderationusecase.CommunityInsightsInput) (moderationusecase.CommunityInsightsSummaryResult, error)
+	GetCommunityModerationInsights(ctx context.Context, input moderationusecase.CommunityInsightsInput) (moderationusecase.CommunityModerationInsightsResult, error)
+	ListCommunityTrainingQueue(ctx context.Context, input moderationusecase.CommunityInsightsInput) (moderationusecase.CommunityTrainingQueueResult, error)
 }
 
 type reportContentRequest struct {
@@ -207,6 +210,9 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/communities/:slug/modmail/conversations/:conversation_id/messages", handler.AddModmailMessage)
 	group.POST("/communities/:slug/modmail/conversations/:conversation_id/internal-notes", handler.AddModmailInternalNote)
 	group.PATCH("/communities/:slug/modmail/conversations/:conversation_id", handler.UpdateModmailConversation)
+	group.GET("/communities/:slug/insights/summary", handler.GetCommunityInsightsSummary)
+	group.GET("/communities/:slug/insights/moderation", handler.GetCommunityModerationInsights)
+	group.GET("/communities/:slug/insights/training-queue", handler.ListCommunityTrainingQueue)
 }
 
 func (h *Handler) ReportPost(c *gin.Context) {

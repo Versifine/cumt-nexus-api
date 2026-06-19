@@ -96,6 +96,8 @@ type ToolsRepository interface {
 	GetModmailConversation(ctx context.Context, input GetModmailConversationRecordInput) (ModmailConversationDetail, error)
 	AddModmailMessage(ctx context.Context, input AddModmailMessageRecordInput) (ModmailConversationDetail, error)
 	UpdateModmailConversation(ctx context.Context, input UpdateModmailConversationRecordInput) (ModmailConversation, error)
+	GetCommunityInsightsSummary(ctx context.Context, input CommunityInsightsRecordInput) (CommunityInsightsSummary, error)
+	GetCommunityModerationInsights(ctx context.Context, input CommunityInsightsRecordInput) (CommunityModerationInsights, error)
 }
 
 type PlatformOwnerRepository interface {
@@ -243,6 +245,12 @@ type UpdateModmailConversationRecordInput struct {
 	AssignedTo     string
 	MarkRead       bool
 	UpdatedAt      time.Time
+}
+
+type CommunityInsightsRecordInput struct {
+	CommunityID communitydomain.CommunityID
+	Since       time.Time
+	Range       string
 }
 
 type ListModQueueInput struct {
@@ -561,6 +569,30 @@ type UpdateModmailConversationResult struct {
 	Conversation ModmailConversation
 }
 
+type CommunityInsightsInput struct {
+	ActorID       userdomain.UserID
+	CommunitySlug string
+	Range         string
+	Limit         int
+	Offset        int
+}
+
+type CommunityInsightsSummaryResult struct {
+	Summary CommunityInsightsSummary
+}
+
+type CommunityModerationInsightsResult struct {
+	Moderation CommunityModerationInsights
+}
+
+type CommunityTrainingQueueResult struct {
+	Items      []CommunityTrainingQueueItem
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
+}
+
 type ModQueueItem struct {
 	ID            string
 	TargetType    string
@@ -736,6 +768,40 @@ type ModmailMessage struct {
 type ModmailConversationDetail struct {
 	Conversation ModmailConversation
 	Messages     []ModmailMessage
+}
+
+type CommunityInsightsSummary struct {
+	CommunityID   string
+	Range         string
+	Since         time.Time
+	MembersTotal  int
+	PostsCreated  int
+	CommentsMade  int
+	ActiveAuthors int
+}
+
+type CommunityModerationInsights struct {
+	CommunityID     string
+	Range           string
+	Since           time.Time
+	PendingReports  int
+	ResolvedReports int
+	RemovedPosts    int
+	RemovedComments int
+	SpamPosts       int
+	SpamComments    int
+	ActionsCount    int
+}
+
+type CommunityTrainingQueueItem struct {
+	ID              string
+	TargetType      string
+	TargetID        string
+	CommunityID     string
+	Preview         string
+	SuggestedAction string
+	Reason          string
+	CreatedAt       time.Time
 }
 
 func (uc *ToolsUseCase) ListModQueue(ctx context.Context, input ListModQueueInput) (ListModQueueResult, error) {
@@ -1387,6 +1453,81 @@ func (uc *ToolsUseCase) UpdateModmailConversation(ctx context.Context, input Upd
 	return UpdateModmailConversationResult{Conversation: conversation}, nil
 }
 
+func (uc *ToolsUseCase) GetCommunityInsightsSummary(ctx context.Context, input CommunityInsightsInput) (CommunityInsightsSummaryResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return CommunityInsightsSummaryResult{}, err
+	}
+	rangeValue, since, err := normalizeInsightsRange(input.Range, uc.now().UTC())
+	if err != nil {
+		return CommunityInsightsSummaryResult{}, err
+	}
+	summary, err := uc.tools.GetCommunityInsightsSummary(ctx, CommunityInsightsRecordInput{
+		CommunityID: communityID,
+		Since:       since,
+		Range:       rangeValue,
+	})
+	if err != nil {
+		return CommunityInsightsSummaryResult{}, fmt.Errorf("get community insights summary: %w", err)
+	}
+	return CommunityInsightsSummaryResult{Summary: summary}, nil
+}
+
+func (uc *ToolsUseCase) GetCommunityModerationInsights(ctx context.Context, input CommunityInsightsInput) (CommunityModerationInsightsResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return CommunityModerationInsightsResult{}, err
+	}
+	rangeValue, since, err := normalizeInsightsRange(input.Range, uc.now().UTC())
+	if err != nil {
+		return CommunityModerationInsightsResult{}, err
+	}
+	insights, err := uc.tools.GetCommunityModerationInsights(ctx, CommunityInsightsRecordInput{
+		CommunityID: communityID,
+		Since:       since,
+		Range:       rangeValue,
+	})
+	if err != nil {
+		return CommunityModerationInsightsResult{}, fmt.Errorf("get community moderation insights: %w", err)
+	}
+	return CommunityModerationInsightsResult{Moderation: insights}, nil
+}
+
+func (uc *ToolsUseCase) ListCommunityTrainingQueue(ctx context.Context, input CommunityInsightsInput) (CommunityTrainingQueueResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return CommunityTrainingQueueResult{}, err
+	}
+	limit, offset, err := normalizeModToolsPagination(input.Limit, input.Offset)
+	if err != nil {
+		return CommunityTrainingQueueResult{}, err
+	}
+	items, err := uc.tools.ListModQueue(ctx, ListModQueueRecordInput{
+		CommunityID: &communityID,
+		Queue:       "needs_review",
+		Limit:       limit + 1,
+		Offset:      offset,
+	})
+	if err != nil {
+		return CommunityTrainingQueueResult{}, fmt.Errorf("list training queue: %w", err)
+	}
+	items, hasMore := trimToolsPage(items, limit)
+	trainingItems := make([]CommunityTrainingQueueItem, 0, len(items))
+	for _, item := range items {
+		trainingItems = append(trainingItems, CommunityTrainingQueueItem{
+			ID:              item.ID,
+			TargetType:      item.TargetType,
+			TargetID:        item.TargetID,
+			CommunityID:     item.CommunityID,
+			Preview:         item.Preview,
+			SuggestedAction: "review",
+			Reason:          item.Queue,
+			CreatedAt:       item.CreatedAt,
+		})
+	}
+	return CommunityTrainingQueueResult{Items: trainingItems, Limit: limit, Offset: offset, NextOffset: offset + len(trainingItems), HasMore: hasMore}, nil
+}
+
 func (uc *ToolsUseCase) writeTemplate(ctx context.Context, input ModerationTemplateInput, kind string, create bool) (ModerationTemplateResult, error) {
 	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
 	if err != nil {
@@ -1610,6 +1751,25 @@ func normalizeModmailStatus(raw string, folder string) (string, error) {
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "modmail status is invalid")
 	}
+}
+
+func normalizeInsightsRange(raw string, now time.Time) (string, time.Time, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		value = "7d"
+	}
+	var duration time.Duration
+	switch value {
+	case "7d":
+		duration = 7 * 24 * time.Hour
+	case "30d":
+		duration = 30 * 24 * time.Hour
+	case "90d":
+		duration = 90 * 24 * time.Hour
+	default:
+		return "", time.Time{}, apperr.New(apperr.CodeInvalidArgument, "insights range is invalid")
+	}
+	return value, now.Add(-duration), nil
 }
 
 func parseModQueueItemID(raw string) (moderationdomain.TargetType, string, error) {

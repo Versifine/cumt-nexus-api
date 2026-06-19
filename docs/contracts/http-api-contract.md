@@ -180,6 +180,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/messages | Bearer | 发送社区 Modmail 回复 |
 | POST | /api/v1/communities/:slug/modmail/conversations/:conversation_id/internal-notes | Bearer | 新增社区 Modmail 内部 note |
 | PATCH | /api/v1/communities/:slug/modmail/conversations/:conversation_id | Bearer | 更新社区 Modmail 会话状态 |
+| GET | /api/v1/communities/:slug/insights/summary | Bearer | 社区增长与活跃摘要 |
+| GET | /api/v1/communities/:slug/insights/moderation | Bearer | 社区治理指标摘要 |
+| GET | /api/v1/communities/:slug/insights/training-queue | Bearer | 社区治理训练队列 |
 | GET | /api/v1/communities/:slug/moderation/logs | Bearer | 社区 Mod Log |
 | GET | /api/v1/moderation/reports | Bearer | 审核台举报列表 |
 | GET | /api/v1/moderation/reports/:id | Bearer | 审核台举报详情 |
@@ -271,6 +274,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `POST /api/v1/communities/:slug/modmail/conversations/:conversation_id/messages` | none | 社区 owner/moderator 或平台 owner；新增公开 Modmail 回复 |
 | `POST /api/v1/communities/:slug/modmail/conversations/:conversation_id/internal-notes` | none | 社区 owner/moderator 或平台 owner；新增仅管理团队可见内部 note |
 | `PATCH /api/v1/communities/:slug/modmail/conversations/:conversation_id` | none | 社区 owner/moderator 或平台 owner；支持更新 `folder/status/assigned_to` 和 `mark_read` |
+| `GET /api/v1/communities/:slug/insights/summary` | `range` | 社区 owner/moderator 或平台 owner；`range=7d|30d|90d`，返回成员总数、区间帖子/评论和活跃作者数 |
+| `GET /api/v1/communities/:slug/insights/moderation` | `range` | 社区 owner/moderator 或平台 owner；`range=7d|30d|90d`，返回待处理/已处理举报、移除、spam 和审核动作计数 |
+| `GET /api/v1/communities/:slug/insights/training-queue` | `limit`, `offset` | 社区 owner/moderator 或平台 owner；返回需要复核的队列样本和建议动作 |
 | `GET /api/v1/communities/:slug/moderation/logs` | `action`, `actor_id`, `target_type`, `target_id`, `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/search` | `q`, `scope`, `limit`, `offset` | `scope=all|communities|posts|users`；`all` 当前按 communities/posts/users 三个分区各返回最多 `limit` 条；PostgreSQL full-text search 结合字段权重、精确/前缀/子串命中和轻量时间衰减排序，帖子字段权重为标题 > 社区名/slug > 正文 |
 | `GET /api/v1/notifications` | `category`, `status`, `limit`, `offset` | `category=all|interactions|replies|mentions|likes|system`；不传 `status` 默认 `all`，可显式传 `status=all|unread|read` |

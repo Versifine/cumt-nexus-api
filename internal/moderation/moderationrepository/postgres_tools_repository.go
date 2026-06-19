@@ -654,6 +654,100 @@ func modmailConversationState(conversation moderationusecase.ModmailConversation
 	}
 }
 
+func (repo *PostgresModerationRepository) GetCommunityInsightsSummary(ctx context.Context, input moderationusecase.CommunityInsightsRecordInput) (moderationusecase.CommunityInsightsSummary, error) {
+	const query = `
+		SELECT
+			(SELECT COUNT(*)::int FROM community_memberships WHERE community_id = $1::uuid AND status = 'active') AS members_total,
+			(SELECT COUNT(*)::int FROM posts WHERE community_id = $1::uuid AND created_at >= $2) AS posts_created,
+			(
+				SELECT COUNT(*)::int
+				FROM comments
+				JOIN posts ON posts.id = comments.post_id
+				WHERE posts.community_id = $1::uuid AND comments.created_at >= $2
+			) AS comments_made,
+			(
+				SELECT COUNT(*)::int
+				FROM (
+					SELECT posts.author_id FROM posts WHERE posts.community_id = $1::uuid AND posts.created_at >= $2
+					UNION
+					SELECT comments.author_id
+					FROM comments
+					JOIN posts ON posts.id = comments.post_id
+					WHERE posts.community_id = $1::uuid AND comments.created_at >= $2
+				) authors
+			) AS active_authors
+	`
+	summary := moderationusecase.CommunityInsightsSummary{
+		CommunityID: input.CommunityID.String(),
+		Range:       input.Range,
+		Since:       input.Since,
+	}
+	if err := repo.pool.QueryRow(ctx, query, input.CommunityID.String(), input.Since).Scan(&summary.MembersTotal, &summary.PostsCreated, &summary.CommentsMade, &summary.ActiveAuthors); err != nil {
+		return moderationusecase.CommunityInsightsSummary{}, err
+	}
+	return summary, nil
+}
+
+func (repo *PostgresModerationRepository) GetCommunityModerationInsights(ctx context.Context, input moderationusecase.CommunityInsightsRecordInput) (moderationusecase.CommunityModerationInsights, error) {
+	const query = `
+		SELECT
+			(
+				SELECT COUNT(*)::int
+				FROM content_reports
+				WHERE status = 'pending'
+					AND EXISTS (
+						SELECT 1 FROM posts WHERE posts.id = content_reports.post_id AND posts.community_id = $1::uuid
+						UNION ALL
+						SELECT 1 FROM comments JOIN posts ON posts.id = comments.post_id WHERE comments.id = content_reports.comment_id AND posts.community_id = $1::uuid
+					)
+			) AS pending_reports,
+			(
+				SELECT COUNT(*)::int
+				FROM content_reports
+				WHERE status <> 'pending'
+					AND updated_at >= $2
+					AND EXISTS (
+						SELECT 1 FROM posts WHERE posts.id = content_reports.post_id AND posts.community_id = $1::uuid
+						UNION ALL
+						SELECT 1 FROM comments JOIN posts ON posts.id = comments.post_id WHERE comments.id = content_reports.comment_id AND posts.community_id = $1::uuid
+					)
+			) AS resolved_reports,
+			(SELECT COUNT(*)::int FROM posts WHERE community_id = $1::uuid AND status = 'removed' AND updated_at >= $2) AS removed_posts,
+			(
+				SELECT COUNT(*)::int FROM comments
+				JOIN posts ON posts.id = comments.post_id
+				WHERE posts.community_id = $1::uuid AND comments.status = 'removed' AND comments.updated_at >= $2
+			) AS removed_comments,
+			(SELECT COUNT(*)::int FROM posts WHERE community_id = $1::uuid AND status = 'spam' AND updated_at >= $2) AS spam_posts,
+			(
+				SELECT COUNT(*)::int FROM comments
+				JOIN posts ON posts.id = comments.post_id
+				WHERE posts.community_id = $1::uuid AND comments.status = 'spam' AND comments.updated_at >= $2
+			) AS spam_comments,
+			(
+				SELECT COUNT(*)::int FROM community_moderation_logs
+				WHERE community_id = $1::uuid AND created_at >= $2
+			) AS actions_count
+	`
+	insights := moderationusecase.CommunityModerationInsights{
+		CommunityID: input.CommunityID.String(),
+		Range:       input.Range,
+		Since:       input.Since,
+	}
+	if err := repo.pool.QueryRow(ctx, query, input.CommunityID.String(), input.Since).Scan(
+		&insights.PendingReports,
+		&insights.ResolvedReports,
+		&insights.RemovedPosts,
+		&insights.RemovedComments,
+		&insights.SpamPosts,
+		&insights.SpamComments,
+		&insights.ActionsCount,
+	); err != nil {
+		return moderationusecase.CommunityModerationInsights{}, err
+	}
+	return insights, nil
+}
+
 func (repo *PostgresModerationRepository) listReportQueue(ctx context.Context, communityID any, queue string, limit int, offset int) ([]moderationusecase.ModQueueItem, error) {
 	const query = `
 		WITH report_targets AS (

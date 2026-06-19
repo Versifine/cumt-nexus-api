@@ -380,6 +380,56 @@ type modmailMessageView struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type communityInsightsSummaryResponse struct {
+	Summary communityInsightsSummaryView `json:"summary"`
+}
+
+type communityInsightsSummaryView struct {
+	CommunityID   string    `json:"community_id"`
+	Range         string    `json:"range"`
+	Since         time.Time `json:"since"`
+	MembersTotal  int       `json:"members_total"`
+	PostsCreated  int       `json:"posts_created"`
+	CommentsMade  int       `json:"comments_made"`
+	ActiveAuthors int       `json:"active_authors"`
+}
+
+type communityModerationInsightsResponse struct {
+	Moderation communityModerationInsightsView `json:"moderation"`
+}
+
+type communityModerationInsightsView struct {
+	CommunityID     string    `json:"community_id"`
+	Range           string    `json:"range"`
+	Since           time.Time `json:"since"`
+	PendingReports  int       `json:"pending_reports"`
+	ResolvedReports int       `json:"resolved_reports"`
+	RemovedPosts    int       `json:"removed_posts"`
+	RemovedComments int       `json:"removed_comments"`
+	SpamPosts       int       `json:"spam_posts"`
+	SpamComments    int       `json:"spam_comments"`
+	ActionsCount    int       `json:"actions_count"`
+}
+
+type communityTrainingQueueResponse struct {
+	Items      []communityTrainingQueueItemView `json:"items"`
+	Limit      int                              `json:"limit"`
+	Offset     int                              `json:"offset"`
+	NextOffset int                              `json:"next_offset"`
+	HasMore    bool                             `json:"has_more"`
+}
+
+type communityTrainingQueueItemView struct {
+	ID              string    `json:"id"`
+	TargetType      string    `json:"target_type"`
+	TargetID        string    `json:"target_id"`
+	CommunityID     string    `json:"community_id"`
+	Preview         string    `json:"preview"`
+	SuggestedAction string    `json:"suggested_action"`
+	Reason          string    `json:"reason"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 func (h *Handler) ListAdminModQueue(c *gin.Context) {
 	h.listModQueue(c, "")
 }
@@ -695,6 +745,83 @@ func (h *Handler) UpdateModmailConversation(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, modmailConversationPatchResponse{Conversation: toModmailConversationView(result.Conversation)})
+}
+
+func (h *Handler) GetCommunityInsightsSummary(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	result, err := h.tools.GetCommunityInsightsSummary(c.Request.Context(), moderationusecase.CommunityInsightsInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		Range:         c.Query("range"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityInsightsSummaryResponse{Summary: toCommunityInsightsSummaryView(result.Summary)})
+}
+
+func (h *Handler) GetCommunityModerationInsights(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	result, err := h.tools.GetCommunityModerationInsights(c.Request.Context(), moderationusecase.CommunityInsightsInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		Range:         c.Query("range"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, communityModerationInsightsResponse{Moderation: toCommunityModerationInsightsView(result.Moderation)})
+}
+
+func (h *Handler) ListCommunityTrainingQueue(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	result, err := h.tools.ListCommunityTrainingQueue(c.Request.Context(), moderationusecase.CommunityInsightsInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		Limit:         limit,
+		Offset:        offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	response := communityTrainingQueueResponse{
+		Items:      make([]communityTrainingQueueItemView, 0, len(result.Items)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
+	}
+	for _, item := range result.Items {
+		response.Items = append(response.Items, toCommunityTrainingQueueItemView(item))
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) GetAdminModQueueItem(c *gin.Context) {
@@ -1438,6 +1565,46 @@ func toModmailMessageView(message moderationusecase.ModmailMessage) modmailMessa
 		Body:           message.Body,
 		IsInternal:     message.IsInternal,
 		CreatedAt:      message.CreatedAt,
+	}
+}
+
+func toCommunityInsightsSummaryView(summary moderationusecase.CommunityInsightsSummary) communityInsightsSummaryView {
+	return communityInsightsSummaryView{
+		CommunityID:   summary.CommunityID,
+		Range:         summary.Range,
+		Since:         summary.Since,
+		MembersTotal:  summary.MembersTotal,
+		PostsCreated:  summary.PostsCreated,
+		CommentsMade:  summary.CommentsMade,
+		ActiveAuthors: summary.ActiveAuthors,
+	}
+}
+
+func toCommunityModerationInsightsView(insights moderationusecase.CommunityModerationInsights) communityModerationInsightsView {
+	return communityModerationInsightsView{
+		CommunityID:     insights.CommunityID,
+		Range:           insights.Range,
+		Since:           insights.Since,
+		PendingReports:  insights.PendingReports,
+		ResolvedReports: insights.ResolvedReports,
+		RemovedPosts:    insights.RemovedPosts,
+		RemovedComments: insights.RemovedComments,
+		SpamPosts:       insights.SpamPosts,
+		SpamComments:    insights.SpamComments,
+		ActionsCount:    insights.ActionsCount,
+	}
+}
+
+func toCommunityTrainingQueueItemView(item moderationusecase.CommunityTrainingQueueItem) communityTrainingQueueItemView {
+	return communityTrainingQueueItemView{
+		ID:              item.ID,
+		TargetType:      item.TargetType,
+		TargetID:        item.TargetID,
+		CommunityID:     item.CommunityID,
+		Preview:         item.Preview,
+		SuggestedAction: item.SuggestedAction,
+		Reason:          item.Reason,
+		CreatedAt:       item.CreatedAt,
 	}
 }
 
