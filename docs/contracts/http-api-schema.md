@@ -163,6 +163,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/communities/:slug/moderation/users/:user_id/notes | query | `moderationhttp.moderatorNotesResponse` | 200 |
 | POST | /api/v1/communities/:slug/moderation/users/:user_id/notes | `moderationhttp.moderatorNoteRequest` | `moderationhttp.moderatorNoteMutationResponse` | 201 |
 | DELETE | /api/v1/communities/:slug/moderation/users/:user_id/notes/:note_id | none | none | 204 |
+| GET | /api/v1/communities/:slug/moderation/automod/config | none | `moderationhttp.automodConfigResponse` | 200 |
+| PATCH | /api/v1/communities/:slug/moderation/automod/config | `moderationhttp.automodConfigRequest` | `moderationhttp.automodConfigResponse` | 200 |
+| GET | /api/v1/communities/:slug/moderation/automod/versions | query | `moderationhttp.automodVersionsResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/automod/dry-run | `moderationhttp.automodDryRunRequest` | `moderationhttp.automodDryRunResponse` | 200 |
+| GET | /api/v1/communities/:slug/moderation/content-controls | none | `moderationhttp.contentControlsResponse` | 200 |
+| PATCH | /api/v1/communities/:slug/moderation/content-controls | `moderationhttp.contentControlsRequest` | `moderationhttp.contentControlsResponse` | 200 |
 | GET | /api/v1/communities/:slug/moderation/logs | query | `moderationhttp.modLogsResponse` | 200 |
 | GET | /api/v1/moderation/reports | query | `moderationhttp.listReportsResponse` | 200 |
 | GET | /api/v1/moderation/reports/:id | none | `moderationhttp.reportContentResponse` | 200 |
@@ -234,6 +240,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp.templateRequest` | `title` |
 | `moderationhttp.userStateRequest` | `user_id` |
 | `moderationhttp.moderatorNoteRequest` | `body` |
+| `moderationhttp.automodDryRunRequest` | `target_type` |
 | `posthttp.publishPostRequest` | `title`, `body` |
 | `posthttp.updatePostRequest` | `title`, `body` |
 | `votehttp.setPostVoteRequest` | `value` |
@@ -403,6 +410,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp` | `moderatorNotesResponse` | `notes`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `moderatorNoteRequest` | `body` |
 | `moderationhttp` | `moderatorNoteMutationResponse` | `note` |
+| `moderationhttp` | `automodConfigRequest` | `config_text`, `rules` |
+| `moderationhttp` | `automodConfigResponse` | `config` |
+| `moderationhttp` | `automodConfigView` | `community_id`, `config_text`, `rules`, `version`, `updated_by`, `updated_at` |
+| `moderationhttp` | `automodVersionsResponse` | `versions`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `automodVersionView` | `id`, `community_id`, `version`, `config_text`, `rules`, `updated_by`, `created_at` |
+| `moderationhttp` | `automodDryRunRequest` | `target_type`, `title`, `body`, `author_id`, `links` |
+| `moderationhttp` | `automodDryRunResponse` | `matches`, `suggested_action`, `reasons` |
+| `moderationhttp` | `automodDryRunMatchView` | `rule`, `action`, `reason` |
+| `moderationhttp` | `contentControlsRequest` | `blocked_keywords`, `blocked_domains`, `min_account_age_days`, `post_rate_limit_per_hour`, `comment_rate_limit_per_hour`, `block_new_accounts`, `filter_links` |
+| `moderationhttp` | `contentControlsResponse` | `controls` |
+| `moderationhttp` | `contentControlsView` | `community_id`, `blocked_keywords`, `blocked_domains`, `min_account_age_days`, `post_rate_limit_per_hour`, `comment_rate_limit_per_hour`, `block_new_accounts`, `filter_links`, `updated_by`, `updated_at` |
 | `moderationhttp` | `modLogsResponse` | `logs`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `modLogResponse` | `id`, `community_id`, `actor_id`, `action`, `target_type`, `target_id`, `batch_id`, `before`, `after`, `metadata`, `created_at` |
 | `searchhttp` | `searchResponse` | `query`, `scope`, `limit`, `offset`, `next_offset`, `has_more`, `communities`, `posts`, `users` |

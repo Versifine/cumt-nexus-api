@@ -1,6 +1,7 @@
 package moderationhttp
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -238,12 +239,255 @@ type modLogResponse struct {
 	CreatedAt   time.Time      `json:"created_at"`
 }
 
+type automodConfigRequest struct {
+	ConfigText string          `json:"config_text"`
+	Rules      json.RawMessage `json:"rules"`
+}
+
+type automodConfigResponse struct {
+	Config automodConfigView `json:"config"`
+}
+
+type automodConfigView struct {
+	CommunityID string          `json:"community_id"`
+	ConfigText  string          `json:"config_text"`
+	Rules       json.RawMessage `json:"rules"`
+	Version     int             `json:"version"`
+	UpdatedBy   string          `json:"updated_by,omitempty"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+type automodVersionsResponse struct {
+	Versions   []automodVersionView `json:"versions"`
+	Limit      int                  `json:"limit"`
+	Offset     int                  `json:"offset"`
+	NextOffset int                  `json:"next_offset"`
+	HasMore    bool                 `json:"has_more"`
+}
+
+type automodVersionView struct {
+	ID          string          `json:"id"`
+	CommunityID string          `json:"community_id"`
+	Version     int             `json:"version"`
+	ConfigText  string          `json:"config_text"`
+	Rules       json.RawMessage `json:"rules"`
+	UpdatedBy   string          `json:"updated_by"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type automodDryRunRequest struct {
+	TargetType string   `json:"target_type" binding:"required"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	AuthorID   string   `json:"author_id"`
+	Links      []string `json:"links"`
+}
+
+type automodDryRunResponse struct {
+	Matches         []automodDryRunMatchView `json:"matches"`
+	SuggestedAction string                   `json:"suggested_action"`
+	Reasons         []string                 `json:"reasons"`
+}
+
+type automodDryRunMatchView struct {
+	Rule   string `json:"rule"`
+	Action string `json:"action"`
+	Reason string `json:"reason"`
+}
+
+type contentControlsRequest struct {
+	BlockedKeywords         []string `json:"blocked_keywords"`
+	BlockedDomains          []string `json:"blocked_domains"`
+	MinAccountAgeDays       int      `json:"min_account_age_days"`
+	PostRateLimitPerHour    int      `json:"post_rate_limit_per_hour"`
+	CommentRateLimitPerHour int      `json:"comment_rate_limit_per_hour"`
+	BlockNewAccounts        bool     `json:"block_new_accounts"`
+	FilterLinks             bool     `json:"filter_links"`
+}
+
+type contentControlsResponse struct {
+	Controls contentControlsView `json:"controls"`
+}
+
+type contentControlsView struct {
+	CommunityID             string    `json:"community_id"`
+	BlockedKeywords         []string  `json:"blocked_keywords"`
+	BlockedDomains          []string  `json:"blocked_domains"`
+	MinAccountAgeDays       int       `json:"min_account_age_days"`
+	PostRateLimitPerHour    int       `json:"post_rate_limit_per_hour"`
+	CommentRateLimitPerHour int       `json:"comment_rate_limit_per_hour"`
+	BlockNewAccounts        bool      `json:"block_new_accounts"`
+	FilterLinks             bool      `json:"filter_links"`
+	UpdatedBy               string    `json:"updated_by,omitempty"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
 func (h *Handler) ListAdminModQueue(c *gin.Context) {
 	h.listModQueue(c, "")
 }
 
 func (h *Handler) ListCommunityModQueue(c *gin.Context) {
 	h.listModQueue(c, c.Param("slug"))
+}
+
+func (h *Handler) GetAutomodConfig(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	result, err := h.tools.GetAutomodConfig(c.Request.Context(), userID, c.Param("slug"))
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, automodConfigResponse{Config: toAutomodConfigView(result.Config)})
+}
+
+func (h *Handler) UpdateAutomodConfig(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	var req automodConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid automod config request"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.UpdateAutomodConfig(c.Request.Context(), moderationusecase.AutomodConfigInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		ConfigText:    req.ConfigText,
+		Rules:         req.Rules,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, automodConfigResponse{Config: toAutomodConfigView(result.Config)})
+}
+
+func (h *Handler) ListAutomodVersions(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	limit, err := parseOptionalIntQuery(c, "limit")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	offset, err := parseOptionalIntQuery(c, "offset")
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	result, err := h.tools.ListAutomodVersions(c.Request.Context(), moderationusecase.AutomodVersionsInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		Limit:         limit,
+		Offset:        offset,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	response := automodVersionsResponse{
+		Versions:   make([]automodVersionView, 0, len(result.Versions)),
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
+		HasMore:    result.HasMore,
+	}
+	for _, version := range result.Versions {
+		response.Versions = append(response.Versions, toAutomodVersionView(version))
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) DryRunAutomod(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	var req automodDryRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid automod dry-run request"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.DryRunAutomod(c.Request.Context(), moderationusecase.AutomodDryRunInput{
+		ActorID:       userID,
+		CommunitySlug: c.Param("slug"),
+		TargetType:    req.TargetType,
+		Title:         req.Title,
+		Body:          req.Body,
+		AuthorID:      req.AuthorID,
+		Links:         req.Links,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	response := automodDryRunResponse{
+		Matches:         make([]automodDryRunMatchView, 0, len(result.Matches)),
+		SuggestedAction: result.SuggestedAction,
+		Reasons:         result.Reasons,
+	}
+	for _, match := range result.Matches {
+		response.Matches = append(response.Matches, automodDryRunMatchView(match))
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) GetContentControls(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	result, err := h.tools.GetContentControls(c.Request.Context(), userID, c.Param("slug"))
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, contentControlsResponse{Controls: toContentControlsView(result.Controls)})
+}
+
+func (h *Handler) UpdateContentControls(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	var req contentControlsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid content controls request"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.UpdateContentControls(c.Request.Context(), moderationusecase.ContentControlsInput{
+		ActorID:                 userID,
+		CommunitySlug:           c.Param("slug"),
+		BlockedKeywords:         req.BlockedKeywords,
+		BlockedDomains:          req.BlockedDomains,
+		MinAccountAgeDays:       req.MinAccountAgeDays,
+		PostRateLimitPerHour:    req.PostRateLimitPerHour,
+		CommentRateLimitPerHour: req.CommentRateLimitPerHour,
+		BlockNewAccounts:        req.BlockNewAccounts,
+		FilterLinks:             req.FilterLinks,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, contentControlsResponse{Controls: toContentControlsView(result.Controls)})
 }
 
 func (h *Handler) GetAdminModQueueItem(c *gin.Context) {
@@ -912,6 +1156,44 @@ func toModQueueSummaryResponse(summary moderationusecase.ModQueueSummary) modQue
 		response.PriorityItems = append(response.PriorityItems, toModQueueItemResponse(item))
 	}
 	return response
+}
+
+func toAutomodConfigView(config moderationusecase.AutomodConfig) automodConfigView {
+	return automodConfigView{
+		CommunityID: config.CommunityID,
+		ConfigText:  config.ConfigText,
+		Rules:       config.Rules,
+		Version:     config.Version,
+		UpdatedBy:   config.UpdatedBy,
+		UpdatedAt:   config.UpdatedAt,
+	}
+}
+
+func toAutomodVersionView(version moderationusecase.AutomodVersion) automodVersionView {
+	return automodVersionView{
+		ID:          version.ID,
+		CommunityID: version.CommunityID,
+		Version:     version.Version,
+		ConfigText:  version.ConfigText,
+		Rules:       version.Rules,
+		UpdatedBy:   version.UpdatedBy,
+		CreatedAt:   version.CreatedAt,
+	}
+}
+
+func toContentControlsView(controls moderationusecase.ContentControls) contentControlsView {
+	return contentControlsView{
+		CommunityID:             controls.CommunityID,
+		BlockedKeywords:         controls.BlockedKeywords,
+		BlockedDomains:          controls.BlockedDomains,
+		MinAccountAgeDays:       controls.MinAccountAgeDays,
+		PostRateLimitPerHour:    controls.PostRateLimitPerHour,
+		CommentRateLimitPerHour: controls.CommentRateLimitPerHour,
+		BlockNewAccounts:        controls.BlockNewAccounts,
+		FilterLinks:             controls.FilterLinks,
+		UpdatedBy:               controls.UpdatedBy,
+		UpdatedAt:               controls.UpdatedAt,
+	}
 }
 
 func toBulkActionResponse(result moderationusecase.BulkActionResult) bulkActionResponse {

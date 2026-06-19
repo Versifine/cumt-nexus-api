@@ -70,3 +70,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000031 | add_community_media_and_owner_transfer_state | Adds community avatar/banner URLs and community owner transfer expiration/cancellation state |
 | 000032 | expand_notification_source_id_length | Allows notification source ids long enough for community owner transfer deep links |
 | 000033 | create_message_system | Creates private message conversations, requests, reports, blocks, privacy settings and realtime event tables |
+| 000034 | create_automod_controls | Creates community Automod config/version history and content-control settings for moderation tools |

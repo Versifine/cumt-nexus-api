@@ -2,6 +2,7 @@ package moderationusecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,6 +26,8 @@ const (
 	MaxSavedResponseBody     = 2000
 	MaxModNoteBody           = 1000
 	MaxModFlairRunes         = 64
+	MaxAutomodConfigRunes    = 20000
+	MaxContentControlItems   = 100
 	UserStateBanned          = "banned"
 	UserStateMuted           = "muted"
 	UserStateApproved        = "approved"
@@ -81,6 +84,11 @@ type ToolsRepository interface {
 	ListModeratorNotes(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, limit int, offset int) ([]ModeratorNote, error)
 	CreateModeratorNote(ctx context.Context, input CreateModeratorNoteRecordInput) (ModeratorNote, error)
 	DeleteModeratorNote(ctx context.Context, communityID communitydomain.CommunityID, userID userdomain.UserID, noteID string, actorID userdomain.UserID, deletedAt time.Time) error
+	GetAutomodConfig(ctx context.Context, communityID communitydomain.CommunityID) (AutomodConfig, error)
+	UpsertAutomodConfig(ctx context.Context, input UpsertAutomodConfigRecordInput) (AutomodConfig, error)
+	ListAutomodVersions(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]AutomodVersion, error)
+	GetContentControls(ctx context.Context, communityID communitydomain.CommunityID) (ContentControls, error)
+	UpsertContentControls(ctx context.Context, input UpsertContentControlsRecordInput) (ContentControls, error)
 }
 
 type PlatformOwnerRepository interface {
@@ -161,6 +169,27 @@ type CreateModeratorNoteRecordInput struct {
 	AuthorID    userdomain.UserID
 	Body        string
 	CreatedAt   time.Time
+}
+
+type UpsertAutomodConfigRecordInput struct {
+	CommunityID communitydomain.CommunityID
+	ActorID     userdomain.UserID
+	ConfigText  string
+	Rules       json.RawMessage
+	UpdatedAt   time.Time
+}
+
+type UpsertContentControlsRecordInput struct {
+	CommunityID             communitydomain.CommunityID
+	ActorID                 userdomain.UserID
+	BlockedKeywords         []string
+	BlockedDomains          []string
+	MinAccountAgeDays       int
+	PostRateLimitPerHour    int
+	CommentRateLimitPerHour int
+	BlockNewAccounts        bool
+	FilterLinks             bool
+	UpdatedAt               time.Time
 }
 
 type ListModQueueInput struct {
@@ -364,6 +393,64 @@ type DeleteModeratorNoteInput struct {
 	NoteID        string
 }
 
+type AutomodConfigInput struct {
+	ActorID       userdomain.UserID
+	CommunitySlug string
+	ConfigText    string
+	Rules         json.RawMessage
+}
+
+type AutomodConfigResult struct {
+	Config AutomodConfig
+}
+
+type AutomodVersionsInput struct {
+	ActorID       userdomain.UserID
+	CommunitySlug string
+	Limit         int
+	Offset        int
+}
+
+type AutomodVersionsResult struct {
+	Versions   []AutomodVersion
+	Limit      int
+	Offset     int
+	NextOffset int
+	HasMore    bool
+}
+
+type AutomodDryRunInput struct {
+	ActorID       userdomain.UserID
+	CommunitySlug string
+	TargetType    string
+	Title         string
+	Body          string
+	AuthorID      string
+	Links         []string
+}
+
+type AutomodDryRunResult struct {
+	Matches         []AutomodDryRunMatch
+	SuggestedAction string
+	Reasons         []string
+}
+
+type ContentControlsInput struct {
+	ActorID                 userdomain.UserID
+	CommunitySlug           string
+	BlockedKeywords         []string
+	BlockedDomains          []string
+	MinAccountAgeDays       int
+	PostRateLimitPerHour    int
+	CommentRateLimitPerHour int
+	BlockNewAccounts        bool
+	FilterLinks             bool
+}
+
+type ContentControlsResult struct {
+	Controls ContentControls
+}
+
 type ModQueueItem struct {
 	ID            string
 	TargetType    string
@@ -473,6 +560,44 @@ type ModeratorNote struct {
 	AuthorID    string
 	Body        string
 	CreatedAt   time.Time
+}
+
+type AutomodConfig struct {
+	CommunityID string
+	ConfigText  string
+	Rules       json.RawMessage
+	Version     int
+	UpdatedBy   string
+	UpdatedAt   time.Time
+}
+
+type AutomodVersion struct {
+	ID          string
+	CommunityID string
+	Version     int
+	ConfigText  string
+	Rules       json.RawMessage
+	UpdatedBy   string
+	CreatedAt   time.Time
+}
+
+type AutomodDryRunMatch struct {
+	Rule   string
+	Action string
+	Reason string
+}
+
+type ContentControls struct {
+	CommunityID             string
+	BlockedKeywords         []string
+	BlockedDomains          []string
+	MinAccountAgeDays       int
+	PostRateLimitPerHour    int
+	CommentRateLimitPerHour int
+	BlockNewAccounts        bool
+	FilterLinks             bool
+	UpdatedBy               string
+	UpdatedAt               time.Time
 }
 
 func (uc *ToolsUseCase) ListModQueue(ctx context.Context, input ListModQueueInput) (ListModQueueResult, error) {
@@ -829,6 +954,151 @@ func (uc *ToolsUseCase) DeleteModeratorNote(ctx context.Context, input DeleteMod
 	return uc.tools.DeleteModeratorNote(ctx, communityID, userID, noteID, input.ActorID, uc.now().UTC())
 }
 
+func (uc *ToolsUseCase) GetAutomodConfig(ctx context.Context, actorID userdomain.UserID, slug string) (AutomodConfigResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, actorID, slug)
+	if err != nil {
+		return AutomodConfigResult{}, err
+	}
+	config, err := uc.tools.GetAutomodConfig(ctx, communityID)
+	if err != nil {
+		return AutomodConfigResult{}, fmt.Errorf("get automod config: %w", err)
+	}
+	return AutomodConfigResult{Config: config}, nil
+}
+
+func (uc *ToolsUseCase) UpdateAutomodConfig(ctx context.Context, input AutomodConfigInput) (AutomodConfigResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return AutomodConfigResult{}, err
+	}
+	configText, err := textlimit.TrimmedOptionalMaxRunes(input.ConfigText, "automod config", MaxAutomodConfigRunes)
+	if err != nil {
+		return AutomodConfigResult{}, err
+	}
+	rules, err := normalizeJSON(input.Rules, "{}")
+	if err != nil {
+		return AutomodConfigResult{}, err
+	}
+	config, err := uc.tools.UpsertAutomodConfig(ctx, UpsertAutomodConfigRecordInput{
+		CommunityID: communityID,
+		ActorID:     input.ActorID,
+		ConfigText:  configText,
+		Rules:       rules,
+		UpdatedAt:   uc.now().UTC(),
+	})
+	if err != nil {
+		return AutomodConfigResult{}, fmt.Errorf("update automod config: %w", err)
+	}
+	return AutomodConfigResult{Config: config}, nil
+}
+
+func (uc *ToolsUseCase) ListAutomodVersions(ctx context.Context, input AutomodVersionsInput) (AutomodVersionsResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return AutomodVersionsResult{}, err
+	}
+	limit, offset, err := normalizeModToolsPagination(input.Limit, input.Offset)
+	if err != nil {
+		return AutomodVersionsResult{}, err
+	}
+	versions, err := uc.tools.ListAutomodVersions(ctx, communityID, limit+1, offset)
+	if err != nil {
+		return AutomodVersionsResult{}, fmt.Errorf("list automod versions: %w", err)
+	}
+	versions, hasMore := trimToolsPage(versions, limit)
+	return AutomodVersionsResult{Versions: versions, Limit: limit, Offset: offset, NextOffset: offset + len(versions), HasMore: hasMore}, nil
+}
+
+func (uc *ToolsUseCase) DryRunAutomod(ctx context.Context, input AutomodDryRunInput) (AutomodDryRunResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return AutomodDryRunResult{}, err
+	}
+	targetType, err := moderationdomain.NewTargetType(input.TargetType)
+	if err != nil {
+		return AutomodDryRunResult{}, err
+	}
+	controls, err := uc.tools.GetContentControls(ctx, communityID)
+	if err != nil {
+		return AutomodDryRunResult{}, fmt.Errorf("get content controls: %w", err)
+	}
+	content := strings.ToLower(strings.TrimSpace(input.Title + "\n" + input.Body))
+	matches := make([]AutomodDryRunMatch, 0)
+	for _, keyword := range controls.BlockedKeywords {
+		if keyword != "" && strings.Contains(content, strings.ToLower(keyword)) {
+			matches = append(matches, AutomodDryRunMatch{Rule: "blocked_keyword", Action: "filter", Reason: "matched keyword: " + keyword})
+		}
+	}
+	for _, domain := range controls.BlockedDomains {
+		needle := strings.ToLower(domain)
+		for _, link := range input.Links {
+			if needle != "" && strings.Contains(strings.ToLower(link), needle) {
+				matches = append(matches, AutomodDryRunMatch{Rule: "blocked_domain", Action: "filter", Reason: "matched domain: " + domain})
+				break
+			}
+		}
+	}
+	if controls.FilterLinks && len(input.Links) > 0 {
+		matches = append(matches, AutomodDryRunMatch{Rule: "link_filter", Action: "review", Reason: "links require moderator review"})
+	}
+	reasons := make([]string, 0, len(matches))
+	for _, match := range matches {
+		reasons = append(reasons, match.Reason)
+	}
+	action := "allow"
+	if len(matches) > 0 {
+		action = "filter"
+	}
+	_ = targetType
+	return AutomodDryRunResult{Matches: matches, SuggestedAction: action, Reasons: reasons}, nil
+}
+
+func (uc *ToolsUseCase) GetContentControls(ctx context.Context, actorID userdomain.UserID, slug string) (ContentControlsResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, actorID, slug)
+	if err != nil {
+		return ContentControlsResult{}, err
+	}
+	controls, err := uc.tools.GetContentControls(ctx, communityID)
+	if err != nil {
+		return ContentControlsResult{}, fmt.Errorf("get content controls: %w", err)
+	}
+	return ContentControlsResult{Controls: controls}, nil
+}
+
+func (uc *ToolsUseCase) UpdateContentControls(ctx context.Context, input ContentControlsInput) (ContentControlsResult, error) {
+	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
+	if err != nil {
+		return ContentControlsResult{}, err
+	}
+	keywords, err := normalizeStringList(input.BlockedKeywords, "blocked keyword")
+	if err != nil {
+		return ContentControlsResult{}, err
+	}
+	domains, err := normalizeStringList(input.BlockedDomains, "blocked domain")
+	if err != nil {
+		return ContentControlsResult{}, err
+	}
+	if input.MinAccountAgeDays < 0 || input.PostRateLimitPerHour < 0 || input.CommentRateLimitPerHour < 0 {
+		return ContentControlsResult{}, apperr.New(apperr.CodeInvalidArgument, "content control limits must be non-negative")
+	}
+	controls, err := uc.tools.UpsertContentControls(ctx, UpsertContentControlsRecordInput{
+		CommunityID:             communityID,
+		ActorID:                 input.ActorID,
+		BlockedKeywords:         keywords,
+		BlockedDomains:          domains,
+		MinAccountAgeDays:       input.MinAccountAgeDays,
+		PostRateLimitPerHour:    input.PostRateLimitPerHour,
+		CommentRateLimitPerHour: input.CommentRateLimitPerHour,
+		BlockNewAccounts:        input.BlockNewAccounts,
+		FilterLinks:             input.FilterLinks,
+		UpdatedAt:               uc.now().UTC(),
+	})
+	if err != nil {
+		return ContentControlsResult{}, fmt.Errorf("update content controls: %w", err)
+	}
+	return ContentControlsResult{Controls: controls}, nil
+}
+
 func (uc *ToolsUseCase) writeTemplate(ctx context.Context, input ModerationTemplateInput, kind string, create bool) (ModerationTemplateResult, error) {
 	communityID, err := uc.ensureCommunityModerator(ctx, input.ActorID, input.CommunitySlug)
 	if err != nil {
@@ -985,6 +1255,38 @@ func normalizeModQueue(raw string) (string, error) {
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "moderation queue is invalid")
 	}
+}
+
+func normalizeJSON(raw json.RawMessage, fallback string) (json.RawMessage, error) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" {
+		value = fallback
+	}
+	if !json.Valid([]byte(value)) {
+		return nil, apperr.New(apperr.CodeInvalidArgument, "json payload is invalid")
+	}
+	return json.RawMessage(value), nil
+}
+
+func normalizeStringList(values []string, label string) ([]string, error) {
+	if len(values) > MaxContentControlItems {
+		return nil, apperr.New(apperr.CodeInvalidArgument, label+" list is too large")
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		item, err := textlimit.TrimmedRequiredMaxRunes(value, label, MaxToolTitleRunes)
+		if err != nil {
+			return nil, err
+		}
+		key := strings.ToLower(item)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, item)
+	}
+	return result, nil
 }
 
 func parseModQueueItemID(raw string) (moderationdomain.TargetType, string, error) {

@@ -168,6 +168,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/communities/:slug/moderation/users/:user_id/notes | Bearer | 社区 mod notes 列表 |
 | POST | /api/v1/communities/:slug/moderation/users/:user_id/notes | Bearer | 社区新增 mod note |
 | DELETE | /api/v1/communities/:slug/moderation/users/:user_id/notes/:note_id | Bearer | 社区删除 mod note |
+| GET | /api/v1/communities/:slug/moderation/automod/config | Bearer | 社区 Automod 配置 |
+| PATCH | /api/v1/communities/:slug/moderation/automod/config | Bearer | 更新社区 Automod 配置 |
+| GET | /api/v1/communities/:slug/moderation/automod/versions | Bearer | 社区 Automod 配置版本 |
+| POST | /api/v1/communities/:slug/moderation/automod/dry-run | Bearer | 社区 Automod dry-run |
+| GET | /api/v1/communities/:slug/moderation/content-controls | Bearer | 社区内容控制配置 |
+| PATCH | /api/v1/communities/:slug/moderation/content-controls | Bearer | 更新社区内容控制配置 |
 | GET | /api/v1/communities/:slug/moderation/logs | Bearer | 社区 Mod Log |
 | GET | /api/v1/moderation/reports | Bearer | 审核台举报列表 |
 | GET | /api/v1/moderation/reports/:id | Bearer | 审核台举报详情 |
@@ -247,6 +253,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/communities/:slug/manage/muted-users` | `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/communities/:slug/manage/approved-users` | `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/communities/:slug/moderation/users/:user_id/notes` | `limit`, `offset` | 社区 owner/moderator 视角 |
+| `GET /api/v1/communities/:slug/moderation/automod/config` | none | 社区 owner/moderator 或平台 owner；返回 Automod 当前配置、结构化规则、版本号、更新人和更新时间 |
+| `PATCH /api/v1/communities/:slug/moderation/automod/config` | none | 社区 owner/moderator 或平台 owner；写入 `config_text` 与 JSON `rules`，生成版本历史并写入 `community_moderation_logs` |
+| `GET /api/v1/communities/:slug/moderation/automod/versions` | `limit`, `offset` | 社区 owner/moderator 或平台 owner；按版本倒序返回 Automod 配置历史 |
+| `POST /api/v1/communities/:slug/moderation/automod/dry-run` | none | 社区 owner/moderator 或平台 owner；输入 `target_type=post|comment`、`title`、`body`、`author_id`、`links`，返回命中规则、建议动作和原因 |
+| `GET /api/v1/communities/:slug/moderation/content-controls` | none | 社区 owner/moderator 或平台 owner；返回关键词、域名、账号年龄、频率和新账号/链接过滤开关 |
+| `PATCH /api/v1/communities/:slug/moderation/content-controls` | none | 社区 owner/moderator 或平台 owner；更新内容控制并写入 `community_moderation_logs` |
 | `GET /api/v1/communities/:slug/moderation/logs` | `action`, `actor_id`, `target_type`, `target_id`, `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/search` | `q`, `scope`, `limit`, `offset` | `scope=all|communities|posts|users`；`all` 当前按 communities/posts/users 三个分区各返回最多 `limit` 条；PostgreSQL full-text search 结合字段权重、精确/前缀/子串命中和轻量时间衰减排序，帖子字段权重为标题 > 社区名/slug > 正文 |
 | `GET /api/v1/notifications` | `category`, `status`, `limit`, `offset` | `category=all|interactions|replies|mentions|likes|system`；不传 `status` 默认 `all`，可显式传 `status=all|unread|read` |

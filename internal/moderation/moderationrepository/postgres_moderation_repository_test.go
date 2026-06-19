@@ -290,6 +290,71 @@ func TestPostgresModerationRepositoryGetModQueueItemAndSummary(t *testing.T) {
 	}
 }
 
+func TestPostgresModerationRepositoryAutomodAndContentControls(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	actorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, actorID, "automod-"+randomSuffix())
+
+	defaultConfig, err := repo.GetAutomodConfig(ctx, communityID)
+	if err != nil {
+		t.Fatalf("GetAutomodConfig default returned error: %v", err)
+	}
+	if defaultConfig.CommunityID != communityID.String() || defaultConfig.Version != 0 || string(defaultConfig.Rules) != "{}" {
+		t.Fatalf("unexpected default automod config: %#v", defaultConfig)
+	}
+
+	config, err := repo.UpsertAutomodConfig(ctx, moderationusecase.UpsertAutomodConfigRecordInput{
+		CommunityID: communityID,
+		ActorID:     actorID,
+		ConfigText:  "filter spamword",
+		Rules:       []byte(`{"rules":[{"name":"spamword"}]}`),
+		UpdatedAt:   now,
+	})
+	if err != nil {
+		t.Fatalf("UpsertAutomodConfig returned error: %v", err)
+	}
+	cleanupCommunityModLogs(ctx, t, pool, communityID)
+	if config.Version != 1 || config.UpdatedBy != actorID.String() || string(config.Rules) == "{}" {
+		t.Fatalf("unexpected automod config: %#v", config)
+	}
+	versions, err := repo.ListAutomodVersions(ctx, communityID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListAutomodVersions returned error: %v", err)
+	}
+	if len(versions) != 1 || versions[0].Version != 1 || versions[0].ConfigText != "filter spamword" {
+		t.Fatalf("unexpected automod versions: %#v", versions)
+	}
+
+	controls, err := repo.UpsertContentControls(ctx, moderationusecase.UpsertContentControlsRecordInput{
+		CommunityID:             communityID,
+		ActorID:                 actorID,
+		BlockedKeywords:         []string{"spamword"},
+		BlockedDomains:          []string{"bad.example"},
+		MinAccountAgeDays:       7,
+		PostRateLimitPerHour:    3,
+		CommentRateLimitPerHour: 8,
+		BlockNewAccounts:        true,
+		FilterLinks:             true,
+		UpdatedAt:               now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("UpsertContentControls returned error: %v", err)
+	}
+	if controls.CommunityID != communityID.String() || len(controls.BlockedKeywords) != 1 || controls.BlockedDomains[0] != "bad.example" || !controls.BlockNewAccounts || !controls.FilterLinks {
+		t.Fatalf("unexpected content controls: %#v", controls)
+	}
+	gotControls, err := repo.GetContentControls(ctx, communityID)
+	if err != nil {
+		t.Fatalf("GetContentControls returned error: %v", err)
+	}
+	if gotControls.PostRateLimitPerHour != 3 || gotControls.CommentRateLimitPerHour != 8 {
+		t.Fatalf("unexpected persisted content controls: %#v", gotControls)
+	}
+}
+
 func TestPostgresModerationRepositoryDismissReport(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresModerationRepository(pool)
@@ -517,7 +582,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireModerationSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "content_reports", "moderation_actions", "community_moderation_logs"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "content_reports", "moderation_actions", "community_moderation_logs", "community_automod_configs", "community_automod_config_versions", "community_content_controls"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -717,6 +782,16 @@ func cleanupActionByRawID(ctx context.Context, t *testing.T, pool *pgxpool.Pool,
 	t.Cleanup(func() {
 		if _, err := pool.Exec(ctx, `DELETE FROM moderation_actions WHERE id = $1::uuid`, id); err != nil {
 			t.Fatalf("cleanup moderation action %q: %v", id, err)
+		}
+	})
+}
+
+func cleanupCommunityModLogs(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM community_moderation_logs WHERE community_id = $1::uuid`, communityID.String()); err != nil {
+			t.Fatalf("cleanup community moderation logs for %q: %v", communityID.String(), err)
 		}
 	})
 }

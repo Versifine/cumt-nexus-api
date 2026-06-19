@@ -62,6 +62,12 @@ type ToolsUseCase interface {
 	ListModeratorNotes(ctx context.Context, input moderationusecase.ListModeratorNotesInput) (moderationusecase.ListModeratorNotesResult, error)
 	CreateModeratorNote(ctx context.Context, input moderationusecase.CreateModeratorNoteInput) (moderationusecase.ModeratorNoteResult, error)
 	DeleteModeratorNote(ctx context.Context, input moderationusecase.DeleteModeratorNoteInput) error
+	GetAutomodConfig(ctx context.Context, actorID userdomain.UserID, slug string) (moderationusecase.AutomodConfigResult, error)
+	UpdateAutomodConfig(ctx context.Context, input moderationusecase.AutomodConfigInput) (moderationusecase.AutomodConfigResult, error)
+	ListAutomodVersions(ctx context.Context, input moderationusecase.AutomodVersionsInput) (moderationusecase.AutomodVersionsResult, error)
+	DryRunAutomod(ctx context.Context, input moderationusecase.AutomodDryRunInput) (moderationusecase.AutomodDryRunResult, error)
+	GetContentControls(ctx context.Context, actorID userdomain.UserID, slug string) (moderationusecase.ContentControlsResult, error)
+	UpdateContentControls(ctx context.Context, input moderationusecase.ContentControlsInput) (moderationusecase.ContentControlsResult, error)
 }
 
 type reportContentRequest struct {
@@ -184,6 +190,12 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/communities/:slug/moderation/users/:user_id/notes", handler.CreateModeratorNote)
 	group.DELETE("/communities/:slug/moderation/users/:user_id/notes/:note_id", handler.DeleteModeratorNote)
 	group.GET("/communities/:slug/moderation/logs", handler.ListCommunityModLogs)
+	group.GET("/communities/:slug/moderation/automod/config", handler.GetAutomodConfig)
+	group.PATCH("/communities/:slug/moderation/automod/config", handler.UpdateAutomodConfig)
+	group.GET("/communities/:slug/moderation/automod/versions", handler.ListAutomodVersions)
+	group.POST("/communities/:slug/moderation/automod/dry-run", handler.DryRunAutomod)
+	group.GET("/communities/:slug/moderation/content-controls", handler.GetContentControls)
+	group.PATCH("/communities/:slug/moderation/content-controls", handler.UpdateContentControls)
 }
 
 func (h *Handler) ReportPost(c *gin.Context) {

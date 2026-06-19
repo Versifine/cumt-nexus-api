@@ -72,6 +72,266 @@ func (repo *PostgresModerationRepository) GetModQueueSummary(ctx context.Context
 	return moderationusecase.ModQueueSummary{Queues: counts, PriorityItems: priorityItems}, nil
 }
 
+func (repo *PostgresModerationRepository) GetAutomodConfig(ctx context.Context, communityID communitydomain.CommunityID) (moderationusecase.AutomodConfig, error) {
+	const query = `
+		SELECT community_id::text, config_text, rules, version, updated_by::text, updated_at
+		FROM community_automod_configs
+		WHERE community_id = $1::uuid
+	`
+	config, err := scanAutomodConfig(repo.pool.QueryRow(ctx, query, communityID.String()))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return moderationusecase.AutomodConfig{
+				CommunityID: communityID.String(),
+				Rules:       json.RawMessage("{}"),
+			}, nil
+		}
+		return moderationusecase.AutomodConfig{}, err
+	}
+	return config, nil
+}
+
+func (repo *PostgresModerationRepository) UpsertAutomodConfig(ctx context.Context, input moderationusecase.UpsertAutomodConfigRecordInput) (moderationusecase.AutomodConfig, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return moderationusecase.AutomodConfig{}, fmt.Errorf("begin automod config transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	before, err := scanAutomodConfig(tx.QueryRow(ctx, `
+		SELECT community_id::text, config_text, rules, version, updated_by::text, updated_at
+		FROM community_automod_configs
+		WHERE community_id = $1::uuid
+		FOR UPDATE
+	`, input.CommunityID.String()))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return moderationusecase.AutomodConfig{}, err
+	}
+	nextVersion := before.Version + 1
+	if errors.Is(err, pgx.ErrNoRows) {
+		nextVersion = 1
+	}
+	const upsert = `
+		INSERT INTO community_automod_configs (community_id, config_text, rules, version, updated_by, updated_at)
+		VALUES ($1::uuid, $2, $3::jsonb, $4, $5::uuid, $6)
+		ON CONFLICT (community_id) DO UPDATE
+		SET config_text = EXCLUDED.config_text,
+			rules = EXCLUDED.rules,
+			version = EXCLUDED.version,
+			updated_by = EXCLUDED.updated_by,
+			updated_at = EXCLUDED.updated_at
+		RETURNING community_id::text, config_text, rules, version, updated_by::text, updated_at
+	`
+	config, err := scanAutomodConfig(tx.QueryRow(ctx, upsert, input.CommunityID.String(), input.ConfigText, string(input.Rules), nextVersion, input.ActorID.String(), input.UpdatedAt))
+	if err != nil {
+		return moderationusecase.AutomodConfig{}, mapPostgresWriteError("upsert automod config", err)
+	}
+	const versionInsert = `
+		INSERT INTO community_automod_config_versions (id, community_id, version, config_text, rules, updated_by, created_at)
+		VALUES (gen_random_uuid(), $1::uuid, $2, $3, $4::jsonb, $5::uuid, $6)
+	`
+	if _, err := tx.Exec(ctx, versionInsert, input.CommunityID.String(), config.Version, input.ConfigText, string(input.Rules), input.ActorID.String(), input.UpdatedAt); err != nil {
+		return moderationusecase.AutomodConfig{}, mapPostgresWriteError("insert automod config version", err)
+	}
+	beforeState := map[string]any{"version": before.Version, "config_text": before.ConfigText, "rules": json.RawMessage("{}")}
+	if len(before.Rules) > 0 {
+		beforeState["rules"] = before.Rules
+	}
+	afterState := map[string]any{"version": config.Version, "config_text": config.ConfigText, "rules": config.Rules}
+	if err := insertCommunityModLog(ctx, tx, input.CommunityID, moderationusecase.ApplyModerationActionRecordInput{
+		ActorID:    input.ActorID,
+		TargetType: moderationdomain.TargetType("automod_config"),
+		TargetID:   input.CommunityID.String(),
+		Action:     moderationdomain.ActionType("update_automod_config"),
+		CreatedAt:  input.UpdatedAt,
+	}, beforeState, afterState); err != nil {
+		return moderationusecase.AutomodConfig{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return moderationusecase.AutomodConfig{}, fmt.Errorf("commit automod config transaction: %w", err)
+	}
+	committed = true
+	return config, nil
+}
+
+func (repo *PostgresModerationRepository) ListAutomodVersions(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]moderationusecase.AutomodVersion, error) {
+	const query = `
+		SELECT id::text, community_id::text, version, config_text, rules, updated_by::text, created_at
+		FROM community_automod_config_versions
+		WHERE community_id = $1::uuid
+		ORDER BY version DESC
+		LIMIT $2
+		OFFSET $3
+	`
+	rows, err := repo.pool.Query(ctx, query, communityID.String(), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	versions := make([]moderationusecase.AutomodVersion, 0)
+	for rows.Next() {
+		version, err := scanAutomodVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		versions = append(versions, version)
+	}
+	return versions, rows.Err()
+}
+
+func (repo *PostgresModerationRepository) GetContentControls(ctx context.Context, communityID communitydomain.CommunityID) (moderationusecase.ContentControls, error) {
+	const query = `
+		SELECT community_id::text, blocked_keywords, blocked_domains, min_account_age_days, post_rate_limit_per_hour, comment_rate_limit_per_hour, block_new_accounts, filter_links, updated_by::text, updated_at
+		FROM community_content_controls
+		WHERE community_id = $1::uuid
+	`
+	controls, err := scanContentControls(repo.pool.QueryRow(ctx, query, communityID.String()))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return moderationusecase.ContentControls{CommunityID: communityID.String(), BlockedKeywords: []string{}, BlockedDomains: []string{}}, nil
+		}
+		return moderationusecase.ContentControls{}, err
+	}
+	return controls, nil
+}
+
+func (repo *PostgresModerationRepository) UpsertContentControls(ctx context.Context, input moderationusecase.UpsertContentControlsRecordInput) (moderationusecase.ContentControls, error) {
+	keywordsJSON, err := json.Marshal(input.BlockedKeywords)
+	if err != nil {
+		return moderationusecase.ContentControls{}, err
+	}
+	domainsJSON, err := json.Marshal(input.BlockedDomains)
+	if err != nil {
+		return moderationusecase.ContentControls{}, err
+	}
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return moderationusecase.ContentControls{}, fmt.Errorf("begin content controls transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	before, err := repo.GetContentControls(ctx, input.CommunityID)
+	if err != nil {
+		return moderationusecase.ContentControls{}, err
+	}
+	const query = `
+		INSERT INTO community_content_controls (
+			community_id, blocked_keywords, blocked_domains, min_account_age_days, post_rate_limit_per_hour,
+			comment_rate_limit_per_hour, block_new_accounts, filter_links, updated_by, updated_at
+		)
+		VALUES ($1::uuid, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8, $9::uuid, $10)
+		ON CONFLICT (community_id) DO UPDATE
+		SET blocked_keywords = EXCLUDED.blocked_keywords,
+			blocked_domains = EXCLUDED.blocked_domains,
+			min_account_age_days = EXCLUDED.min_account_age_days,
+			post_rate_limit_per_hour = EXCLUDED.post_rate_limit_per_hour,
+			comment_rate_limit_per_hour = EXCLUDED.comment_rate_limit_per_hour,
+			block_new_accounts = EXCLUDED.block_new_accounts,
+			filter_links = EXCLUDED.filter_links,
+			updated_by = EXCLUDED.updated_by,
+			updated_at = EXCLUDED.updated_at
+		RETURNING community_id::text, blocked_keywords, blocked_domains, min_account_age_days, post_rate_limit_per_hour, comment_rate_limit_per_hour, block_new_accounts, filter_links, updated_by::text, updated_at
+	`
+	controls, err := scanContentControls(tx.QueryRow(ctx, query, input.CommunityID.String(), string(keywordsJSON), string(domainsJSON), input.MinAccountAgeDays, input.PostRateLimitPerHour, input.CommentRateLimitPerHour, input.BlockNewAccounts, input.FilterLinks, input.ActorID.String(), input.UpdatedAt))
+	if err != nil {
+		return moderationusecase.ContentControls{}, mapPostgresWriteError("upsert content controls", err)
+	}
+	if err := insertCommunityModLog(ctx, tx, input.CommunityID, moderationusecase.ApplyModerationActionRecordInput{
+		ActorID:    input.ActorID,
+		TargetType: moderationdomain.TargetType("content_controls"),
+		TargetID:   input.CommunityID.String(),
+		Action:     moderationdomain.ActionType("update_content_controls"),
+		CreatedAt:  input.UpdatedAt,
+	}, contentControlsState(before), contentControlsState(controls)); err != nil {
+		return moderationusecase.ContentControls{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return moderationusecase.ContentControls{}, fmt.Errorf("commit content controls transaction: %w", err)
+	}
+	committed = true
+	return controls, nil
+}
+
+func scanAutomodConfig(row rowScanner) (moderationusecase.AutomodConfig, error) {
+	var config moderationusecase.AutomodConfig
+	var rules []byte
+	if err := row.Scan(&config.CommunityID, &config.ConfigText, &rules, &config.Version, &config.UpdatedBy, &config.UpdatedAt); err != nil {
+		return moderationusecase.AutomodConfig{}, err
+	}
+	config.Rules = json.RawMessage(rules)
+	if len(config.Rules) == 0 {
+		config.Rules = json.RawMessage("{}")
+	}
+	return config, nil
+}
+
+func scanAutomodVersion(row rowScanner) (moderationusecase.AutomodVersion, error) {
+	var version moderationusecase.AutomodVersion
+	var rules []byte
+	if err := row.Scan(&version.ID, &version.CommunityID, &version.Version, &version.ConfigText, &rules, &version.UpdatedBy, &version.CreatedAt); err != nil {
+		return moderationusecase.AutomodVersion{}, err
+	}
+	version.Rules = json.RawMessage(rules)
+	if len(version.Rules) == 0 {
+		version.Rules = json.RawMessage("{}")
+	}
+	return version, nil
+}
+
+func scanContentControls(row rowScanner) (moderationusecase.ContentControls, error) {
+	var controls moderationusecase.ContentControls
+	var keywordsJSON []byte
+	var domainsJSON []byte
+	if err := row.Scan(
+		&controls.CommunityID,
+		&keywordsJSON,
+		&domainsJSON,
+		&controls.MinAccountAgeDays,
+		&controls.PostRateLimitPerHour,
+		&controls.CommentRateLimitPerHour,
+		&controls.BlockNewAccounts,
+		&controls.FilterLinks,
+		&controls.UpdatedBy,
+		&controls.UpdatedAt,
+	); err != nil {
+		return moderationusecase.ContentControls{}, err
+	}
+	if err := json.Unmarshal(keywordsJSON, &controls.BlockedKeywords); err != nil {
+		return moderationusecase.ContentControls{}, err
+	}
+	if err := json.Unmarshal(domainsJSON, &controls.BlockedDomains); err != nil {
+		return moderationusecase.ContentControls{}, err
+	}
+	if controls.BlockedKeywords == nil {
+		controls.BlockedKeywords = []string{}
+	}
+	if controls.BlockedDomains == nil {
+		controls.BlockedDomains = []string{}
+	}
+	return controls, nil
+}
+
+func contentControlsState(controls moderationusecase.ContentControls) map[string]any {
+	return map[string]any{
+		"blocked_keywords":            controls.BlockedKeywords,
+		"blocked_domains":             controls.BlockedDomains,
+		"min_account_age_days":        controls.MinAccountAgeDays,
+		"post_rate_limit_per_hour":    controls.PostRateLimitPerHour,
+		"comment_rate_limit_per_hour": controls.CommentRateLimitPerHour,
+		"block_new_accounts":          controls.BlockNewAccounts,
+		"filter_links":                controls.FilterLinks,
+	}
+}
+
 func (repo *PostgresModerationRepository) listReportQueue(ctx context.Context, communityID any, queue string, limit int, offset int) ([]moderationusecase.ModQueueItem, error) {
 	const query = `
 		WITH report_targets AS (
