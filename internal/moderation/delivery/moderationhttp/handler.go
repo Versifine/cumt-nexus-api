@@ -76,6 +76,19 @@ type ToolsUseCase interface {
 	GetCommunityInsightsSummary(ctx context.Context, input moderationusecase.CommunityInsightsInput) (moderationusecase.CommunityInsightsSummaryResult, error)
 	GetCommunityModerationInsights(ctx context.Context, input moderationusecase.CommunityInsightsInput) (moderationusecase.CommunityModerationInsightsResult, error)
 	ListCommunityTrainingQueue(ctx context.Context, input moderationusecase.CommunityInsightsInput) (moderationusecase.CommunityTrainingQueueResult, error)
+	ListCommunityFlairs(ctx context.Context, input moderationusecase.CommunityFlairInput) (moderationusecase.ListCommunityFlairsResult, error)
+	CreateCommunityFlair(ctx context.Context, input moderationusecase.WriteCommunityFlairInput) (moderationusecase.CommunityFlairResult, error)
+	UpdateCommunityFlair(ctx context.Context, input moderationusecase.WriteCommunityFlairInput) (moderationusecase.CommunityFlairResult, error)
+	DeleteCommunityFlair(ctx context.Context, input moderationusecase.DeleteCommunityFlairInput) error
+	ReorderCommunityFlairs(ctx context.Context, input moderationusecase.ReorderCommunityFlairsInput) (moderationusecase.ListCommunityFlairsResult, error)
+	ListScheduledPosts(ctx context.Context, input moderationusecase.ListScheduledPostsInput) (moderationusecase.ListScheduledPostsResult, error)
+	CreateScheduledPost(ctx context.Context, input moderationusecase.WriteScheduledPostInput) (moderationusecase.CommunityScheduledPostResult, error)
+	UpdateScheduledPost(ctx context.Context, input moderationusecase.WriteScheduledPostInput) (moderationusecase.CommunityScheduledPostResult, error)
+	DeleteScheduledPost(ctx context.Context, input moderationusecase.DeleteScheduledPostInput) error
+	ListGuides(ctx context.Context, input moderationusecase.ListGuidesInput) (moderationusecase.ListGuidesResult, error)
+	CreateGuide(ctx context.Context, input moderationusecase.WriteGuideInput) (moderationusecase.CommunityGuideResult, error)
+	UpdateGuide(ctx context.Context, input moderationusecase.WriteGuideInput) (moderationusecase.CommunityGuideResult, error)
+	DeleteGuide(ctx context.Context, input moderationusecase.DeleteGuideInput) error
 }
 
 type reportContentRequest struct {
@@ -213,6 +226,23 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/communities/:slug/insights/summary", handler.GetCommunityInsightsSummary)
 	group.GET("/communities/:slug/insights/moderation", handler.GetCommunityModerationInsights)
 	group.GET("/communities/:slug/insights/training-queue", handler.ListCommunityTrainingQueue)
+	group.GET("/communities/:slug/moderation/post-flairs", handler.ListCommunityPostFlairs)
+	group.POST("/communities/:slug/moderation/post-flairs", handler.CreateCommunityPostFlair)
+	group.PATCH("/communities/:slug/moderation/post-flairs/:flair_id", handler.UpdateCommunityPostFlair)
+	group.DELETE("/communities/:slug/moderation/post-flairs/:flair_id", handler.DeleteCommunityPostFlair)
+	group.GET("/communities/:slug/moderation/user-flairs", handler.ListCommunityUserFlairs)
+	group.POST("/communities/:slug/moderation/user-flairs", handler.CreateCommunityUserFlair)
+	group.PATCH("/communities/:slug/moderation/user-flairs/:flair_id", handler.UpdateCommunityUserFlair)
+	group.DELETE("/communities/:slug/moderation/user-flairs/:flair_id", handler.DeleteCommunityUserFlair)
+	group.POST("/communities/:slug/moderation/flairs/reorder", handler.ReorderCommunityFlairs)
+	group.GET("/communities/:slug/scheduled-posts", handler.ListScheduledPosts)
+	group.POST("/communities/:slug/scheduled-posts", handler.CreateScheduledPost)
+	group.PATCH("/communities/:slug/scheduled-posts/:scheduled_post_id", handler.UpdateScheduledPost)
+	group.DELETE("/communities/:slug/scheduled-posts/:scheduled_post_id", handler.DeleteScheduledPost)
+	group.GET("/communities/:slug/guides", handler.ListGuides)
+	group.POST("/communities/:slug/guides", handler.CreateGuide)
+	group.PATCH("/communities/:slug/guides/:guide_id", handler.UpdateGuide)
+	group.DELETE("/communities/:slug/guides/:guide_id", handler.DeleteGuide)
 }
 
 func (h *Handler) ReportPost(c *gin.Context) {

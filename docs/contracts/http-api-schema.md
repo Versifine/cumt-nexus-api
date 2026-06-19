@@ -178,6 +178,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | GET | /api/v1/communities/:slug/insights/summary | query | `moderationhttp.communityInsightsSummaryResponse` | 200 |
 | GET | /api/v1/communities/:slug/insights/moderation | query | `moderationhttp.communityModerationInsightsResponse` | 200 |
 | GET | /api/v1/communities/:slug/insights/training-queue | query | `moderationhttp.communityTrainingQueueResponse` | 200 |
+| GET | /api/v1/communities/:slug/moderation/post-flairs | none | `moderationhttp.communityFlairListResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/post-flairs | `moderationhttp.communityFlairRequest` | `moderationhttp.communityFlairResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/moderation/post-flairs/:flair_id | `moderationhttp.communityFlairRequest` | `moderationhttp.communityFlairResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/moderation/post-flairs/:flair_id | none | none | 204 |
+| GET | /api/v1/communities/:slug/moderation/user-flairs | none | `moderationhttp.communityFlairListResponse` | 200 |
+| POST | /api/v1/communities/:slug/moderation/user-flairs | `moderationhttp.communityFlairRequest` | `moderationhttp.communityFlairResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/moderation/user-flairs/:flair_id | `moderationhttp.communityFlairRequest` | `moderationhttp.communityFlairResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/moderation/user-flairs/:flair_id | none | none | 204 |
+| POST | /api/v1/communities/:slug/moderation/flairs/reorder | `moderationhttp.reorderCommunityFlairsRequest` | `moderationhttp.communityFlairListResponse` | 200 |
+| GET | /api/v1/communities/:slug/scheduled-posts | query | `moderationhttp.scheduledPostListResponse` | 200 |
+| POST | /api/v1/communities/:slug/scheduled-posts | `moderationhttp.scheduledPostRequest` | `moderationhttp.scheduledPostResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/scheduled-posts/:scheduled_post_id | `moderationhttp.scheduledPostRequest` | `moderationhttp.scheduledPostResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/scheduled-posts/:scheduled_post_id | none | none | 204 |
+| GET | /api/v1/communities/:slug/guides | query | `moderationhttp.guideListResponse` | 200 |
+| POST | /api/v1/communities/:slug/guides | `moderationhttp.guideRequest` | `moderationhttp.guideResponse` | 201 |
+| PATCH | /api/v1/communities/:slug/guides/:guide_id | `moderationhttp.guideRequest` | `moderationhttp.guideResponse` | 200 |
+| DELETE | /api/v1/communities/:slug/guides/:guide_id | none | none | 204 |
 | GET | /api/v1/communities/:slug/moderation/logs | query | `moderationhttp.modLogsResponse` | 200 |
 | GET | /api/v1/moderation/reports | query | `moderationhttp.listReportsResponse` | 200 |
 | GET | /api/v1/moderation/reports/:id | none | `moderationhttp.reportContentResponse` | 200 |
@@ -252,6 +269,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp.automodDryRunRequest` | `target_type` |
 | `moderationhttp.modmailConversationMutationRequest` | `user_id`, `subject`, `body` |
 | `moderationhttp.modmailMessageRequest` | `body` |
+| `moderationhttp.communityFlairRequest` | `title` |
+| `moderationhttp.reorderCommunityFlairsRequest` | `kind`, `ids` |
+| `moderationhttp.scheduledPostRequest` | `title`, `scheduled_at` |
+| `moderationhttp.guideRequest` | `title` |
 | `posthttp.publishPostRequest` | `title`, `body` |
 | `posthttp.updatePostRequest` | `title`, `body` |
 | `votehttp.setPostVoteRequest` | `value` |
@@ -446,6 +467,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp` | `communityModerationInsightsView` | `community_id`, `range`, `since`, `pending_reports`, `resolved_reports`, `removed_posts`, `removed_comments`, `spam_posts`, `spam_comments`, `actions_count` |
 | `moderationhttp` | `communityTrainingQueueResponse` | `items`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `communityTrainingQueueItemView` | `id`, `target_type`, `target_id`, `community_id`, `preview`, `suggested_action`, `reason`, `created_at` |
+| `moderationhttp` | `communityFlairListResponse` | `items` |
+| `moderationhttp` | `communityFlairResponse` | `item` |
+| `moderationhttp` | `communityFlairView` | `id`, `community_id`, `kind`, `title`, `color`, `is_user_selectable`, `is_enabled`, `position`, `created_by`, `updated_by`, `created_at`, `updated_at` |
+| `moderationhttp` | `communityFlairRequest` | `title`, `color`, `is_user_selectable`, `is_enabled`, `position` |
+| `moderationhttp` | `reorderCommunityFlairsRequest` | `kind`, `ids` |
+| `moderationhttp` | `scheduledPostListResponse` | `items`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `scheduledPostResponse` | `item` |
+| `moderationhttp` | `scheduledPostView` | `id`, `community_id`, `created_by`, `updated_by`, `title`, `body`, `scheduled_at`, `repeat_rule`, `status`, `created_at`, `updated_at` |
+| `moderationhttp` | `scheduledPostRequest` | `title`, `body`, `scheduled_at`, `repeat_rule`, `status` |
+| `moderationhttp` | `guideListResponse` | `items`, `limit`, `offset`, `next_offset`, `has_more` |
+| `moderationhttp` | `guideResponse` | `item` |
+| `moderationhttp` | `guideView` | `id`, `community_id`, `created_by`, `updated_by`, `title`, `body`, `position`, `visibility`, `created_at`, `updated_at` |
+| `moderationhttp` | `guideRequest` | `title`, `body`, `position`, `visibility` |
 | `moderationhttp` | `modLogsResponse` | `logs`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `modLogResponse` | `id`, `community_id`, `actor_id`, `action`, `target_type`, `target_id`, `batch_id`, `before`, `after`, `metadata`, `created_at` |
 | `searchhttp` | `searchResponse` | `query`, `scope`, `limit`, `offset`, `next_offset`, `has_more`, `communities`, `posts`, `users` |

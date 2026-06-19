@@ -183,6 +183,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | GET | /api/v1/communities/:slug/insights/summary | Bearer | 社区增长与活跃摘要 |
 | GET | /api/v1/communities/:slug/insights/moderation | Bearer | 社区治理指标摘要 |
 | GET | /api/v1/communities/:slug/insights/training-queue | Bearer | 社区治理训练队列 |
+| GET | /api/v1/communities/:slug/moderation/post-flairs | Bearer | 社区帖子 flair 模板列表 |
+| POST | /api/v1/communities/:slug/moderation/post-flairs | Bearer | 创建社区帖子 flair 模板 |
+| PATCH | /api/v1/communities/:slug/moderation/post-flairs/:flair_id | Bearer | 更新社区帖子 flair 模板 |
+| DELETE | /api/v1/communities/:slug/moderation/post-flairs/:flair_id | Bearer | 删除社区帖子 flair 模板 |
+| GET | /api/v1/communities/:slug/moderation/user-flairs | Bearer | 社区用户 flair 模板列表 |
+| POST | /api/v1/communities/:slug/moderation/user-flairs | Bearer | 创建社区用户 flair 模板 |
+| PATCH | /api/v1/communities/:slug/moderation/user-flairs/:flair_id | Bearer | 更新社区用户 flair 模板 |
+| DELETE | /api/v1/communities/:slug/moderation/user-flairs/:flair_id | Bearer | 删除社区用户 flair 模板 |
+| POST | /api/v1/communities/:slug/moderation/flairs/reorder | Bearer | 重排社区 flair 模板 |
+| GET | /api/v1/communities/:slug/scheduled-posts | Bearer | 社区定时帖列表 |
+| POST | /api/v1/communities/:slug/scheduled-posts | Bearer | 创建社区定时帖 |
+| PATCH | /api/v1/communities/:slug/scheduled-posts/:scheduled_post_id | Bearer | 更新社区定时帖 |
+| DELETE | /api/v1/communities/:slug/scheduled-posts/:scheduled_post_id | Bearer | 删除社区定时帖 |
+| GET | /api/v1/communities/:slug/guides | Bearer | 社区 guides/wiki 列表 |
+| POST | /api/v1/communities/:slug/guides | Bearer | 创建社区 guide/wiki |
+| PATCH | /api/v1/communities/:slug/guides/:guide_id | Bearer | 更新社区 guide/wiki |
+| DELETE | /api/v1/communities/:slug/guides/:guide_id | Bearer | 删除社区 guide/wiki |
 | GET | /api/v1/communities/:slug/moderation/logs | Bearer | 社区 Mod Log |
 | GET | /api/v1/moderation/reports | Bearer | 审核台举报列表 |
 | GET | /api/v1/moderation/reports/:id | Bearer | 审核台举报详情 |
@@ -277,6 +294,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/communities/:slug/insights/summary` | `range` | 社区 owner/moderator 或平台 owner；`range=7d|30d|90d`，返回成员总数、区间帖子/评论和活跃作者数 |
 | `GET /api/v1/communities/:slug/insights/moderation` | `range` | 社区 owner/moderator 或平台 owner；`range=7d|30d|90d`，返回待处理/已处理举报、移除、spam 和审核动作计数 |
 | `GET /api/v1/communities/:slug/insights/training-queue` | `limit`, `offset` | 社区 owner/moderator 或平台 owner；返回需要复核的队列样本和建议动作 |
+| `GET /api/v1/communities/:slug/moderation/post-flairs` | none | 社区 owner/moderator 或平台 owner；按 `position ASC, created_at ASC` 返回帖子 flair 模板 |
+| `GET /api/v1/communities/:slug/moderation/user-flairs` | none | 社区 owner/moderator 或平台 owner；按 `position ASC, created_at ASC` 返回用户 flair 模板 |
+| `POST /api/v1/communities/:slug/moderation/flairs/reorder` | none | 社区 owner/moderator 或平台 owner；请求体 `kind=post|user`、`ids`，事务内重排对应 flair 模板 |
+| `GET /api/v1/communities/:slug/scheduled-posts` | `limit`, `offset` | 社区 owner/moderator 或平台 owner；按 `scheduled_at ASC, id ASC` 返回定时帖 |
+| `GET /api/v1/communities/:slug/guides` | `limit`, `offset` | 社区 owner/moderator 或平台 owner；按 `position ASC, created_at ASC` 返回 guides/wiki |
 | `GET /api/v1/communities/:slug/moderation/logs` | `action`, `actor_id`, `target_type`, `target_id`, `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/search` | `q`, `scope`, `limit`, `offset` | `scope=all|communities|posts|users`；`all` 当前按 communities/posts/users 三个分区各返回最多 `limit` 条；PostgreSQL full-text search 结合字段权重、精确/前缀/子串命中和轻量时间衰减排序，帖子字段权重为标题 > 社区名/slug > 正文 |
 | `GET /api/v1/notifications` | `category`, `status`, `limit`, `offset` | `category=all|interactions|replies|mentions|likes|system`；不传 `status` 默认 `all`，可显式传 `status=all|unread|read` |

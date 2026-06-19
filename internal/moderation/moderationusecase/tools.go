@@ -98,6 +98,19 @@ type ToolsRepository interface {
 	UpdateModmailConversation(ctx context.Context, input UpdateModmailConversationRecordInput) (ModmailConversation, error)
 	GetCommunityInsightsSummary(ctx context.Context, input CommunityInsightsRecordInput) (CommunityInsightsSummary, error)
 	GetCommunityModerationInsights(ctx context.Context, input CommunityInsightsRecordInput) (CommunityModerationInsights, error)
+	ListCommunityFlairs(ctx context.Context, communityID communitydomain.CommunityID, kind string) ([]CommunityFlair, error)
+	CreateCommunityFlair(ctx context.Context, input CommunityFlairRecordInput) (CommunityFlair, error)
+	UpdateCommunityFlair(ctx context.Context, input CommunityFlairRecordInput) (CommunityFlair, error)
+	DeleteCommunityFlair(ctx context.Context, input DeleteCommunityFlairRecordInput) error
+	ReorderCommunityFlairs(ctx context.Context, input ReorderCommunityFlairsRecordInput) ([]CommunityFlair, error)
+	ListScheduledPosts(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]CommunityScheduledPost, error)
+	CreateScheduledPost(ctx context.Context, input WriteScheduledPostRecordInput) (CommunityScheduledPost, error)
+	UpdateScheduledPost(ctx context.Context, input WriteScheduledPostRecordInput) (CommunityScheduledPost, error)
+	DeleteScheduledPost(ctx context.Context, input DeleteScheduledPostRecordInput) error
+	ListGuides(ctx context.Context, communityID communitydomain.CommunityID, limit int, offset int) ([]CommunityGuide, error)
+	CreateGuide(ctx context.Context, input WriteGuideRecordInput) (CommunityGuide, error)
+	UpdateGuide(ctx context.Context, input WriteGuideRecordInput) (CommunityGuide, error)
+	DeleteGuide(ctx context.Context, input DeleteGuideRecordInput) error
 }
 
 type PlatformOwnerRepository interface {

@@ -72,3 +72,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000033 | create_message_system | Creates private message conversations, requests, reports, blocks, privacy settings and realtime event tables |
 | 000034 | create_automod_controls | Creates community Automod config/version history and content-control settings for moderation tools |
 | 000035 | create_modmail | Creates community Modmail conversations, messages and per-moderator read state |
+| 000036 | create_community_extended_settings | Creates community post/user flair templates, scheduled posts and guides/wiki settings |
