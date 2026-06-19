@@ -61,6 +61,8 @@ func NewToolsUseCase(
 
 type ToolsRepository interface {
 	ListModQueue(ctx context.Context, input ListModQueueRecordInput) ([]ModQueueItem, error)
+	GetModQueueItem(ctx context.Context, input GetModQueueItemRecordInput) (ModQueueItemDetail, error)
+	GetModQueueSummary(ctx context.Context, input GetModQueueSummaryRecordInput) (ModQueueSummary, error)
 	ApplyModerationAction(ctx context.Context, input ApplyModerationActionRecordInput) (ModerationAction, error)
 	IgnoreCommunityReport(ctx context.Context, communityID communitydomain.CommunityID, reportID moderationdomain.ContentReportID, actorID userdomain.UserID, reviewedAt time.Time) (moderationdomain.ContentReport, error)
 	ListCommunityModLogs(ctx context.Context, input ListCommunityModLogsRecordInput) ([]CommunityModLog, error)
@@ -90,6 +92,18 @@ type ListModQueueRecordInput struct {
 	Queue       string
 	Limit       int
 	Offset      int
+}
+
+type GetModQueueItemRecordInput struct {
+	CommunityID *communitydomain.CommunityID
+	TargetType  moderationdomain.TargetType
+	TargetID    string
+}
+
+type GetModQueueSummaryRecordInput struct {
+	CommunityID        *communitydomain.CommunityID
+	PriorityItemLimit  int
+	PriorityItemOffset int
 }
 
 type ApplyModerationActionRecordInput struct {
@@ -164,6 +178,23 @@ type ListModQueueResult struct {
 	Offset     int
 	NextOffset int
 	HasMore    bool
+}
+
+type GetModQueueItemInput struct {
+	ActorID userdomain.UserID
+	ItemID  string
+}
+
+type GetModQueueItemResult struct {
+	Detail ModQueueItemDetail
+}
+
+type GetModQueueSummaryInput struct {
+	ActorID userdomain.UserID
+}
+
+type GetModQueueSummaryResult struct {
+	Summary ModQueueSummary
 }
 
 type BulkActionInput struct {
@@ -349,6 +380,31 @@ type ModQueueItem struct {
 	UpdatedAt     time.Time
 }
 
+type ModQueueItemDetail struct {
+	Item          ModQueueItem
+	TargetPreview ReportTargetPreview
+	Reports       []ModQueueReport
+	RecentActions []ModerationAction
+}
+
+type ModQueueReport struct {
+	ID         string
+	ReporterID string
+	Reason     string
+	Status     string
+	CreatedAt  time.Time
+}
+
+type ModQueueCount struct {
+	Queue string
+	Count int
+}
+
+type ModQueueSummary struct {
+	Queues        []ModQueueCount
+	PriorityItems []ModQueueItem
+}
+
 type CommunityModLog struct {
 	ID          string
 	CommunityID string
@@ -443,6 +499,37 @@ func (uc *ToolsUseCase) ListModQueue(ctx context.Context, input ListModQueueInpu
 	}
 	items, hasMore := trimToolsPage(items, limit)
 	return ListModQueueResult{Items: items, Queue: queue, Limit: limit, Offset: offset, NextOffset: offset + len(items), HasMore: hasMore}, nil
+}
+
+func (uc *ToolsUseCase) GetAdminModQueueItem(ctx context.Context, input GetModQueueItemInput) (GetModQueueItemResult, error) {
+	if err := uc.ensurePlatformStaff(ctx, input.ActorID); err != nil {
+		return GetModQueueItemResult{}, err
+	}
+	targetType, targetID, err := parseModQueueItemID(input.ItemID)
+	if err != nil {
+		return GetModQueueItemResult{}, err
+	}
+	detail, err := uc.tools.GetModQueueItem(ctx, GetModQueueItemRecordInput{
+		TargetType: targetType,
+		TargetID:   targetID,
+	})
+	if err != nil {
+		return GetModQueueItemResult{}, fmt.Errorf("get moderation queue item: %w", err)
+	}
+	return GetModQueueItemResult{Detail: detail}, nil
+}
+
+func (uc *ToolsUseCase) GetAdminModQueueSummary(ctx context.Context, input GetModQueueSummaryInput) (GetModQueueSummaryResult, error) {
+	if err := uc.ensurePlatformStaff(ctx, input.ActorID); err != nil {
+		return GetModQueueSummaryResult{}, err
+	}
+	summary, err := uc.tools.GetModQueueSummary(ctx, GetModQueueSummaryRecordInput{
+		PriorityItemLimit: DefaultModToolsListLimit,
+	})
+	if err != nil {
+		return GetModQueueSummaryResult{}, fmt.Errorf("get moderation queue summary: %w", err)
+	}
+	return GetModQueueSummaryResult{Summary: summary}, nil
 }
 
 func (uc *ToolsUseCase) ApplyBulkAction(ctx context.Context, input BulkActionInput) (BulkActionResult, error) {
@@ -898,6 +985,32 @@ func normalizeModQueue(raw string) (string, error) {
 	default:
 		return "", apperr.New(apperr.CodeInvalidArgument, "moderation queue is invalid")
 	}
+}
+
+func parseModQueueItemID(raw string) (moderationdomain.TargetType, string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", "", apperr.New(apperr.CodeInvalidArgument, "moderation queue item id is required")
+	}
+	parts := strings.Split(value, ":")
+	if len(parts) == 3 {
+		if _, err := normalizeModQueue(parts[0]); err != nil {
+			return "", "", err
+		}
+		parts = parts[1:]
+	}
+	if len(parts) != 2 {
+		return "", "", apperr.New(apperr.CodeInvalidArgument, "moderation queue item id is invalid")
+	}
+	targetType, err := moderationdomain.NewTargetType(parts[0])
+	if err != nil {
+		return "", "", err
+	}
+	targetID, err := normalizeTargetID(targetType, parts[1])
+	if err != nil {
+		return "", "", err
+	}
+	return targetType, targetID, nil
 }
 
 type normalizedModerationTarget struct {

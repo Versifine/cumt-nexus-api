@@ -225,6 +225,71 @@ func TestPostgresModerationRepositoryFindCommentReportIncludesTargetPreview(t *t
 	}
 }
 
+func TestPostgresModerationRepositoryGetModQueueItemAndSummary(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresModerationRepository(pool)
+	now := testNow()
+
+	reporterID := insertTestUser(ctx, t, pool)
+	actorID := insertTestUser(ctx, t, pool)
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "mod-queue-"+randomSuffix())
+	post := insertTestPost(ctx, t, pool, communityID, authorID, "Queue detail")
+	target, err := moderationdomain.NewPostTarget(post)
+	if err != nil {
+		t.Fatalf("NewPostTarget returned error: %v", err)
+	}
+	report := mustReport(t, target, reporterID, "queue report", now)
+	if err := repo.CreateReport(ctx, *report); err != nil {
+		t.Fatalf("CreateReport returned error: %v", err)
+	}
+	cleanupReport(ctx, t, pool, report.ID())
+
+	action, err := repo.ApplyModerationAction(ctx, moderationusecase.ApplyModerationActionRecordInput{
+		ActorID:    actorID,
+		TargetType: moderationdomain.TargetTypePost,
+		TargetID:   post.String(),
+		Action:     moderationdomain.ActionTypeLock,
+		Reason:     "needs review",
+		CreatedAt:  now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("ApplyModerationAction returned error: %v", err)
+	}
+	cleanupActionByRawID(ctx, t, pool, action.ID)
+
+	detail, err := repo.GetModQueueItem(ctx, moderationusecase.GetModQueueItemRecordInput{
+		TargetType: moderationdomain.TargetTypePost,
+		TargetID:   post.String(),
+	})
+	if err != nil {
+		t.Fatalf("GetModQueueItem returned error: %v", err)
+	}
+	if detail.Item.ID != "post:"+post.String() || detail.Item.Queue != "reports" || detail.Item.ReportCount != 1 {
+		t.Fatalf("unexpected queue item: %#v", detail.Item)
+	}
+	if detail.TargetPreview.Title != "Queue detail" || detail.TargetPreview.PostID != post.String() {
+		t.Fatalf("unexpected target preview: %#v", detail.TargetPreview)
+	}
+	if len(detail.Reports) != 1 || detail.Reports[0].ID != report.ID().String() {
+		t.Fatalf("expected report in detail, got %#v", detail.Reports)
+	}
+	if len(detail.RecentActions) != 1 || detail.RecentActions[0].Action != moderationdomain.ActionTypeLock.String() {
+		t.Fatalf("expected recent lock action, got %#v", detail.RecentActions)
+	}
+
+	summary, err := repo.GetModQueueSummary(ctx, moderationusecase.GetModQueueSummaryRecordInput{PriorityItemLimit: 200})
+	if err != nil {
+		t.Fatalf("GetModQueueSummary returned error: %v", err)
+	}
+	if countForQueue(summary.Queues, "reports") < 1 || countForQueue(summary.Queues, "needs_review") < 1 {
+		t.Fatalf("expected reports and needs_review counts, got %#v", summary.Queues)
+	}
+	if !containsModQueueItem(summary.PriorityItems, "post:"+post.String()) {
+		t.Fatalf("expected priority items to include reported post, got %#v", summary.PriorityItems)
+	}
+}
+
 func TestPostgresModerationRepositoryDismissReport(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresModerationRepository(pool)
@@ -452,7 +517,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireModerationSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "content_reports", "moderation_actions"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "content_reports", "moderation_actions", "community_moderation_logs"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -646,6 +711,16 @@ func cleanupAction(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id mod
 	})
 }
 
+func cleanupActionByRawID(ctx context.Context, t *testing.T, pool *pgxpool.Pool, id string) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM moderation_actions WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup moderation action %q: %v", id, err)
+		}
+	})
+}
+
 func mustReport(t *testing.T, target moderationdomain.Target, reporterID userdomain.UserID, reason string, now time.Time) *moderationdomain.ContentReport {
 	t.Helper()
 
@@ -717,6 +792,24 @@ func testNow() time.Time {
 
 func randomSuffix() string {
 	return strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+}
+
+func countForQueue(counts []moderationusecase.ModQueueCount, queue string) int {
+	for _, count := range counts {
+		if count.Queue == queue {
+			return count.Count
+		}
+	}
+	return 0
+}
+
+func containsModQueueItem(items []moderationusecase.ModQueueItem, id string) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func hasAppCode(err error, code apperr.Code) bool {

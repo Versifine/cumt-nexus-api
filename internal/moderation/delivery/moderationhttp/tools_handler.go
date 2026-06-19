@@ -36,6 +36,31 @@ type modQueueItemResponse struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type modQueueItemDetailResponse struct {
+	Item          modQueueItemResponse        `json:"item"`
+	TargetPreview reportTargetPreviewResponse `json:"target_preview"`
+	Reports       []modQueueReportResponse    `json:"reports"`
+	RecentActions []moderationActionResponse  `json:"recent_actions"`
+}
+
+type modQueueReportResponse struct {
+	ID         string    `json:"id"`
+	ReporterID string    `json:"reporter_id"`
+	Reason     string    `json:"reason"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type modQueueSummaryResponse struct {
+	Queues        []modQueueCountResponse `json:"queues"`
+	PriorityItems []modQueueItemResponse  `json:"priority_items"`
+}
+
+type modQueueCountResponse struct {
+	Queue string `json:"queue"`
+	Count int    `json:"count"`
+}
+
 type moderationTargetRequest struct {
 	TargetType string `json:"target_type"`
 	TargetID   string `json:"target_id"`
@@ -219,6 +244,49 @@ func (h *Handler) ListAdminModQueue(c *gin.Context) {
 
 func (h *Handler) ListCommunityModQueue(c *gin.Context) {
 	h.listModQueue(c, c.Param("slug"))
+}
+
+func (h *Handler) GetAdminModQueueItem(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	if h.tools == nil {
+		_ = c.Error(apperr.New(apperr.CodeInternal, "moderation tools are not configured"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.GetAdminModQueueItem(c.Request.Context(), moderationusecase.GetModQueueItemInput{
+		ActorID: userID,
+		ItemID:  c.Param("item_id"),
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, toModQueueItemDetailResponse(result.Detail))
+}
+
+func (h *Handler) GetAdminModQueueSummary(c *gin.Context) {
+	userID, ok := h.currentUserID(c)
+	if !ok {
+		return
+	}
+	if h.tools == nil {
+		_ = c.Error(apperr.New(apperr.CodeInternal, "moderation tools are not configured"))
+		c.Abort()
+		return
+	}
+	result, err := h.tools.GetAdminModQueueSummary(c.Request.Context(), moderationusecase.GetModQueueSummaryInput{
+		ActorID: userID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+	c.JSON(http.StatusOK, toModQueueSummaryResponse(result.Summary))
 }
 
 func (h *Handler) ApplyAdminModQueueAction(c *gin.Context) {
@@ -814,6 +882,36 @@ func (h *Handler) currentUserID(c *gin.Context) (userdomain.UserID, bool) {
 
 func toModQueueItemResponse(item moderationusecase.ModQueueItem) modQueueItemResponse {
 	return modQueueItemResponse(item)
+}
+
+func toModQueueItemDetailResponse(detail moderationusecase.ModQueueItemDetail) modQueueItemDetailResponse {
+	response := modQueueItemDetailResponse{
+		Item:          toModQueueItemResponse(detail.Item),
+		TargetPreview: toReportTargetPreviewResponse(detail.TargetPreview),
+		Reports:       make([]modQueueReportResponse, 0, len(detail.Reports)),
+		RecentActions: make([]moderationActionResponse, 0, len(detail.RecentActions)),
+	}
+	for _, report := range detail.Reports {
+		response.Reports = append(response.Reports, modQueueReportResponse(report))
+	}
+	for _, action := range detail.RecentActions {
+		response.RecentActions = append(response.RecentActions, toModerationActionResponse(action))
+	}
+	return response
+}
+
+func toModQueueSummaryResponse(summary moderationusecase.ModQueueSummary) modQueueSummaryResponse {
+	response := modQueueSummaryResponse{
+		Queues:        make([]modQueueCountResponse, 0, len(summary.Queues)),
+		PriorityItems: make([]modQueueItemResponse, 0, len(summary.PriorityItems)),
+	}
+	for _, count := range summary.Queues {
+		response.Queues = append(response.Queues, modQueueCountResponse(count))
+	}
+	for _, item := range summary.PriorityItems {
+		response.PriorityItems = append(response.PriorityItems, toModQueueItemResponse(item))
+	}
+	return response
 }
 
 func toBulkActionResponse(result moderationusecase.BulkActionResult) bulkActionResponse {

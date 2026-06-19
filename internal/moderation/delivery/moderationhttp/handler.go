@@ -42,6 +42,8 @@ type ConsoleUseCase interface {
 
 type ToolsUseCase interface {
 	ListModQueue(ctx context.Context, input moderationusecase.ListModQueueInput) (moderationusecase.ListModQueueResult, error)
+	GetAdminModQueueItem(ctx context.Context, input moderationusecase.GetModQueueItemInput) (moderationusecase.GetModQueueItemResult, error)
+	GetAdminModQueueSummary(ctx context.Context, input moderationusecase.GetModQueueSummaryInput) (moderationusecase.GetModQueueSummaryResult, error)
 	ApplyBulkAction(ctx context.Context, input moderationusecase.BulkActionInput) (moderationusecase.BulkActionResult, error)
 	IgnoreCommunityReport(ctx context.Context, input moderationusecase.IgnoreCommunityReportInput) (moderationusecase.IgnoreCommunityReportResult, error)
 	ListCommunityModLogs(ctx context.Context, input moderationusecase.ListCommunityModLogsInput) (moderationusecase.ListCommunityModLogsResult, error)
@@ -144,7 +146,9 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.POST("/moderation/reports/:id/dismiss", handler.DismissReport)
 	group.POST("/moderation/reports/:id/remove-target", handler.RemoveReportedTarget)
 	group.GET("/admin/mod-queues", handler.ListAdminModQueue)
+	group.GET("/admin/mod-queues/summary", handler.GetAdminModQueueSummary)
 	group.POST("/admin/mod-queues/actions", handler.ApplyAdminModQueueAction)
+	group.GET("/admin/mod-queues/:item_id", handler.GetAdminModQueueItem)
 	group.GET("/communities/:slug/mod-queues", handler.ListCommunityModQueue)
 	group.POST("/communities/:slug/mod-queues/actions", handler.ApplyCommunityModQueueAction)
 	group.POST("/communities/:slug/moderation/posts/:id/approve", handler.ApproveCommunityPost)

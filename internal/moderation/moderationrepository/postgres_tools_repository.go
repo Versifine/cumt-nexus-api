@@ -29,6 +29,49 @@ func (repo *PostgresModerationRepository) ListModQueue(ctx context.Context, inpu
 	return repo.listContentQueue(ctx, communityID, input.Queue, input.Limit, input.Offset)
 }
 
+func (repo *PostgresModerationRepository) GetModQueueItem(ctx context.Context, input moderationusecase.GetModQueueItemRecordInput) (moderationusecase.ModQueueItemDetail, error) {
+	item, preview, err := repo.findModQueueItem(ctx, nullableCommunityID(input.CommunityID), input.TargetType, input.TargetID)
+	if err != nil {
+		return moderationusecase.ModQueueItemDetail{}, err
+	}
+	reports, err := repo.listReportsForModQueueTarget(ctx, input.TargetType, input.TargetID)
+	if err != nil {
+		return moderationusecase.ModQueueItemDetail{}, err
+	}
+	actions, err := repo.listActionsForModQueueTarget(ctx, input.TargetType, input.TargetID)
+	if err != nil {
+		return moderationusecase.ModQueueItemDetail{}, err
+	}
+	return moderationusecase.ModQueueItemDetail{
+		Item:          item,
+		TargetPreview: preview,
+		Reports:       reports,
+		RecentActions: actions,
+	}, nil
+}
+
+func (repo *PostgresModerationRepository) GetModQueueSummary(ctx context.Context, input moderationusecase.GetModQueueSummaryRecordInput) (moderationusecase.ModQueueSummary, error) {
+	communityID := nullableCommunityID(input.CommunityID)
+	counts, err := repo.countModQueues(ctx, communityID)
+	if err != nil {
+		return moderationusecase.ModQueueSummary{}, err
+	}
+	limit := input.PriorityItemLimit
+	if limit <= 0 {
+		limit = moderationusecase.DefaultModToolsListLimit
+	}
+	priorityItems, err := repo.ListModQueue(ctx, moderationusecase.ListModQueueRecordInput{
+		CommunityID: input.CommunityID,
+		Queue:       "reports",
+		Limit:       limit,
+		Offset:      input.PriorityItemOffset,
+	})
+	if err != nil {
+		return moderationusecase.ModQueueSummary{}, err
+	}
+	return moderationusecase.ModQueueSummary{Queues: counts, PriorityItems: priorityItems}, nil
+}
+
 func (repo *PostgresModerationRepository) listReportQueue(ctx context.Context, communityID any, queue string, limit int, offset int) ([]moderationusecase.ModQueueItem, error) {
 	const query = `
 		WITH report_targets AS (
@@ -182,6 +225,298 @@ func (repo *PostgresModerationRepository) queryModQueueItems(ctx context.Context
 		return nil, fmt.Errorf("iterate mod queue: %w", err)
 	}
 	return items, nil
+}
+
+func (repo *PostgresModerationRepository) findModQueueItem(ctx context.Context, communityID any, targetType moderationdomain.TargetType, targetID string) (moderationusecase.ModQueueItem, moderationusecase.ReportTargetPreview, error) {
+	switch targetType {
+	case moderationdomain.TargetTypePost:
+		const query = `
+			WITH target AS (
+				SELECT
+					posts.id::text AS target_id,
+					posts.id::text AS post_id,
+					posts.community_id::text AS community_id,
+					communities.slug AS community_slug,
+					posts.author_id::text AS author_id,
+					posts.status,
+					LEFT(posts.title || ' ' || posts.body, 160) AS preview,
+					posts.title,
+					LEFT(posts.body, 300) AS body_excerpt,
+					posts.created_at AS target_created_at,
+					posts.updated_at AS target_updated_at,
+					(SELECT COUNT(*)::int FROM content_reports WHERE content_reports.post_id = posts.id AND content_reports.status = 'pending') AS report_count,
+					(SELECT MIN(content_reports.created_at) FROM content_reports WHERE content_reports.post_id = posts.id AND content_reports.status = 'pending') AS first_reported_at,
+					(SELECT MAX(content_reports.updated_at) FROM content_reports WHERE content_reports.post_id = posts.id AND content_reports.status = 'pending') AS last_reported_at,
+					EXISTS (SELECT 1 FROM moderation_actions WHERE moderation_actions.post_id = posts.id) AS has_action
+				FROM posts
+				JOIN communities ON communities.id = posts.community_id
+				WHERE posts.id = $1::uuid
+					AND ($2::uuid IS NULL OR posts.community_id = $2::uuid)
+			)
+			SELECT
+				'post',
+				target_id,
+				post_id,
+				community_id,
+				community_slug,
+				author_id,
+				report_count,
+				CASE
+					WHEN report_count > 0 THEN 'reports'
+					WHEN status = 'spam' THEN 'spam'
+					WHEN status = 'removed' THEN 'removed'
+					WHEN target_updated_at > target_created_at THEN 'edited'
+					WHEN NOT has_action AND status = 'visible' THEN 'unmoderated'
+					ELSE ''
+				END,
+				status,
+				preview,
+				COALESCE(first_reported_at, target_created_at),
+				COALESCE(last_reported_at, target_updated_at),
+				title,
+				body_excerpt,
+				target_created_at,
+				target_updated_at
+			FROM target
+		`
+		return scanModQueueDetail(repo.pool.QueryRow(ctx, query, targetID, communityID))
+	case moderationdomain.TargetTypeComment:
+		const query = `
+			WITH target AS (
+				SELECT
+					comments.id::text AS target_id,
+					comments.post_id::text AS post_id,
+					posts.community_id::text AS community_id,
+					communities.slug AS community_slug,
+					comments.author_id::text AS author_id,
+					comments.status,
+					LEFT(comments.body, 160) AS preview,
+					'' AS title,
+					LEFT(comments.body, 300) AS body_excerpt,
+					comments.created_at AS target_created_at,
+					comments.updated_at AS target_updated_at,
+					(SELECT COUNT(*)::int FROM content_reports WHERE content_reports.comment_id = comments.id AND content_reports.status = 'pending') AS report_count,
+					(SELECT MIN(content_reports.created_at) FROM content_reports WHERE content_reports.comment_id = comments.id AND content_reports.status = 'pending') AS first_reported_at,
+					(SELECT MAX(content_reports.updated_at) FROM content_reports WHERE content_reports.comment_id = comments.id AND content_reports.status = 'pending') AS last_reported_at,
+					EXISTS (SELECT 1 FROM moderation_actions WHERE moderation_actions.comment_id = comments.id) AS has_action
+				FROM comments
+				JOIN posts ON posts.id = comments.post_id
+				JOIN communities ON communities.id = posts.community_id
+				WHERE comments.id = $1::uuid
+					AND ($2::uuid IS NULL OR posts.community_id = $2::uuid)
+			)
+			SELECT
+				'comment',
+				target_id,
+				post_id,
+				community_id,
+				community_slug,
+				author_id,
+				report_count,
+				CASE
+					WHEN report_count > 0 THEN 'reports'
+					WHEN status = 'spam' THEN 'spam'
+					WHEN status = 'removed' THEN 'removed'
+					WHEN target_updated_at > target_created_at THEN 'edited'
+					WHEN NOT has_action AND status = 'visible' THEN 'unmoderated'
+					ELSE ''
+				END,
+				status,
+				preview,
+				COALESCE(first_reported_at, target_created_at),
+				COALESCE(last_reported_at, target_updated_at),
+				title,
+				body_excerpt,
+				target_created_at,
+				target_updated_at
+			FROM target
+		`
+		return scanModQueueDetail(repo.pool.QueryRow(ctx, query, targetID, communityID))
+	default:
+		return moderationusecase.ModQueueItem{}, moderationusecase.ReportTargetPreview{}, apperr.New(apperr.CodeInvalidArgument, "moderation target type is invalid")
+	}
+}
+
+func scanModQueueDetail(row rowScanner) (moderationusecase.ModQueueItem, moderationusecase.ReportTargetPreview, error) {
+	var item moderationusecase.ModQueueItem
+	var preview moderationusecase.ReportTargetPreview
+	if err := row.Scan(
+		&item.TargetType,
+		&item.TargetID,
+		&item.PostID,
+		&item.CommunityID,
+		&item.CommunitySlug,
+		&item.AuthorID,
+		&item.ReportCount,
+		&item.Queue,
+		&item.Status,
+		&item.Preview,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+		&preview.Title,
+		&preview.BodyExcerpt,
+		&preview.CreatedAt,
+		&preview.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return moderationusecase.ModQueueItem{}, moderationusecase.ReportTargetPreview{}, apperr.New(apperr.CodeNotFound, "moderation queue item not found")
+		}
+		return moderationusecase.ModQueueItem{}, moderationusecase.ReportTargetPreview{}, err
+	}
+	if item.Queue == "" {
+		return moderationusecase.ModQueueItem{}, moderationusecase.ReportTargetPreview{}, apperr.New(apperr.CodeNotFound, "moderation queue item not found")
+	}
+	item.ID = item.TargetType + ":" + item.TargetID
+	preview.TargetType = item.TargetType
+	preview.PostID = item.PostID
+	if item.TargetType == moderationdomain.TargetTypeComment.String() {
+		preview.CommentID = item.TargetID
+	}
+	preview.AuthorID = item.AuthorID
+	preview.Status = item.Status
+	return item, preview, nil
+}
+
+func (repo *PostgresModerationRepository) listReportsForModQueueTarget(ctx context.Context, targetType moderationdomain.TargetType, targetID string) ([]moderationusecase.ModQueueReport, error) {
+	predicate := "post_id = $1::uuid"
+	if targetType == moderationdomain.TargetTypeComment {
+		predicate = "comment_id = $1::uuid"
+	}
+	query := fmt.Sprintf(`
+		SELECT id::text, reporter_id::text, reason, status, created_at
+		FROM content_reports
+		WHERE %s
+		ORDER BY created_at DESC, id DESC
+		LIMIT 20
+	`, predicate)
+	rows, err := repo.pool.Query(ctx, query, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reports := make([]moderationusecase.ModQueueReport, 0)
+	for rows.Next() {
+		var report moderationusecase.ModQueueReport
+		if err := rows.Scan(&report.ID, &report.ReporterID, &report.Reason, &report.Status, &report.CreatedAt); err != nil {
+			return nil, err
+		}
+		reports = append(reports, report)
+	}
+	return reports, rows.Err()
+}
+
+func (repo *PostgresModerationRepository) listActionsForModQueueTarget(ctx context.Context, targetType moderationdomain.TargetType, targetID string) ([]moderationusecase.ModerationAction, error) {
+	predicate := "post_id = $1::uuid"
+	if targetType == moderationdomain.TargetTypeComment {
+		predicate = "comment_id = $1::uuid"
+	}
+	query := fmt.Sprintf(`
+		SELECT id::text, COALESCE(post_id::text, ''), COALESCE(comment_id::text, ''), actor_id::text, action, reason, created_at
+		FROM moderation_actions
+		WHERE %s
+		ORDER BY created_at DESC, id DESC
+		LIMIT 10
+	`, predicate)
+	rows, err := repo.pool.Query(ctx, query, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	actions := make([]moderationusecase.ModerationAction, 0)
+	for rows.Next() {
+		var action moderationusecase.ModerationAction
+		if err := rows.Scan(&action.ID, &action.PostID, &action.CommentID, &action.ActorID, &action.Action, &action.Reason, &action.CreatedAt); err != nil {
+			return nil, err
+		}
+		if action.CommentID != "" {
+			action.TargetType = moderationdomain.TargetTypeComment.String()
+		} else {
+			action.TargetType = moderationdomain.TargetTypePost.String()
+		}
+		actions = append(actions, action)
+	}
+	return actions, rows.Err()
+}
+
+func (repo *PostgresModerationRepository) countModQueues(ctx context.Context, communityID any) ([]moderationusecase.ModQueueCount, error) {
+	const query = `
+		WITH report_targets AS (
+			SELECT 'post' AS target_type, posts.id AS target_id
+			FROM content_reports
+			JOIN posts ON posts.id = content_reports.post_id
+			WHERE content_reports.status = 'pending'
+				AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+			GROUP BY posts.id
+			UNION ALL
+			SELECT 'comment' AS target_type, comments.id AS target_id
+			FROM content_reports
+			JOIN comments ON comments.id = content_reports.comment_id
+			JOIN posts ON posts.id = comments.post_id
+			WHERE content_reports.status = 'pending'
+				AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+			GROUP BY comments.id
+		),
+		content_counts AS (
+			SELECT 'spam' AS queue, COUNT(*)::int AS count
+			FROM (
+				SELECT posts.id FROM posts WHERE posts.status = 'spam' AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+				UNION ALL
+				SELECT comments.id FROM comments JOIN posts ON posts.id = comments.post_id WHERE comments.status = 'spam' AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+			) items
+			UNION ALL
+			SELECT 'removed', COUNT(*)::int
+			FROM (
+				SELECT posts.id FROM posts WHERE posts.status = 'removed' AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+				UNION ALL
+				SELECT comments.id FROM comments JOIN posts ON posts.id = comments.post_id WHERE comments.status = 'removed' AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+			) items
+			UNION ALL
+			SELECT 'edited', COUNT(*)::int
+			FROM (
+				SELECT posts.id FROM posts WHERE posts.status = 'visible' AND posts.updated_at > posts.created_at AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+				UNION ALL
+				SELECT comments.id FROM comments JOIN posts ON posts.id = comments.post_id WHERE comments.status = 'visible' AND comments.updated_at > comments.created_at AND ($1::uuid IS NULL OR posts.community_id = $1::uuid)
+			) items
+			UNION ALL
+			SELECT 'unmoderated', COUNT(*)::int
+			FROM (
+				SELECT posts.id FROM posts WHERE posts.status = 'visible' AND ($1::uuid IS NULL OR posts.community_id = $1::uuid) AND NOT EXISTS (SELECT 1 FROM moderation_actions ma WHERE ma.post_id = posts.id)
+				UNION ALL
+				SELECT comments.id FROM comments JOIN posts ON posts.id = comments.post_id WHERE comments.status = 'visible' AND ($1::uuid IS NULL OR posts.community_id = $1::uuid) AND NOT EXISTS (SELECT 1 FROM moderation_actions ma WHERE ma.comment_id = comments.id)
+			) items
+		)
+		SELECT queue, count
+		FROM (
+			SELECT 'reports' AS queue, COUNT(*)::int AS count FROM report_targets
+			UNION ALL
+			SELECT 'needs_review', COUNT(*)::int FROM report_targets
+			UNION ALL
+			SELECT queue, count FROM content_counts
+		) counts
+		ORDER BY CASE queue
+			WHEN 'reports' THEN 1
+			WHEN 'spam' THEN 2
+			WHEN 'removed' THEN 3
+			WHEN 'edited' THEN 4
+			WHEN 'unmoderated' THEN 5
+			WHEN 'needs_review' THEN 6
+			ELSE 99
+		END
+	`
+	rows, err := repo.pool.Query(ctx, query, communityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := make([]moderationusecase.ModQueueCount, 0)
+	for rows.Next() {
+		var count moderationusecase.ModQueueCount
+		if err := rows.Scan(&count.Queue, &count.Count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, count)
+	}
+	return counts, rows.Err()
 }
 
 func (repo *PostgresModerationRepository) ApplyModerationAction(ctx context.Context, input moderationusecase.ApplyModerationActionRecordInput) (result moderationusecase.ModerationAction, err error) {

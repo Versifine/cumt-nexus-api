@@ -126,6 +126,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | POST | /api/v1/communities/:slug/moderation/posts/:id/remove | `moderationhttp.reportContentRequest` | `moderationhttp.removeContentResponse` | 200 |
 | POST | /api/v1/communities/:slug/moderation/comments/:id/remove | `moderationhttp.reportContentRequest` | `moderationhttp.removeContentResponse` | 200 |
 | GET | /api/v1/admin/mod-queues | query | `moderationhttp.modQueueResponse` | 200 |
+| GET | /api/v1/admin/mod-queues/summary | none | `moderationhttp.modQueueSummaryResponse` | 200 |
+| GET | /api/v1/admin/mod-queues/:item_id | none | `moderationhttp.modQueueItemDetailResponse` | 200 |
 | POST | /api/v1/admin/mod-queues/actions | `moderationhttp.bulkActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
 | GET | /api/v1/communities/:slug/mod-queues | query | `moderationhttp.modQueueResponse` | 200 |
 | POST | /api/v1/communities/:slug/mod-queues/actions | `moderationhttp.bulkActionRequest` | `moderationhttp.bulkActionResponse` | 200 |
@@ -378,6 +380,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `moderationhttp` | `removeContentResponse` | `action` |
 | `moderationhttp` | `modQueueResponse` | `items`, `queue`, `limit`, `offset`, `next_offset`, `has_more` |
 | `moderationhttp` | `modQueueItemResponse` | `id`, `target_type`, `target_id`, `post_id`, `community_id`, `community_slug`, `author_id`, `report_count`, `queue`, `status`, `preview`, `created_at`, `updated_at` |
+| `moderationhttp` | `modQueueItemDetailResponse` | `item`, `target_preview`, `reports`, `recent_actions` |
+| `moderationhttp` | `modQueueReportResponse` | `id`, `reporter_id`, `reason`, `status`, `created_at` |
+| `moderationhttp` | `modQueueSummaryResponse` | `queues`, `priority_items` |
+| `moderationhttp` | `modQueueCountResponse` | `queue`, `count` |
 | `moderationhttp` | `moderationTargetRequest` | `target_type`, `target_id` |
 | `moderationhttp` | `bulkActionRequest` | `action`, `target_type`, `target_ids`, `targets`, `reason`, `removal_reason_id`, `notify_author`, `confirm`, `value`, `flair_text` |
 | `moderationhttp` | `applyRemovalReasonRequest` | `target_type`, `target_ids`, `targets`, `reason`, `notify_author`, `confirm` |

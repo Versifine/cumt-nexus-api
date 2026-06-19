@@ -131,6 +131,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/communities/:slug/moderation/posts/:id/remove | Bearer | 社区 owner/moderator 移除本社区帖子 |
 | POST | /api/v1/communities/:slug/moderation/comments/:id/remove | Bearer | 社区 owner/moderator 移除本社区评论 |
 | GET | /api/v1/admin/mod-queues | Bearer | 平台级审核队列 |
+| GET | /api/v1/admin/mod-queues/summary | Bearer | 平台级审核队列汇总 |
+| GET | /api/v1/admin/mod-queues/:item_id | Bearer | 平台级审核队列项详情 |
 | POST | /api/v1/admin/mod-queues/actions | Bearer | 平台级审核队列批量动作 |
 | GET | /api/v1/communities/:slug/mod-queues | Bearer | 社区级审核队列 |
 | POST | /api/v1/communities/:slug/mod-queues/actions | Bearer | 社区级审核队列批量动作 |
@@ -238,6 +240,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/users/:username/comments` | `limit`, `offset` | 只返回该用户在公开可读社区 visible 帖子下的 visible 评论 |
 | `GET /api/v1/moderation/reports` | `status`, `limit`, `offset` | 平台 staff 视角 |
 | `GET /api/v1/admin/mod-queues` | `queue`, `limit`, `offset` | 平台 staff 视角 |
+| `GET /api/v1/admin/mod-queues/:item_id` | none | 平台 staff 视角；`item_id` 是队列项 id，支持 `target_type:target_id` 和 `queue:target_type:target_id`；响应返回列表同义 `item`、审核摘要 `target_preview`、目标相关 `reports` 和最近 `recent_actions` |
+| `GET /api/v1/admin/mod-queues/summary` | none | 平台 staff 视角；返回 `reports/spam/removed/edited/unmoderated/needs_review` 各队列计数和优先处理项预览 |
 | `GET /api/v1/communities/:slug/mod-queues` | `queue`, `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/communities/:slug/manage/banned-users` | `limit`, `offset` | 社区 owner/moderator 视角 |
 | `GET /api/v1/communities/:slug/manage/muted-users` | `limit`, `offset` | 社区 owner/moderator 视角 |
