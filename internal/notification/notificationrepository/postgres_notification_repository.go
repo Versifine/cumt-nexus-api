@@ -124,50 +124,28 @@ func (repo *PostgresNotificationRepository) UpsertAggregated(ctx context.Context
 
 func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context, recipientID userdomain.UserID, category notificationusecase.CategoryFilter, status notificationusecase.StatusFilter, limit int, offset int) ([]notificationusecase.Notification, error) {
 	query := `
-		SELECT
-			notifications.id::text,
-			notifications.recipient_id::text,
-			notifications.type,
-			notifications.title,
-			notifications.body,
-			notifications.source_type,
-			notifications.source_id,
-			notifications.aggregate_key,
-			notifications.aggregate_count,
-			notifications.last_actor_id::text,
-			last_actor.username,
-			last_actor.display_name,
-			last_actor.avatar_url,
-			source_post.id::text,
-			source_comment.id::text,
-			source_post.title,
-			source_comment.body,
-			CASE
-				WHEN source_comment.id IS NULL THEN 0
-				WHEN source_comment.parent_id IS NULL THEN 0
-				ELSE 1
-			END,
-			source_community.id::text,
-			source_community.slug,
-			source_community.name,
-			notifications.read_at,
-			notifications.created_at,
-			notifications.updated_at
-		FROM notifications
-		LEFT JOIN users AS last_actor
-			ON last_actor.id = notifications.last_actor_id
-		LEFT JOIN comments AS source_comment
-			ON notifications.source_type = 'comment'
-			AND source_comment.id::text = notifications.source_id
-		LEFT JOIN posts AS source_post
-			ON (
-				notifications.source_type = 'post'
-				AND source_post.id::text = notifications.source_id
-			)
-			OR source_post.id = source_comment.post_id
-		LEFT JOIN communities AS source_community
-			ON source_community.id = source_post.community_id
-		WHERE notifications.recipient_id = $1::uuid
+		WITH page AS (
+			SELECT
+				notifications.id,
+				notifications.recipient_id,
+				notifications.type,
+				notifications.title,
+				notifications.body,
+				notifications.source_type,
+				notifications.source_id,
+				CASE
+					WHEN notifications.source_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+					THEN notifications.source_id::uuid
+					ELSE NULL
+				END AS source_uuid,
+				notifications.aggregate_key,
+				notifications.aggregate_count,
+				notifications.last_actor_id,
+				notifications.read_at,
+				notifications.created_at,
+				notifications.updated_at
+			FROM notifications
+			WHERE notifications.recipient_id = $1::uuid
 	`
 	args := []any{recipientID.String()}
 	query += notificationCategoryPredicate(category)
@@ -181,9 +159,53 @@ func (repo *PostgresNotificationRepository) ListByRecipient(ctx context.Context,
 		return nil, apperr.New(apperr.CodeInvalidArgument, "notification status is invalid")
 	}
 	query += `
-		ORDER BY notifications.created_at DESC, notifications.id DESC
-		LIMIT $2
-		OFFSET $3
+			ORDER BY notifications.created_at DESC, notifications.id DESC
+			LIMIT $2
+			OFFSET $3
+		)
+		SELECT
+			page.id::text,
+			page.recipient_id::text,
+			page.type,
+			page.title,
+			page.body,
+			page.source_type,
+			page.source_id,
+			page.aggregate_key,
+			page.aggregate_count,
+			page.last_actor_id::text,
+			last_actor.username,
+			last_actor.display_name,
+			last_actor.avatar_url,
+			COALESCE(direct_post.id, comment_post.id)::text,
+			source_comment.id::text,
+			COALESCE(direct_post.title, comment_post.title),
+			source_comment.body,
+			CASE
+				WHEN source_comment.id IS NULL THEN 0
+				WHEN source_comment.parent_id IS NULL THEN 0
+				ELSE 1
+			END,
+			source_community.id::text,
+			source_community.slug,
+			source_community.name,
+			page.read_at,
+			page.created_at,
+			page.updated_at
+		FROM page
+		LEFT JOIN users AS last_actor
+			ON last_actor.id = page.last_actor_id
+		LEFT JOIN comments AS source_comment
+			ON page.source_type = 'comment'
+			AND source_comment.id = page.source_uuid
+		LEFT JOIN posts AS direct_post
+			ON page.source_type = 'post'
+			AND direct_post.id = page.source_uuid
+		LEFT JOIN posts AS comment_post
+			ON comment_post.id = source_comment.post_id
+		LEFT JOIN communities AS source_community
+			ON source_community.id = COALESCE(direct_post.community_id, comment_post.community_id)
+		ORDER BY page.created_at DESC, page.id DESC
 	`
 	args = append(args, limit, offset)
 
@@ -324,19 +346,23 @@ func (repo *PostgresNotificationRepository) MarkAllRead(ctx context.Context, rec
 }
 
 func notificationCategoryPredicate(category notificationusecase.CategoryFilter) string {
+	return notificationCategoryPredicateForAlias(category, "notifications")
+}
+
+func notificationCategoryPredicateForAlias(category notificationusecase.CategoryFilter, alias string) string {
 	switch category {
 	case notificationusecase.CategoryFilterAll:
 		return ""
 	case notificationusecase.CategoryFilterInteractions:
-		return ` AND notifications.type IN ('reply', 'comment_reply', 'post_reply', 'mention', 'like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
+		return ` AND ` + alias + `.type IN ('reply', 'comment_reply', 'post_reply', 'mention', 'like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
 	case notificationusecase.CategoryFilterReplies:
-		return ` AND notifications.type IN ('reply', 'comment_reply', 'post_reply')`
+		return ` AND ` + alias + `.type IN ('reply', 'comment_reply', 'post_reply')`
 	case notificationusecase.CategoryFilterMentions:
-		return ` AND notifications.type = 'mention'`
+		return ` AND ` + alias + `.type = 'mention'`
 	case notificationusecase.CategoryFilterLikes:
-		return ` AND notifications.type IN ('like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
+		return ` AND ` + alias + `.type IN ('like', 'post_like', 'comment_like', 'post_upvote', 'comment_upvote')`
 	case notificationusecase.CategoryFilterSystem:
-		return ` AND notifications.type = 'system'`
+		return ` AND ` + alias + `.type = 'system'`
 	default:
 		return ` AND false`
 	}

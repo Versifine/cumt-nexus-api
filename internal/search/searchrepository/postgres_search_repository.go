@@ -26,6 +26,10 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 		WITH search_query AS (
 			SELECT
 				websearch_to_tsquery('simple', $1) AS query,
+				CASE
+					WHEN lower($1) ~ '^[a-z0-9_]+$' THEN to_tsquery('simple', lower($1) || ':*')
+					ELSE websearch_to_tsquery('simple', $1)
+				END AS prefix_query,
 				lower($1) AS term,
 				escape_like_query(lower($1)) || '%' AS prefix_pattern,
 				'%' || escape_like_query(lower($1)) || '%' AS contains_pattern
@@ -41,7 +45,10 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 				communities.visibility,
 				communities.created_at,
 				communities.updated_at,
-				ts_rank_cd(community_search.document, search_query.query) AS rank_score,
+				GREATEST(
+					ts_rank_cd(communities.search_document, search_query.query),
+					ts_rank_cd(communities.search_document, search_query.prefix_query) * 0.9
+				) AS rank_score,
 				CASE
 					WHEN lower(communities.slug) = search_query.term THEN 120
 					WHEN lower(communities.name) = search_query.term THEN 110
@@ -55,15 +62,11 @@ func (repo *PostgresSearchRepository) SearchCommunities(ctx context.Context, que
 				1.0 / (1.0 + GREATEST(EXTRACT(EPOCH FROM (NOW() - communities.updated_at)), 0) / 604800.0) AS recency_score
 			FROM communities
 			CROSS JOIN search_query
-			CROSS JOIN LATERAL (
-				SELECT
-					setweight(to_tsvector('simple', COALESCE(communities.name, '')), 'A') ||
-					setweight(to_tsvector('simple', COALESCE(communities.description, '')), 'B') AS document
-			) AS community_search
 			WHERE communities.status = 'active'
 				AND communities.visibility = 'public'
 				AND (
-					community_search.document @@ search_query.query
+					communities.search_document @@ search_query.query
+					OR communities.search_document @@ search_query.prefix_query
 					OR lower(communities.slug) LIKE search_query.contains_pattern ESCAPE '\'
 					OR lower(communities.name) LIKE search_query.contains_pattern ESCAPE '\'
 					OR lower(communities.description) LIKE search_query.contains_pattern ESCAPE '\'
@@ -120,6 +123,10 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 		WITH search_query AS (
 			SELECT
 				websearch_to_tsquery('simple', $1) AS query,
+				CASE
+					WHEN lower($1) ~ '^[a-z0-9_]+$' THEN to_tsquery('simple', lower($1) || ':*')
+					ELSE websearch_to_tsquery('simple', $1)
+				END AS prefix_query,
 				lower($1) AS term,
 				escape_like_query(lower($1)) || '%' AS prefix_pattern,
 				'%' || escape_like_query(lower($1)) || '%' AS contains_pattern
@@ -135,7 +142,10 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 				posts.status,
 				posts.created_at,
 				posts.updated_at,
-				ts_rank_cd(post_search.document, search_query.query) AS rank_score,
+				GREATEST(
+					ts_rank_cd(posts.search_document || communities.search_document, search_query.query),
+					ts_rank_cd(posts.search_document || communities.search_document, search_query.prefix_query) * 0.9
+				) AS rank_score,
 				CASE
 					WHEN lower(posts.title) = search_query.term THEN 130
 					WHEN lower(posts.title) LIKE search_query.prefix_pattern ESCAPE '\' THEN 110
@@ -153,23 +163,14 @@ func (repo *PostgresSearchRepository) SearchPosts(ctx context.Context, query str
 			FROM posts
 			INNER JOIN communities ON communities.id = posts.community_id
 			CROSS JOIN search_query
-			CROSS JOIN LATERAL (
-				SELECT
-					setweight(to_tsvector('simple', COALESCE(posts.title, '')), 'A') ||
-					setweight(to_tsvector('simple', COALESCE(posts.body, '')), 'C') AS post_document,
-					setweight(to_tsvector('simple', COALESCE(communities.name, '')), 'B') ||
-					setweight(to_tsvector('simple', COALESCE(communities.slug, '')), 'B') AS community_document,
-					setweight(to_tsvector('simple', COALESCE(posts.title, '')), 'A') ||
-					setweight(to_tsvector('simple', COALESCE(communities.name, '')), 'B') ||
-					setweight(to_tsvector('simple', COALESCE(communities.slug, '')), 'B') ||
-					setweight(to_tsvector('simple', COALESCE(posts.body, '')), 'C') AS document
-			) AS post_search
 			WHERE posts.status = 'visible'
 				AND communities.status = 'active'
 				AND communities.visibility = 'public'
 				AND (
-					post_search.post_document @@ search_query.query
-					OR post_search.community_document @@ search_query.query
+					posts.search_document @@ search_query.query
+					OR posts.search_document @@ search_query.prefix_query
+					OR communities.search_document @@ search_query.query
+					OR communities.search_document @@ search_query.prefix_query
 					OR lower(posts.title) LIKE search_query.contains_pattern ESCAPE '\'
 					OR lower(posts.body) LIKE search_query.contains_pattern ESCAPE '\'
 					OR lower(communities.slug) LIKE search_query.contains_pattern ESCAPE '\'

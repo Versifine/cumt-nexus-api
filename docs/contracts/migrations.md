@@ -73,3 +73,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000034 | create_automod_controls | Creates community Automod config/version history and content-control settings for moderation tools |
 | 000035 | create_modmail | Creates community Modmail conversations, messages and per-moderator read state |
 | 000036 | create_community_extended_settings | Creates community post/user flair templates, scheduled posts and guides/wiki settings |
+| 000037 | optimize_notification_list_indexes | Adds notification recipient/type ordering indexes for paginated list reads |
+| 000038 | optimize_search_documents | Adds stored search document columns and GIN indexes for post/community search reads |

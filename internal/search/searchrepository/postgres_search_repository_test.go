@@ -65,6 +65,25 @@ func TestPostgresSearchRepositorySearchPosts(t *testing.T) {
 	}
 }
 
+func TestPostgresSearchRepositorySearchPostsUsesFullTextPrefix(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresSearchRepository(pool)
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "Search Prefix "+randomSuffix(), "active")
+	term := "prefixsearch" + randomSuffix()
+	matching := insertTestPost(ctx, t, pool, communityID, authorID, "ordinary title", "body mentions "+term+"es", "visible")
+
+	results, err := repo.SearchPosts(ctx, term, 20, 0)
+	if err != nil {
+		t.Fatalf("SearchPosts returned error: %v", err)
+	}
+
+	if !containsPost(results, matching.String()) {
+		t.Fatalf("expected prefix full-text match %q, got %#v", matching.String(), results)
+	}
+}
+
 func TestPostgresSearchRepositoryRanksPostTitleAboveBody(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresSearchRepository(pool)
@@ -276,6 +295,45 @@ func requireSearchSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) 
 		}
 	}
 	for _, indexName := range []string{"communities_public_search_fts_idx", "posts_visible_search_fts_idx"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_indexes
+				WHERE schemaname = 'public'
+					AND indexname = $1
+			)
+		`, indexName).Scan(&exists); err != nil {
+			t.Fatalf("check index %s exists: %v", indexName, err)
+		}
+		if !exists {
+			t.Skipf("%s index does not exist; run go run ./cmd/migrate up before repository tests", indexName)
+		}
+	}
+	for _, column := range []struct {
+		table string
+		name  string
+	}{
+		{table: "communities", name: "search_document"},
+		{table: "posts", name: "search_document"},
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+					AND table_name = $1
+					AND column_name = $2
+			)
+		`, column.table, column.name).Scan(&exists); err != nil {
+			t.Fatalf("check %s.%s exists: %v", column.table, column.name, err)
+		}
+		if !exists {
+			t.Skipf("%s.%s column does not exist; run go run ./cmd/migrate up before repository tests", column.table, column.name)
+		}
+	}
+	for _, indexName := range []string{"communities_public_search_document_idx", "posts_visible_search_document_idx"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (

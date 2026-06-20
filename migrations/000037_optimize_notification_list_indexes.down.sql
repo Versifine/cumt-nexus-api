@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS notifications_recipient_type_created_idx;
+DROP INDEX IF EXISTS notifications_recipient_created_idx;
