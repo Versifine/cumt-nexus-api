@@ -1,0 +1,190 @@
+{
+  "started_at": "2026-06-19T08:11:10.9001462Z",
+  "finished_at": "2026-06-19T08:12:13.6233093Z",
+  "elapsed_seconds": 62.7231631,
+  "base_url": "http://127.0.0.1:18080",
+  "vus": 50,
+  "warmup_seconds": 5,
+  "duration_seconds": 60,
+  "excluded": [],
+  "environment": {
+    "os": "windows",
+    "arch": "amd64",
+    "go": "go1.25.4",
+    "num_cpu": 16,
+    "tool": "scripts/loadtest/cmd/runner"
+  },
+  "dataset": {
+    "users": 1000,
+    "communities": 50,
+    "posts": 20000,
+    "comments": 80000
+  },
+  "overall": {
+    "requests": 4697,
+    "failures": 2,
+    "error_rate": 0.0004258037044922291,
+    "rps": 78.28333333333333,
+    "bytes": 80074480,
+    "min_ms": 4.007,
+    "p50_ms": 80.825,
+    "p95_ms": 5291.729199999998,
+    "p99_ms": 7878.35264,
+    "max_ms": 15000.411,
+    "avg_ms": 636.5816663827973
+  },
+  "endpoints": {
+    "admin_mod_queue": {
+      "requests": 309,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 5.15,
+      "bytes": 3740185,
+      "min_ms": 33.526,
+      "p50_ms": 98.957,
+      "p95_ms": 200.9722,
+      "p99_ms": 284.42528000000016,
+      "max_ms": 325.264,
+      "avg_ms": 108.20541747572825
+    },
+    "comment_tree": {
+      "requests": 632,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 10.533333333333333,
+      "bytes": 2334010,
+      "min_ms": 7,
+      "p50_ms": 38.656,
+      "p95_ms": 98.07439999999994,
+      "p99_ms": 143.88536999999997,
+      "max_ms": 200.358,
+      "avg_ms": 45.923238924050644
+    },
+    "community_posts": {
+      "requests": 692,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 11.533333333333333,
+      "bytes": 24211420,
+      "min_ms": 12.499,
+      "p50_ms": 52.5975,
+      "p95_ms": 121.06619999999997,
+      "p99_ms": 157.44102000000007,
+      "max_ms": 201.753,
+      "avg_ms": 59.62195231213866
+    },
+    "notifications_interactions": {
+      "requests": 408,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 6.8,
+      "bytes": 10009592,
+      "min_ms": 4.007,
+      "p50_ms": 51.897000000000006,
+      "p95_ms": 145.07625,
+      "p99_ms": 215.6738000000002,
+      "max_ms": 276.653,
+      "avg_ms": 60.641595588235326
+    },
+    "post_detail": {
+      "requests": 684,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 11.4,
+      "bytes": 1199774,
+      "min_ms": 6.999,
+      "p50_ms": 35.504999999999995,
+      "p95_ms": 90.27405000000003,
+      "p99_ms": 118.47473999999954,
+      "max_ms": 175.853,
+      "avg_ms": 40.92903947368415
+    },
+    "post_vote_write": {
+      "requests": 242,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 4.033333333333333,
+      "bytes": 49835,
+      "min_ms": 11.063,
+      "p50_ms": 76.2975,
+      "p95_ms": 166.88044999999997,
+      "p99_ms": 220.68852000000004,
+      "max_ms": 245.629,
+      "avg_ms": 84.62027272727269
+    },
+    "posts_feed_hot": {
+      "requests": 450,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 7.5,
+      "bytes": 5750794,
+      "min_ms": 206.471,
+      "p50_ms": 673.6265,
+      "p95_ms": 1214.9309499999997,
+      "p99_ms": 1519.9455999999996,
+      "max_ms": 1700.678,
+      "avg_ms": 696.2929222222227
+    },
+    "posts_feed_new": {
+      "requests": 859,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 14.316666666666666,
+      "bytes": 30090460,
+      "min_ms": 46.998,
+      "p50_ms": 150.827,
+      "p95_ms": 282.64189999999996,
+      "p99_ms": 368.3424,
+      "max_ms": 580.939,
+      "avg_ms": 161.1132875436554
+    },
+    "search_all": {
+      "requests": 421,
+      "failures": 2,
+      "error_rate": 0.004750593824228029,
+      "rps": 7.016666666666667,
+      "bytes": 2688410,
+      "min_ms": 1729.593,
+      "p50_ms": 5626.864,
+      "p95_ms": 8669.39,
+      "p99_ms": 9507.8954,
+      "max_ms": 15000.411,
+      "avg_ms": 5608.938874109265
+    }
+  },
+  "status_codes": {
+    "admin_mod_queue": {
+      "200": 309
+    },
+    "comment_tree": {
+      "200": 632
+    },
+    "community_posts": {
+      "200": 692
+    },
+    "notifications_interactions": {
+      "200": 408
+    },
+    "post_detail": {
+      "200": 684
+    },
+    "post_vote_write": {
+      "200": 242
+    },
+    "posts_feed_hot": {
+      "200": 450
+    },
+    "posts_feed_new": {
+      "200": 859
+    },
+    "search_all": {
+      "0": 2,
+      "200": 419
+    }
+  },
+  "errors": {
+    "search_all": {
+      "Get \"http://127.0.0.1:18080/api/v1/search?q=notification\u0026scope=all\u0026limit=10\u0026offset=0\": context deadline exceeded": 2
+    }
+  }
+}

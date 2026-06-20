@@ -1,0 +1,99 @@
+﻿{
+    "endpoint":  "search_all",
+    "started_at":  "2026-06-20T02:05:53.6115394Z",
+    "finished_at":  "2026-06-20T02:11:22.7603227Z",
+    "step_duration_seconds":  60,
+    "warmup_seconds":  10,
+    "vus":  200,
+    "thresholds":  {
+                       "p95_ms":  2000,
+                       "error_rate":  0.01,
+                       "actual_rps_ratio":  0.95
+                   },
+    "last_healthy":  {
+                         "endpoint":  "search_all",
+                         "target_rps":  50,
+                         "actual_rps":  48,
+                         "requests":  2880,
+                         "error_rate":  0,
+                         "p50_ms":  313.4455,
+                         "p95_ms":  707.78555,
+                         "p99_ms":  934.53231,
+                         "max_ms":  2139.197,
+                         "healthy":  true,
+                         "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100725.json",
+                         "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100725.md"
+                     },
+    "first_bad":  {
+                      "endpoint":  "search_all",
+                      "target_rps":  55,
+                      "actual_rps":  46.216666666666669,
+                      "requests":  2773,
+                      "error_rate":  0,
+                      "p50_ms":  830.558,
+                      "p95_ms":  1972.2344,
+                      "p99_ms":  2301.6463600000016,
+                      "max_ms":  3141.769,
+                      "healthy":  false,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100846.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100846.md"
+                  },
+    "steps":  [
+                  {
+                      "endpoint":  "search_all",
+                      "target_rps":  45,
+                      "actual_rps":  43.466666666666669,
+                      "requests":  2608,
+                      "error_rate":  0,
+                      "p50_ms":  317.8505,
+                      "p95_ms":  579.62215,
+                      "p99_ms":  743.35119999999972,
+                      "max_ms":  972.504,
+                      "healthy":  true,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100602.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100602.md"
+                  },
+                  {
+                      "endpoint":  "search_all",
+                      "target_rps":  50,
+                      "actual_rps":  48,
+                      "requests":  2880,
+                      "error_rate":  0,
+                      "p50_ms":  313.4455,
+                      "p95_ms":  707.78555,
+                      "p99_ms":  934.53231,
+                      "max_ms":  2139.197,
+                      "healthy":  true,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100725.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100725.md"
+                  },
+                  {
+                      "endpoint":  "search_all",
+                      "target_rps":  55,
+                      "actual_rps":  46.216666666666669,
+                      "requests":  2773,
+                      "error_rate":  0,
+                      "p50_ms":  830.558,
+                      "p95_ms":  1972.2344,
+                      "p99_ms":  2301.6463600000016,
+                      "max_ms":  3141.769,
+                      "healthy":  false,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100846.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-100846.md"
+                  },
+                  {
+                      "endpoint":  "search_all",
+                      "target_rps":  60,
+                      "actual_rps":  46.416666666666664,
+                      "requests":  2785,
+                      "error_rate":  0,
+                      "p50_ms":  1695.172,
+                      "p95_ms":  3649.618199999999,
+                      "p99_ms":  4077.93352,
+                      "max_ms":  4941.454,
+                      "healthy":  false,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-101008.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-101008.md"
+                  }
+              ]
+}

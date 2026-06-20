@@ -1,0 +1,176 @@
+{
+  "started_at": "2026-06-19T07:50:12.3716151Z",
+  "finished_at": "2026-06-19T07:51:15.1167588Z",
+  "elapsed_seconds": 62.7451437,
+  "base_url": "http://127.0.0.1:18080",
+  "vus": 50,
+  "warmup_seconds": 5,
+  "duration_seconds": 60,
+  "excluded": [
+    "notifications_interactions"
+  ],
+  "environment": {
+    "os": "windows",
+    "arch": "amd64",
+    "go": "go1.25.4",
+    "num_cpu": 16,
+    "tool": "scripts/loadtest/cmd/runner"
+  },
+  "dataset": {
+    "users": 1000,
+    "communities": 50,
+    "posts": 20000,
+    "comments": 80000
+  },
+  "overall": {
+    "requests": 3893,
+    "failures": 1,
+    "error_rate": 0.00025687130747495504,
+    "rps": 64.88333333333334,
+    "bytes": 61818304,
+    "min_ms": 6.501,
+    "p50_ms": 86.884,
+    "p95_ms": 5695.2098,
+    "p99_ms": 7991.832279999999,
+    "max_ms": 15000.087,
+    "avg_ms": 771.4996267659906
+  },
+  "endpoints": {
+    "admin_mod_queue": {
+      "requests": 267,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 4.45,
+      "bytes": 3221157,
+      "min_ms": 33.18,
+      "p50_ms": 103.004,
+      "p95_ms": 202.76559999999998,
+      "p99_ms": 316.79666,
+      "max_ms": 476.615,
+      "avg_ms": 113.18520973782775
+    },
+    "comment_tree": {
+      "requests": 609,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 10.15,
+      "bytes": 2253894,
+      "min_ms": 9.498,
+      "p50_ms": 39.596,
+      "p95_ms": 91.0034,
+      "p99_ms": 116.34639999999982,
+      "max_ms": 158.26,
+      "avg_ms": 44.757098522167475
+    },
+    "community_posts": {
+      "requests": 625,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 10.416666666666666,
+      "bytes": 21868656,
+      "min_ms": 13.757,
+      "p50_ms": 52.498,
+      "p95_ms": 109.25859999999999,
+      "p99_ms": 139.2436,
+      "max_ms": 179.721,
+      "avg_ms": 58.20655839999997
+    },
+    "post_detail": {
+      "requests": 593,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 9.883333333333333,
+      "bytes": 1040008,
+      "min_ms": 6.999,
+      "p50_ms": 36.498,
+      "p95_ms": 81.00059999999993,
+      "p99_ms": 115.01472000000031,
+      "max_ms": 169.598,
+      "avg_ms": 41.63925295109607
+    },
+    "post_vote_write": {
+      "requests": 200,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 3.3333333333333335,
+      "bytes": 41200,
+      "min_ms": 6.501,
+      "p50_ms": 81.08,
+      "p95_ms": 173.97184999999996,
+      "p99_ms": 275.5325699999998,
+      "max_ms": 334.277,
+      "avg_ms": 88.75548499999994
+    },
+    "posts_feed_hot": {
+      "requests": 446,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 7.433333333333334,
+      "bytes": 5588734,
+      "min_ms": 222.856,
+      "p50_ms": 731.3610000000001,
+      "p95_ms": 1196.66275,
+      "p99_ms": 1386.7316500000002,
+      "max_ms": 1548.368,
+      "avg_ms": 736.6908632287001
+    },
+    "posts_feed_new": {
+      "requests": 715,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 11.916666666666666,
+      "bytes": 25047050,
+      "min_ms": 55.069,
+      "p50_ms": 142.997,
+      "p95_ms": 275.4872,
+      "p99_ms": 390.5219400000001,
+      "max_ms": 443.844,
+      "avg_ms": 158.53741538461534
+    },
+    "search_all": {
+      "requests": 438,
+      "failures": 1,
+      "error_rate": 0.00228310502283105,
+      "rps": 7.3,
+      "bytes": 2757605,
+      "min_ms": 2189.271,
+      "p50_ms": 5487.0495,
+      "p95_ms": 8566.4367,
+      "p99_ms": 9342.86764,
+      "max_ms": 15000.087,
+      "avg_ms": 5537.054504566213
+    }
+  },
+  "status_codes": {
+    "admin_mod_queue": {
+      "200": 267
+    },
+    "comment_tree": {
+      "200": 609
+    },
+    "community_posts": {
+      "200": 625
+    },
+    "post_detail": {
+      "200": 593
+    },
+    "post_vote_write": {
+      "200": 200
+    },
+    "posts_feed_hot": {
+      "200": 446
+    },
+    "posts_feed_new": {
+      "200": 715
+    },
+    "search_all": {
+      "0": 1,
+      "200": 437
+    }
+  },
+  "errors": {
+    "search_all": {
+      "Get \"http://127.0.0.1:18080/api/v1/search?q=notification\u0026scope=all\u0026limit=10\u0026offset=0\": context deadline exceeded": 1
+    }
+  }
+}

@@ -1,0 +1,187 @@
+{
+  "started_at": "2026-06-20T03:14:25.9096814Z",
+  "finished_at": "2026-06-20T03:14:56.0532651Z",
+  "elapsed_seconds": 30.1435837,
+  "base_url": "http://127.0.0.1:18080",
+  "vus": 120,
+  "warmup_seconds": 5,
+  "duration_seconds": 30,
+  "target_rps": 100,
+  "included": [],
+  "excluded": [],
+  "environment": {
+    "os": "windows",
+    "arch": "amd64",
+    "go": "go1.25.4",
+    "num_cpu": 16,
+    "tool": "scripts/loadtest/cmd/runner"
+  },
+  "dataset": {
+    "users": 1000,
+    "communities": 50,
+    "posts": 20000,
+    "comments": 80000
+  },
+  "overall": {
+    "requests": 2998,
+    "failures": 0,
+    "error_rate": 0,
+    "rps": 99.93333333333334,
+    "bytes": 46800316,
+    "min_ms": 2.82,
+    "p50_ms": 16.075,
+    "p95_ms": 183.36230000000006,
+    "p99_ms": 226.58540000000002,
+    "max_ms": 284.893,
+    "avg_ms": 41.993886257505046
+  },
+  "endpoints": {
+    "admin_mod_queue": {
+      "requests": 163,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 5.433333333333334,
+      "bytes": 1972980,
+      "min_ms": 13.55,
+      "p50_ms": 19.083,
+      "p95_ms": 26.831000000000003,
+      "p99_ms": 30.975419999999986,
+      "max_ms": 33.976,
+      "avg_ms": 19.75562576687117
+    },
+    "comment_tree": {
+      "requests": 400,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 13.333333333333334,
+      "bytes": 1477213,
+      "min_ms": 5.003,
+      "p50_ms": 7.0455000000000005,
+      "p95_ms": 10.508049999999999,
+      "p99_ms": 13.056999999999992,
+      "max_ms": 21.991,
+      "avg_ms": 7.489607500000004
+    },
+    "community_posts": {
+      "requests": 457,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 15.233333333333333,
+      "bytes": 15989625,
+      "min_ms": 9.503,
+      "p50_ms": 14.02,
+      "p95_ms": 20.437799999999996,
+      "p99_ms": 27.070279999999997,
+      "max_ms": 32.587,
+      "avg_ms": 14.593529540481393
+    },
+    "notifications_interactions": {
+      "requests": 251,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 8.366666666666667,
+      "bytes": 6158695,
+      "min_ms": 2.82,
+      "p50_ms": 10.805,
+      "p95_ms": 18.439999999999998,
+      "p99_ms": 23.124000000000002,
+      "max_ms": 24.991,
+      "avg_ms": 10.850964143426298
+    },
+    "post_detail": {
+      "requests": 429,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 14.3,
+      "bytes": 752395,
+      "min_ms": 4.999,
+      "p50_ms": 7.139,
+      "p95_ms": 9.726999999999995,
+      "p99_ms": 13.566039999999978,
+      "max_ms": 20.003,
+      "avg_ms": 7.449734265734265
+    },
+    "post_vote_write": {
+      "requests": 143,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 4.766666666666667,
+      "bytes": 29448,
+      "min_ms": 4.018,
+      "p50_ms": 15.186,
+      "p95_ms": 21.040300000000002,
+      "p99_ms": 24.398760000000006,
+      "max_ms": 32.622,
+      "avg_ms": 14.874902097902103
+    },
+    "posts_feed_hot": {
+      "requests": 321,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 10.7,
+      "bytes": 615605,
+      "min_ms": 61.455,
+      "p50_ms": 88.837,
+      "p95_ms": 115.153,
+      "p99_ms": 132.93240000000003,
+      "max_ms": 143.059,
+      "avg_ms": 90.05123364485986
+    },
+    "posts_feed_new": {
+      "requests": 507,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 16.9,
+      "bytes": 17760203,
+      "min_ms": 23.882,
+      "p50_ms": 32.722,
+      "p95_ms": 46.530100000000004,
+      "p99_ms": 58.312380000000005,
+      "max_ms": 68.16,
+      "avg_ms": 34.051558185404375
+    },
+    "search_all": {
+      "requests": 327,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 10.9,
+      "bytes": 2044152,
+      "min_ms": 114.06,
+      "p50_ms": 177.827,
+      "p95_ms": 233.7481,
+      "p99_ms": 261.11914,
+      "max_ms": 284.893,
+      "avg_ms": 179.80181345565757
+    }
+  },
+  "status_codes": {
+    "admin_mod_queue": {
+      "200": 163
+    },
+    "comment_tree": {
+      "200": 400
+    },
+    "community_posts": {
+      "200": 457
+    },
+    "notifications_interactions": {
+      "200": 251
+    },
+    "post_detail": {
+      "200": 429
+    },
+    "post_vote_write": {
+      "200": 143
+    },
+    "posts_feed_hot": {
+      "200": 321
+    },
+    "posts_feed_new": {
+      "200": 507
+    },
+    "search_all": {
+      "200": 327
+    }
+  },
+  "errors": {}
+}

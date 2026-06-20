@@ -1,0 +1,113 @@
+﻿{
+    "endpoint":  "posts_feed_hot",
+    "started_at":  "2026-06-20T01:50:02.6179278Z",
+    "finished_at":  "2026-06-20T01:56:43.6493070Z",
+    "step_duration_seconds":  60,
+    "warmup_seconds":  10,
+    "vus":  200,
+    "thresholds":  {
+                       "p95_ms":  2000,
+                       "error_rate":  0.01,
+                       "actual_rps_ratio":  0.95
+                   },
+    "last_healthy":  {
+                         "endpoint":  "posts_feed_hot",
+                         "target_rps":  70,
+                         "actual_rps":  68.933333333333337,
+                         "requests":  4136,
+                         "error_rate":  0,
+                         "p50_ms":  163.40499999999997,
+                         "p95_ms":  279.738,
+                         "p99_ms":  359.16970000000003,
+                         "max_ms":  515.174,
+                         "healthy":  true,
+                         "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095250.json",
+                         "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095250.md"
+                     },
+    "first_bad":  {
+                      "endpoint":  "posts_feed_hot",
+                      "target_rps":  80,
+                      "actual_rps":  75.266666666666666,
+                      "requests":  4516,
+                      "error_rate":  0,
+                      "p50_ms":  216.161,
+                      "p95_ms":  439.63325,
+                      "p99_ms":  567.55670000000009,
+                      "max_ms":  930.935,
+                      "healthy":  false,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095411.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095411.md"
+                  },
+    "steps":  [
+                  {
+                      "endpoint":  "posts_feed_hot",
+                      "target_rps":  50,
+                      "actual_rps":  49.866666666666667,
+                      "requests":  2992,
+                      "error_rate":  0,
+                      "p50_ms":  125.6075,
+                      "p95_ms":  184.34634999999992,
+                      "p99_ms":  226.10585000000009,
+                      "max_ms":  347.039,
+                      "healthy":  true,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095010.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095010.md"
+                  },
+                  {
+                      "endpoint":  "posts_feed_hot",
+                      "target_rps":  60,
+                      "actual_rps":  59.8,
+                      "requests":  3588,
+                      "error_rate":  0,
+                      "p50_ms":  144.07850000000002,
+                      "p95_ms":  212.77659999999989,
+                      "p99_ms":  269.84651000000008,
+                      "max_ms":  447.83,
+                      "healthy":  true,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095129.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095129.md"
+                  },
+                  {
+                      "endpoint":  "posts_feed_hot",
+                      "target_rps":  70,
+                      "actual_rps":  68.933333333333337,
+                      "requests":  4136,
+                      "error_rate":  0,
+                      "p50_ms":  163.40499999999997,
+                      "p95_ms":  279.738,
+                      "p99_ms":  359.16970000000003,
+                      "max_ms":  515.174,
+                      "healthy":  true,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095250.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095250.md"
+                  },
+                  {
+                      "endpoint":  "posts_feed_hot",
+                      "target_rps":  80,
+                      "actual_rps":  75.266666666666666,
+                      "requests":  4516,
+                      "error_rate":  0,
+                      "p50_ms":  216.161,
+                      "p95_ms":  439.63325,
+                      "p99_ms":  567.55670000000009,
+                      "max_ms":  930.935,
+                      "healthy":  false,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095411.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095411.md"
+                  },
+                  {
+                      "endpoint":  "posts_feed_hot",
+                      "target_rps":  100,
+                      "actual_rps":  79.15,
+                      "requests":  4749,
+                      "error_rate":  0,
+                      "p50_ms":  481.907,
+                      "p95_ms":  1373.5655999999994,
+                      "p99_ms":  1995.7923199999996,
+                      "max_ms":  3359.458,
+                      "healthy":  false,
+                      "json_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095531.json",
+                      "markdown_report":  "D:\\Projects\\cumt-nexus-api\\docs\\reports\\loadtest\\loadtest-20260620-095531.md"
+                  }
+              ]
+}

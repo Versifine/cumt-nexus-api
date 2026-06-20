@@ -1,0 +1,187 @@
+{
+  "started_at": "2026-06-20T03:19:41.8976184Z",
+  "finished_at": "2026-06-20T03:49:42.1938271Z",
+  "elapsed_seconds": 1800.2962087,
+  "base_url": "http://127.0.0.1:18080",
+  "vus": 180,
+  "warmup_seconds": 30,
+  "duration_seconds": 1800,
+  "target_rps": 150,
+  "included": [],
+  "excluded": [],
+  "environment": {
+    "os": "windows",
+    "arch": "amd64",
+    "go": "go1.25.4",
+    "num_cpu": 16,
+    "tool": "scripts/loadtest/cmd/runner"
+  },
+  "dataset": {
+    "users": 1000,
+    "communities": 50,
+    "posts": 20000,
+    "comments": 80000
+  },
+  "overall": {
+    "requests": 257062,
+    "failures": 0,
+    "error_rate": 0,
+    "rps": 142.81222222222223,
+    "bytes": 3995317249,
+    "min_ms": 2.004,
+    "p50_ms": 51.8985,
+    "p95_ms": 344.927,
+    "p99_ms": 542.8264499999991,
+    "max_ms": 2331.885,
+    "avg_ms": 96.88833507869646
+  },
+  "endpoints": {
+    "admin_mod_queue": {
+      "requests": 15413,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 8.562777777777777,
+      "bytes": 186570057,
+      "min_ms": 12.512,
+      "p50_ms": 39.23,
+      "p95_ms": 113.01259999999996,
+      "p99_ms": 192.59239999999997,
+      "max_ms": 659.903,
+      "avg_ms": 50.26850171932765
+    },
+    "comment_tree": {
+      "requests": 35967,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 19.981666666666666,
+      "bytes": 132826575,
+      "min_ms": 4.504,
+      "p50_ms": 23.168,
+      "p95_ms": 109.26809999999993,
+      "p99_ms": 184.50561999999914,
+      "max_ms": 972.703,
+      "avg_ms": 37.105815747768936
+    },
+    "community_posts": {
+      "requests": 35947,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 19.970555555555556,
+      "bytes": 1257760163,
+      "min_ms": 9.015,
+      "p50_ms": 37.703,
+      "p95_ms": 146.40639999999985,
+      "p99_ms": 247.92680000000024,
+      "max_ms": 1033.861,
+      "avg_ms": 54.717530030322564
+    },
+    "notifications_interactions": {
+      "requests": 20491,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 11.383888888888889,
+      "bytes": 502624725,
+      "min_ms": 2.004,
+      "p50_ms": 22.842,
+      "p95_ms": 79.46600000000001,
+      "p99_ms": 137.34839999999988,
+      "max_ms": 648.28,
+      "avg_ms": 30.779861304963053
+    },
+    "post_detail": {
+      "requests": 38653,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 21.47388888888889,
+      "bytes": 67799512,
+      "min_ms": 4.502,
+      "p50_ms": 22.11,
+      "p95_ms": 102.55380000000005,
+      "p99_ms": 176.09816000000052,
+      "max_ms": 962.332,
+      "avg_ms": 35.35967433316967
+    },
+    "post_vote_write": {
+      "requests": 12832,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 7.128888888888889,
+      "bytes": 2642167,
+      "min_ms": 3.499,
+      "p50_ms": 48.1205,
+      "p95_ms": 220.92509999999982,
+      "p99_ms": 341.7080100000001,
+      "max_ms": 1000.298,
+      "avg_ms": 75.55125997506251
+    },
+    "posts_feed_hot": {
+      "requests": 25884,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 14.38,
+      "bytes": 63705613,
+      "min_ms": 49.843,
+      "p50_ms": 169.2475,
+      "p95_ms": 358.90979999999996,
+      "p99_ms": 549.9270899999997,
+      "max_ms": 2012.954,
+      "avg_ms": 191.70323396692936
+    },
+    "posts_feed_new": {
+      "requests": 46211,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 25.672777777777778,
+      "bytes": 1618809236,
+      "min_ms": 23.303,
+      "p50_ms": 68.88,
+      "p95_ms": 178.702,
+      "p99_ms": 292.73690000000045,
+      "max_ms": 1220.369,
+      "avg_ms": 84.346051935686
+    },
+    "search_all": {
+      "requests": 25664,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 14.257777777777777,
+      "bytes": 162579201,
+      "min_ms": 110.692,
+      "p50_ms": 322.46299999999997,
+      "p95_ms": 622.0145499999996,
+      "p99_ms": 930.8645099999977,
+      "max_ms": 2331.885,
+      "avg_ms": 350.81443017456513
+    }
+  },
+  "status_codes": {
+    "admin_mod_queue": {
+      "200": 15413
+    },
+    "comment_tree": {
+      "200": 35967
+    },
+    "community_posts": {
+      "200": 35947
+    },
+    "notifications_interactions": {
+      "200": 20491
+    },
+    "post_detail": {
+      "200": 38653
+    },
+    "post_vote_write": {
+      "200": 12832
+    },
+    "posts_feed_hot": {
+      "200": 25884
+    },
+    "posts_feed_new": {
+      "200": 46211
+    },
+    "search_all": {
+      "200": 25664
+    }
+  },
+  "errors": {}
+}

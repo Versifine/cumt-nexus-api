@@ -1,0 +1,156 @@
+{
+  "started_at": "2026-06-19T07:51:59.9553793Z",
+  "finished_at": "2026-06-19T07:53:00.1875233Z",
+  "elapsed_seconds": 60.232144,
+  "base_url": "http://127.0.0.1:18080",
+  "vus": 50,
+  "warmup_seconds": 5,
+  "duration_seconds": 60,
+  "excluded": [
+    "notifications_interactions",
+    "search_all"
+  ],
+  "environment": {
+    "os": "windows",
+    "arch": "amd64",
+    "go": "go1.25.4",
+    "num_cpu": 16,
+    "tool": "scripts/loadtest/cmd/runner"
+  },
+  "dataset": {
+    "users": 1000,
+    "communities": 50,
+    "posts": 20000,
+    "comments": 80000
+  },
+  "overall": {
+    "requests": 20155,
+    "failures": 0,
+    "error_rate": 0,
+    "rps": 335.9166666666667,
+    "bytes": 345785885,
+    "min_ms": 10.002,
+    "p50_ms": 93.332,
+    "p95_ms": 541.5857999999998,
+    "p99_ms": 816.2459999999996,
+    "max_ms": 1258.833,
+    "avg_ms": 148.48140099230832
+  },
+  "endpoints": {
+    "admin_mod_queue": {
+      "requests": 1484,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 24.733333333333334,
+      "bytes": 17903771,
+      "min_ms": 29.518,
+      "p50_ms": 95.5125,
+      "p95_ms": 167.77134999999998,
+      "p99_ms": 212.33642000000015,
+      "max_ms": 255.727,
+      "avg_ms": 100.3942587601078
+    },
+    "comment_tree": {
+      "requests": 3418,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 56.96666666666667,
+      "bytes": 12650036,
+      "min_ms": 14.491,
+      "p50_ms": 65.579,
+      "p95_ms": 123.35909999999993,
+      "p99_ms": 154.079,
+      "max_ms": 207.106,
+      "avg_ms": 69.9033774136922
+    },
+    "community_posts": {
+      "requests": 3543,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 59.05,
+      "bytes": 123965757,
+      "min_ms": 20.502,
+      "p50_ms": 79.898,
+      "p95_ms": 139.4994,
+      "p99_ms": 175.81687999999997,
+      "max_ms": 233.254,
+      "avg_ms": 84.3645241320913
+    },
+    "post_detail": {
+      "requests": 3680,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 61.333333333333336,
+      "bytes": 6455100,
+      "min_ms": 15.001,
+      "p50_ms": 59.057,
+      "p95_ms": 114.51299999999996,
+      "p99_ms": 141.94889,
+      "max_ms": 191.427,
+      "avg_ms": 63.733101086956445
+    },
+    "post_vote_write": {
+      "requests": 1236,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 20.6,
+      "bytes": 254502,
+      "min_ms": 10.002,
+      "p50_ms": 114.46100000000001,
+      "p95_ms": 208.06175000000002,
+      "p99_ms": 264.60280000000006,
+      "max_ms": 331.464,
+      "avg_ms": 116.44063996763737
+    },
+    "posts_feed_hot": {
+      "requests": 2360,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 39.333333333333336,
+      "bytes": 29228489,
+      "min_ms": 204.128,
+      "p50_ms": 510.76649999999995,
+      "p95_ms": 878.084049999999,
+      "p99_ms": 1042.3045899999997,
+      "max_ms": 1258.833,
+      "avg_ms": 541.2833885593212
+    },
+    "posts_feed_new": {
+      "requests": 4434,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 73.9,
+      "bytes": 155328230,
+      "min_ms": 44.093,
+      "p50_ms": 138.66899999999998,
+      "p95_ms": 240.73724999999996,
+      "p99_ms": 298.67191000000014,
+      "max_ms": 423.363,
+      "avg_ms": 146.5803031123141
+    }
+  },
+  "status_codes": {
+    "admin_mod_queue": {
+      "200": 1484
+    },
+    "comment_tree": {
+      "200": 3418
+    },
+    "community_posts": {
+      "200": 3543
+    },
+    "post_detail": {
+      "200": 3680
+    },
+    "post_vote_write": {
+      "200": 1236
+    },
+    "posts_feed_hot": {
+      "200": 2360
+    },
+    "posts_feed_new": {
+      "200": 4434
+    }
+  },
+  "errors": {}
+}

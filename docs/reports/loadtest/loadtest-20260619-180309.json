@@ -1,0 +1,61 @@
+{
+  "started_at": "2026-06-19T10:03:21.1266098Z",
+  "finished_at": "2026-06-19T10:04:21.2949027Z",
+  "elapsed_seconds": 60.1682929,
+  "base_url": "http://127.0.0.1:18080",
+  "vus": 100,
+  "warmup_seconds": 10,
+  "duration_seconds": 60,
+  "target_rps": 15,
+  "included": [
+    "posts_feed_hot"
+  ],
+  "excluded": [],
+  "environment": {
+    "os": "windows",
+    "arch": "amd64",
+    "go": "go1.25.4",
+    "num_cpu": 16,
+    "tool": "scripts/loadtest/cmd/runner"
+  },
+  "dataset": {
+    "users": 1000,
+    "communities": 50,
+    "posts": 20000,
+    "comments": 80000
+  },
+  "overall": {
+    "requests": 900,
+    "failures": 0,
+    "error_rate": 0,
+    "rps": 15,
+    "bytes": 10340781,
+    "min_ms": 98.6,
+    "p50_ms": 154.601,
+    "p95_ms": 238.54789999999988,
+    "p99_ms": 300.48289,
+    "max_ms": 376.818,
+    "avg_ms": 161.3463355555556
+  },
+  "endpoints": {
+    "posts_feed_hot": {
+      "requests": 900,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 15,
+      "bytes": 10340781,
+      "min_ms": 98.6,
+      "p50_ms": 154.601,
+      "p95_ms": 238.54789999999988,
+      "p99_ms": 300.48289,
+      "max_ms": 376.818,
+      "avg_ms": 161.3463355555556
+    }
+  },
+  "status_codes": {
+    "posts_feed_hot": {
+      "200": 900
+    }
+  },
+  "errors": {}
+}

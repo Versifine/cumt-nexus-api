@@ -1,0 +1,282 @@
+{
+  "started_at": "2026-06-19T07:45:07.213499Z",
+  "finished_at": "2026-06-19T07:46:21.9785979Z",
+  "elapsed_seconds": 74.7650989,
+  "base_url": "http://127.0.0.1:18080",
+  "vus": 50,
+  "warmup_seconds": 5,
+  "duration_seconds": 60,
+  "environment": {
+    "os": "windows",
+    "arch": "amd64",
+    "go": "go1.25.4",
+    "num_cpu": 16,
+    "tool": "scripts/loadtest/cmd/runner"
+  },
+  "dataset": {
+    "users": 1000,
+    "communities": 50,
+    "posts": 20000,
+    "comments": 80000
+  },
+  "overall": {
+    "requests": 1762,
+    "failures": 125,
+    "error_rate": 0.07094211123723042,
+    "rps": 29.366666666666667,
+    "bytes": 25244172,
+    "min_ms": 15.195,
+    "p50_ms": 147.601,
+    "p95_ms": 15000.3059,
+    "p99_ms": 15001.542720000001,
+    "max_ms": 15005.44,
+    "avg_ms": 1731.0853110102164
+  },
+  "endpoints": {
+    "admin_mod_queue": {
+      "requests": 114,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 1.9,
+      "bytes": 1375324,
+      "min_ms": 41.27,
+      "p50_ms": 131.666,
+      "p95_ms": 273.42794999999995,
+      "p99_ms": 344.1640900000001,
+      "max_ms": 346.846,
+      "avg_ms": 142.5496403508772
+    },
+    "comment_tree": {
+      "requests": 261,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 4.35,
+      "bytes": 965953,
+      "min_ms": 20.002,
+      "p50_ms": 70.307,
+      "p95_ms": 228.182,
+      "p99_ms": 305.68479999999977,
+      "max_ms": 326.885,
+      "avg_ms": 90.56293869731799
+    },
+    "community_posts": {
+      "requests": 258,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 4.3,
+      "bytes": 9027606,
+      "min_ms": 23.59,
+      "p50_ms": 100.7735,
+      "p95_ms": 256.79194999999993,
+      "p99_ms": 340.31596,
+      "max_ms": 426.431,
+      "avg_ms": 118.79259302325582
+    },
+    "notifications_interactions": {
+      "requests": 123,
+      "failures": 123,
+      "error_rate": 1,
+      "rps": 2.05,
+      "bytes": 0,
+      "min_ms": 14998.872,
+      "p50_ms": 15000.497,
+      "p95_ms": 15002.5406,
+      "p99_ms": 15005.149159999999,
+      "max_ms": 15005.44,
+      "avg_ms": 15000.773544715443
+    },
+    "post_detail": {
+      "requests": 287,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 4.783333333333333,
+      "bytes": 503559,
+      "min_ms": 15.195,
+      "p50_ms": 53.892,
+      "p95_ms": 174.7091,
+      "p99_ms": 246.50495999999987,
+      "max_ms": 367.86,
+      "avg_ms": 73.05426829268298
+    },
+    "post_vote_write": {
+      "requests": 108,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 1.8,
+      "bytes": 22232,
+      "min_ms": 26.585,
+      "p50_ms": 147.94299999999998,
+      "p95_ms": 399.5121499999995,
+      "p99_ms": 474.0841,
+      "max_ms": 476.13,
+      "avg_ms": 169.6495555555556
+    },
+    "posts_feed_hot": {
+      "requests": 171,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 2.85,
+      "bytes": 2032739,
+      "min_ms": 293.396,
+      "p50_ms": 752.556,
+      "p95_ms": 1554.4625,
+      "p99_ms": 1902.4975000000004,
+      "max_ms": 3399.838,
+      "avg_ms": 838.0292339181291
+    },
+    "posts_feed_new": {
+      "requests": 298,
+      "failures": 0,
+      "error_rate": 0,
+      "rps": 4.966666666666667,
+      "bytes": 10439631,
+      "min_ms": 59.079,
+      "p50_ms": 183.8415,
+      "p95_ms": 390.197,
+      "p99_ms": 588.9024599999982,
+      "max_ms": 776.861,
+      "avg_ms": 208.79574161073822
+    },
+    "search_all": {
+      "requests": 142,
+      "failures": 2,
+      "error_rate": 0.014084507042253521,
+      "rps": 2.3666666666666667,
+      "bytes": 877128,
+      "min_ms": 2196.469,
+      "p50_ms": 6156.562,
+      "p95_ms": 9205.008249999999,
+      "p99_ms": 12874.927050000018,
+      "max_ms": 15004.069,
+      "avg_ms": 6265.691830985914
+    }
+  },
+  "status_codes": {
+    "admin_mod_queue": {
+      "200": 114
+    },
+    "comment_tree": {
+      "200": 261
+    },
+    "community_posts": {
+      "200": 258
+    },
+    "notifications_interactions": {
+      "0": 123
+    },
+    "post_detail": {
+      "200": 287
+    },
+    "post_vote_write": {
+      "200": 108
+    },
+    "posts_feed_hot": {
+      "200": 171
+    },
+    "posts_feed_new": {
+      "200": 298
+    },
+    "search_all": {
+      "0": 2,
+      "200": 140
+    }
+  },
+  "errors": {
+    "notifications_interactions": {
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1000\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1020\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1060\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1100\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1120\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1200\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1220\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1360\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1400\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1440\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1460\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1480\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=160\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1600\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1620\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1640\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1660\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1800\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1820\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1940\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=1960\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=200\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2000\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2020\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2040\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2060\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2080\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2140\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2160\": context deadline exceeded": 3,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2280\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2300\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2320\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2380\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=240\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2460\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2500\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2540\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2560\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=260\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2600\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2620\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2640\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2660\": context deadline exceeded": 3,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2720\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2740\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2780\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=280\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2820\": context deadline exceeded": 5,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2840\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2860\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2880\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2900\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2940\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=2960\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=300\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3020\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3040\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3060\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3180\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3220\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3240\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3260\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3320\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3380\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3420\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3480\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3540\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3560\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3580\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3600\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3740\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3780\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3800\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3820\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3840\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3860\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3880\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3940\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=3960\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=40\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=420\": context deadline exceeded": 3,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=520\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=540\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=560\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=60\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=640\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=700\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=780\": context deadline exceeded": 2,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=940\": context deadline exceeded": 3,
+      "Get \"http://127.0.0.1:18080/api/v1/notifications?category=interactions\u0026status=all\u0026limit=20\u0026offset=980\": context deadline exceeded": 1
+    },
+    "search_all": {
+      "Get \"http://127.0.0.1:18080/api/v1/search?q=feed\u0026scope=all\u0026limit=10\u0026offset=0\": context deadline exceeded": 1,
+      "Get \"http://127.0.0.1:18080/api/v1/search?q=notification\u0026scope=all\u0026limit=10\u0026offset=0\": context deadline exceeded": 1
+    }
+  }
+}
