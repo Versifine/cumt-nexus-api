@@ -14,8 +14,8 @@
 
 ## 校验命令
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-contract.ps1
+```bash
+./scripts/verify-migration-contract.sh
 ```
 
 该脚本校验：
@@ -75,3 +75,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-migration-c
 | 000036 | create_community_extended_settings | Creates community post/user flair templates, scheduled posts and guides/wiki settings |
 | 000037 | optimize_notification_list_indexes | Adds notification recipient/type ordering indexes for paginated list reads |
 | 000038 | optimize_search_documents | Adds stored search document columns and GIN indexes for post/community search reads |
+| 000039 | create_point_reward_claims | Creates point reward claim records for idempotent automatic point grants |
+| 000040 | create_post_effects_and_emoji_catalog | Adds post effect records and resets active effect catalog to Chinese emoji content interactions |
+| 000041 | add_fake_news_effect | Adds active FakeNews content interaction to the effect catalog |

@@ -11,6 +11,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/effectusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/textlimit"
@@ -41,6 +42,7 @@ type ToolsUseCase struct {
 	owners      PlatformOwnerRepository
 	communities CommunityRepository
 	roles       CommunityRoleRepository
+	points      PointRecorder
 	now         func() time.Time
 }
 
@@ -62,6 +64,10 @@ func NewToolsUseCase(
 		roles:       roles,
 		now:         now,
 	}
+}
+
+func (uc *ToolsUseCase) SetPointRecorder(points PointRecorder) {
+	uc.points = points
 }
 
 type ToolsRepository interface {
@@ -906,6 +912,7 @@ func (uc *ToolsUseCase) ApplyBulkAction(ctx context.Context, input BulkActionInp
 			TargetType: target.TargetType.String(),
 			TargetID:   target.TargetID,
 		}
+		acceptedReports := uc.loadAcceptedReportRewardTargets(ctx, communityID, target.TargetType, target.TargetID, action)
 		applied, err := uc.tools.ApplyModerationAction(ctx, ApplyModerationActionRecordInput{
 			ScopeCommunityID: communityID,
 			BatchID:          batchID,
@@ -927,9 +934,52 @@ func (uc *ToolsUseCase) ApplyBulkAction(ctx context.Context, input BulkActionInp
 		}
 		result.OK = true
 		result.Action = &applied
+		uc.grantAcceptedReportPoints(ctx, acceptedReports, input.ActorID)
 		results = append(results, result)
 	}
 	return BulkActionResult{Results: results}, nil
+}
+
+func (uc *ToolsUseCase) loadAcceptedReportRewardTargets(ctx context.Context, communityID *communitydomain.CommunityID, targetType moderationdomain.TargetType, targetID string, action moderationdomain.ActionType) []ModQueueReport {
+	if uc.points == nil {
+		return nil
+	}
+	if action != moderationdomain.ActionTypeRemove && action != moderationdomain.ActionTypeSpam {
+		return nil
+	}
+	detail, err := uc.tools.GetModQueueItem(ctx, GetModQueueItemRecordInput{
+		CommunityID: communityID,
+		TargetType:  targetType,
+		TargetID:    targetID,
+	})
+	if err != nil {
+		return nil
+	}
+	reports := make([]ModQueueReport, 0, len(detail.Reports))
+	for _, report := range detail.Reports {
+		if report.Status == moderationdomain.ReportStatusPending.String() {
+			reports = append(reports, report)
+		}
+	}
+	return reports
+}
+
+func (uc *ToolsUseCase) grantAcceptedReportPoints(ctx context.Context, reports []ModQueueReport, actorID userdomain.UserID) {
+	if uc.points == nil {
+		return
+	}
+	for _, report := range reports {
+		reporterID, err := userdomain.NewUserID(report.ReporterID)
+		if err != nil {
+			continue
+		}
+		_ = uc.points.GrantPoints(ctx, effectusecase.GrantPointsInput{
+			UserID:     reporterID,
+			ActorID:    actorID,
+			SourceType: effectusecase.PointSourceReportAccepted,
+			SourceID:   report.ID,
+		})
+	}
 }
 
 func (uc *ToolsUseCase) IgnoreCommunityReport(ctx context.Context, input IgnoreCommunityReportInput) (IgnoreCommunityReportResult, error) {

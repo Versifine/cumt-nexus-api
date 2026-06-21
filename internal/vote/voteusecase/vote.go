@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/effectusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/progression/progressionusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
@@ -22,6 +23,7 @@ type PostVoteUseCase struct {
 	votes         PostVoteRepository
 	notifications NotificationPublisher
 	progression   XPRecorder
+	points        PointRecorder
 	now           func() time.Time
 }
 
@@ -51,6 +53,14 @@ type XPRecorder interface {
 
 func (uc *PostVoteUseCase) SetXPRecorder(progression XPRecorder) {
 	uc.progression = progression
+}
+
+type PointRecorder interface {
+	GrantPoints(ctx context.Context, input effectusecase.GrantPointsInput) error
+}
+
+func (uc *PostVoteUseCase) SetPointRecorder(points PointRecorder) {
+	uc.points = points
 }
 
 type SetPostVoteInput struct {
@@ -113,6 +123,7 @@ func (uc *PostVoteUseCase) SetPostVote(ctx context.Context, input SetPostVoteInp
 	}
 	if post.AuthorID() != input.UserID && value == votedomain.VoteValueUp && (previousVote == nil || previousVote.Value() != votedomain.VoteValueUp) {
 		_ = uc.grantXP(ctx, post.AuthorID(), input.UserID, progressionusecase.XPSourcePostUpvote, post.ID().String()+":"+input.UserID.String())
+		_ = uc.grantPoints(ctx, post.AuthorID(), input.UserID, effectusecase.PointSourcePostUpvote, post.ID().String()+":"+input.UserID.String())
 	}
 
 	return SetPostVoteResult{
@@ -135,6 +146,18 @@ func (uc *PostVoteUseCase) grantXP(ctx context.Context, userID userdomain.UserID
 		return nil
 	}
 	return uc.progression.GrantXP(ctx, progressionusecase.GrantXPInput{
+		UserID:     userID,
+		ActorID:    actorID,
+		SourceType: sourceType,
+		SourceID:   sourceID,
+	})
+}
+
+func (uc *PostVoteUseCase) grantPoints(ctx context.Context, userID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if uc.points == nil || strings.TrimSpace(userID.String()) == "" {
+		return nil
+	}
+	return uc.points.GrantPoints(ctx, effectusecase.GrantPointsInput{
 		UserID:     userID,
 		ActorID:    actorID,
 		SourceType: sourceType,

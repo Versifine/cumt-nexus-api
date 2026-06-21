@@ -41,6 +41,7 @@ func (repo *PostgresEffectRepository) ListActiveEffects(ctx context.Context) ([]
 			cost_points,
 			asset_url,
 			animation_key,
+			emoji,
 			is_active,
 			created_at,
 			updated_at
@@ -79,6 +80,7 @@ func (repo *PostgresEffectRepository) FindActiveEffectByID(ctx context.Context, 
 			cost_points,
 			asset_url,
 			animation_key,
+			emoji,
 			is_active,
 			created_at,
 			updated_at
@@ -203,6 +205,149 @@ func (repo *PostgresEffectRepository) ApplyCommentEffect(ctx context.Context, in
 	}, nil
 }
 
+func (repo *PostgresEffectRepository) ApplyPostEffect(ctx context.Context, input effectusecase.ApplyPostEffectRecordInput) (effectusecase.ApplyPostEffectRecordResult, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return effectusecase.ApplyPostEffectRecordResult{}, fmt.Errorf("begin post effect transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	account, inserted, err := ensurePointAccount(ctx, tx, input.UserID, input.InitialGrant, input.Now)
+	if err != nil {
+		return effectusecase.ApplyPostEffectRecordResult{}, err
+	}
+	if inserted && input.InitialGrant > 0 {
+		if err := insertPointTransaction(ctx, tx, uuid.NewString(), input.UserID, input.InitialGrant, account.Balance, "initial_grant", "user_points", input.UserID.String(), input.Now); err != nil {
+			return effectusecase.ApplyPostEffectRecordResult{}, err
+		}
+	}
+	if account.Balance < input.PointsSpent {
+		return effectusecase.ApplyPostEffectRecordResult{}, apperr.New(apperr.CodeForbidden, "insufficient points")
+	}
+
+	postEffect, err := insertPostEffect(ctx, tx, input)
+	if err != nil {
+		return effectusecase.ApplyPostEffectRecordResult{}, err
+	}
+	updatedAccount, err := deductPoints(ctx, tx, input.UserID, input.PointsSpent, input.Now)
+	if err != nil {
+		return effectusecase.ApplyPostEffectRecordResult{}, err
+	}
+	if input.PointsSpent > 0 {
+		if err := insertPointTransaction(ctx, tx, uuid.NewString(), input.UserID, -input.PointsSpent, updatedAccount.Balance, "post_effect", "post_effect", postEffect.ID, input.Now); err != nil {
+			return effectusecase.ApplyPostEffectRecordResult{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return effectusecase.ApplyPostEffectRecordResult{}, fmt.Errorf("commit post effect transaction: %w", err)
+	}
+
+	return effectusecase.ApplyPostEffectRecordResult{
+		PostEffect: postEffect,
+		Points:     updatedAccount,
+	}, nil
+}
+
+func (repo *PostgresEffectRepository) GrantPoints(ctx context.Context, input effectusecase.GrantPointsRecordInput) (effectusecase.GrantPointsRecordResult, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return effectusecase.GrantPointsRecordResult{}, fmt.Errorf("begin point reward transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	account, inserted, err := ensurePointAccount(ctx, tx, input.UserID, input.InitialGrant, input.CreatedAt)
+	if err != nil {
+		return effectusecase.GrantPointsRecordResult{}, err
+	}
+	if inserted && input.InitialGrant > 0 {
+		if err := insertPointTransaction(ctx, tx, uuid.NewString(), input.UserID, input.InitialGrant, account.Balance, "initial_grant", "user_points", input.UserID.String(), input.CreatedAt); err != nil {
+			return effectusecase.GrantPointsRecordResult{}, err
+		}
+	}
+
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO point_reward_claims (user_id, source_type, source_id, created_at)
+		VALUES ($1::uuid, $2, $3, $4)
+		ON CONFLICT (user_id, source_type, source_id) DO NOTHING
+	`, input.UserID.String(), input.SourceType, input.SourceID, input.CreatedAt)
+	if err != nil {
+		return effectusecase.GrantPointsRecordResult{}, mapEffectPostgresWriteError("claim point reward", err)
+	}
+	if tag.RowsAffected() == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return effectusecase.GrantPointsRecordResult{}, fmt.Errorf("commit duplicate point reward transaction: %w", err)
+		}
+		committed = true
+		return effectusecase.GrantPointsRecordResult{Points: account, Granted: false}, nil
+	}
+
+	dayStart := time.Date(input.CreatedAt.Year(), input.CreatedAt.Month(), input.CreatedAt.Day(), 0, 0, 0, 0, time.UTC)
+	dayEnd := dayStart.Add(24 * time.Hour)
+	var grantedToday int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(delta), 0)
+		FROM point_transactions
+		WHERE user_id = $1::uuid
+			AND source_type = $2
+			AND delta > 0
+			AND created_at >= $3
+			AND created_at < $4
+	`, input.UserID.String(), input.SourceType, dayStart, dayEnd).Scan(&grantedToday); err != nil {
+		return effectusecase.GrantPointsRecordResult{}, fmt.Errorf("sum daily point rewards: %w", err)
+	}
+	remaining := input.DailyCap - grantedToday
+	if remaining <= 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return effectusecase.GrantPointsRecordResult{}, fmt.Errorf("commit capped point reward transaction: %w", err)
+		}
+		committed = true
+		return effectusecase.GrantPointsRecordResult{Points: account, Granted: false}, nil
+	}
+	delta := input.Delta
+	if delta > remaining {
+		delta = remaining
+	}
+	updatedAccount, err := addPoints(ctx, tx, input.UserID, delta, input.CreatedAt)
+	if err != nil {
+		return effectusecase.GrantPointsRecordResult{}, err
+	}
+	transaction, err := scanPointTransaction(tx.QueryRow(ctx, `
+		INSERT INTO point_transactions (
+			id,
+			user_id,
+			delta,
+			balance_after,
+			reason,
+			source_type,
+			source_id,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8)
+		RETURNING
+			id::text,
+			user_id::text,
+			delta,
+			balance_after,
+			reason,
+			source_type,
+			source_id,
+			created_at
+	`, input.TransactionID, input.UserID.String(), delta, updatedAccount.Balance, input.Reason, input.SourceType, input.SourceID, input.CreatedAt))
+	if err != nil {
+		return effectusecase.GrantPointsRecordResult{}, mapEffectPostgresWriteError("insert point reward transaction", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return effectusecase.GrantPointsRecordResult{}, fmt.Errorf("commit point reward transaction: %w", err)
+	}
+	committed = true
+	return effectusecase.GrantPointsRecordResult{Transaction: &transaction, Points: updatedAccount, Granted: true}, nil
+}
+
 func ensurePointAccount(ctx context.Context, q pointQuery, userID userdomain.UserID, initialBalance int, now time.Time) (effectusecase.PointAccount, bool, error) {
 	if initialBalance < 0 {
 		return effectusecase.PointAccount{}, false, apperr.New(apperr.CodeInvalidArgument, "initial point balance is invalid")
@@ -283,6 +428,33 @@ func insertCommentEffect(ctx context.Context, q pointQuery, input effectusecase.
 	return commentEffect, nil
 }
 
+func insertPostEffect(ctx context.Context, q pointQuery, input effectusecase.ApplyPostEffectRecordInput) (effectusecase.PostEffect, error) {
+	const query = `
+		INSERT INTO post_effects (
+			id,
+			post_id,
+			effect_id,
+			user_id,
+			points_spent,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6)
+		RETURNING
+			id::text,
+			post_id::text,
+			effect_id,
+			user_id::text,
+			points_spent,
+			created_at
+	`
+
+	postEffect, err := scanPostEffect(q.QueryRow(ctx, query, input.ID, input.PostID.String(), input.EffectID, input.UserID.String(), input.PointsSpent, input.Now))
+	if err != nil {
+		return effectusecase.PostEffect{}, mapEffectPostgresWriteError("insert post effect", err)
+	}
+	return postEffect, nil
+}
+
 func deductPoints(ctx context.Context, q pointQuery, userID userdomain.UserID, pointsSpent int, now time.Time) (effectusecase.PointAccount, error) {
 	if pointsSpent < 0 {
 		return effectusecase.PointAccount{}, apperr.New(apperr.CodeInvalidArgument, "points spent is invalid")
@@ -308,6 +480,36 @@ func deductPoints(ctx context.Context, q pointQuery, userID userdomain.UserID, p
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return effectusecase.PointAccount{}, apperr.New(apperr.CodeForbidden, "insufficient points")
+		}
+		return effectusecase.PointAccount{}, err
+	}
+	return account, nil
+}
+
+func addPoints(ctx context.Context, q pointQuery, userID userdomain.UserID, delta int, now time.Time) (effectusecase.PointAccount, error) {
+	if delta <= 0 {
+		return effectusecase.PointAccount{}, apperr.New(apperr.CodeInvalidArgument, "point reward delta is invalid")
+	}
+
+	const query = `
+		UPDATE user_points
+		SET
+			balance = balance + $2,
+			lifetime_earned = lifetime_earned + $2,
+			updated_at = $3
+		WHERE user_id = $1::uuid
+		RETURNING
+			user_id::text,
+			balance,
+			lifetime_earned,
+			lifetime_spent,
+			updated_at
+	`
+
+	account, err := scanPointAccount(q.QueryRow(ctx, query, userID.String(), delta, now))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return effectusecase.PointAccount{}, apperr.New(apperr.CodeNotFound, "point account not found")
 		}
 		return effectusecase.PointAccount{}, err
 	}
@@ -345,6 +547,7 @@ func scanEffect(row pgx.Row) (effectusecase.Effect, error) {
 		&effect.CostPoints,
 		&effect.AssetURL,
 		&effect.AnimationKey,
+		&effect.Emoji,
 		&effect.IsActive,
 		&effect.CreatedAt,
 		&effect.UpdatedAt,
@@ -375,6 +578,19 @@ func scanCommentEffect(row pgx.Row) (effectusecase.CommentEffect, error) {
 		&commentEffect.CreatedAt,
 	)
 	return commentEffect, err
+}
+
+func scanPostEffect(row pgx.Row) (effectusecase.PostEffect, error) {
+	var postEffect effectusecase.PostEffect
+	err := row.Scan(
+		&postEffect.ID,
+		&postEffect.PostID,
+		&postEffect.EffectID,
+		&postEffect.UserID,
+		&postEffect.PointsSpent,
+		&postEffect.CreatedAt,
+	)
+	return postEffect, err
 }
 
 func scanPointTransaction(row pgx.Row) (effectusecase.PointTransaction, error) {

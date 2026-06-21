@@ -112,6 +112,12 @@ func TestErrorMiddlewareMapsAppErrors(t *testing.T) {
 			message:    "state conflict",
 			wantStatus: http.StatusConflict,
 		},
+		{
+			name:       "message recall expired",
+			code:       apperr.CodeMessageRecallExpired,
+			message:    "message recall window expired",
+			wantStatus: http.StatusConflict,
+		},
 	}
 
 	for _, tt := range tests {

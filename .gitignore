@@ -33,6 +33,7 @@ vendor/
 # Local runtime files
 /tmp/
 /data/
+/var/
 .cache/
 .gocache/
 

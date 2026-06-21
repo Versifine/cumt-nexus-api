@@ -75,6 +75,155 @@ func TestStartConversationNonMutualCreatesSinglePendingRequest(t *testing.T) {
 	}
 }
 
+func TestRejectedRequestCanOnlyBeReopenedByOriginalRecipient(t *testing.T) {
+	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "initial"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+	rejected, err := uc.RejectRequest(context.Background(), RequestActionInput{
+		ViewerID:  target.ID(),
+		RequestID: *created.Conversation.RequestID,
+	})
+	if err != nil {
+		t.Fatalf("RejectRequest returned error: %v", err)
+	}
+	if !rejected.Conversation.ViewerCanReopen {
+		t.Fatalf("expected original recipient to be able to reopen, got %#v", rejected.Conversation)
+	}
+	originalSender := uc.toConversation(repo.conversations[created.Conversation.ID], viewer.ID())
+	if originalSender.ViewerCanReopen {
+		t.Fatalf("original requester must not be able to reopen: %#v", originalSender)
+	}
+
+	_, err = uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "bypass"},
+	})
+	if !apperr.IsCode(err, apperr.CodeMessageRequestRejected) {
+		t.Fatalf("expected message_request_rejected for original requester, got %v", err)
+	}
+	_, err = uc.SendMessage(context.Background(), SendMessageInput{
+		ViewerID:       viewer.ID(),
+		ConversationID: created.Conversation.ID,
+		Message:        MessageDraft{Type: MessageTypeText, Body: "still bypass"},
+	})
+	if !apperr.IsCode(err, apperr.CodeMessageRequestRejected) {
+		t.Fatalf("expected message_request_rejected for direct send by original requester, got %v", err)
+	}
+
+	reopened, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       target.ID(),
+		TargetUsername: viewer.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "receiver starts after ignore"},
+	})
+	if err != nil {
+		t.Fatalf("recipient reopen StartConversation returned error: %v", err)
+	}
+	if reopened.Conversation.ID != created.Conversation.ID || reopened.Conversation.RequestStatus != ConversationStatusAccepted || reopened.Conversation.ConversationState != "normal" || !reopened.Conversation.CanSend {
+		t.Fatalf("expected old conversation to become normal accepted conversation, got %#v", reopened.Conversation)
+	}
+	if reopened.Message == nil || reopened.Message.Body != "receiver starts after ignore" {
+		t.Fatalf("expected reopened message, got %#v", reopened.Message)
+	}
+	if reopened.Conversation.ViewerCanReopen {
+		t.Fatalf("accepted conversation should not remain reopenable: %#v", reopened.Conversation)
+	}
+}
+
+func TestRejectedRequestRecipientCanReopenFromConversationMessageInput(t *testing.T) {
+	now := time.Date(2026, 6, 16, 11, 0, 0, 0, time.UTC)
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "initial"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+	if _, err := uc.RejectRequest(context.Background(), RequestActionInput{ViewerID: target.ID(), RequestID: *created.Conversation.RequestID}); err != nil {
+		t.Fatalf("RejectRequest returned error: %v", err)
+	}
+
+	reopened, err := uc.SendMessage(context.Background(), SendMessageInput{
+		ViewerID:       target.ID(),
+		ConversationID: created.Conversation.ID,
+		Message:        MessageDraft{Type: MessageTypeText, Body: "inline reopen"},
+	})
+	if err != nil {
+		t.Fatalf("recipient SendMessage reopen returned error: %v", err)
+	}
+	if reopened.Conversation.RequestStatus != ConversationStatusAccepted || reopened.Message == nil || reopened.Message.Body != "inline reopen" {
+		t.Fatalf("expected send to reopen rejected request, got %#v", reopened)
+	}
+}
+
+func TestRejectedRequestRecipientCanReopenAfterLocalDelete(t *testing.T) {
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "initial"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+	if _, err := uc.RejectRequest(context.Background(), RequestActionInput{ViewerID: target.ID(), RequestID: *created.Conversation.RequestID}); err != nil {
+		t.Fatalf("RejectRequest returned error: %v", err)
+	}
+	if err := uc.DeleteConversation(context.Background(), ConversationActionInput{ViewerID: target.ID(), ConversationID: created.Conversation.ID}); err != nil {
+		t.Fatalf("DeleteConversation returned error: %v", err)
+	}
+	if _, err := uc.SendMessage(context.Background(), SendMessageInput{
+		ViewerID:       target.ID(),
+		ConversationID: created.Conversation.ID,
+		Message:        MessageDraft{Type: MessageTypeText, Body: "hidden direct send"},
+	}); !apperr.IsCode(err, apperr.CodeNotFound) {
+		t.Fatalf("expected hidden old conversation to be inaccessible by direct send, got %v", err)
+	}
+
+	reopened, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       target.ID(),
+		TargetUsername: viewer.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "after local delete retry"},
+	})
+	if err != nil {
+		t.Fatalf("recipient reopen after local delete returned error: %v", err)
+	}
+	if reopened.Conversation.ID != created.Conversation.ID {
+		t.Fatalf("expected reopened old conversation %s, got %s", created.Conversation.ID, reopened.Conversation.ID)
+	}
+	if reopened.Conversation.RequestStatus != ConversationStatusAccepted || reopened.Conversation.ConversationState != "normal" || !reopened.Conversation.CanSend {
+		t.Fatalf("expected restored normal conversation, got %#v", reopened.Conversation)
+	}
+	if reopened.Message == nil || reopened.Message.Body != "after local delete retry" {
+		t.Fatalf("expected retry message to be inserted, got %#v", reopened.Message)
+	}
+	if repo.deletedConversations[conversationKey(target.ID(), created.Conversation.ID)] {
+		t.Fatalf("expected reopen to clear local delete marker")
+	}
+}
+
 func TestSendMessageBlockedForbidden(t *testing.T) {
 	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
 	viewer := mustUser(t, "alice")
@@ -101,6 +250,129 @@ func TestSendMessageBlockedForbidden(t *testing.T) {
 	})
 	if !apperr.IsCode(err, apperr.CodeForbidden) {
 		t.Fatalf("expected forbidden after block, got %v", err)
+	}
+}
+
+func TestRecallMessageWithinWindowSucceedsAndRepeatConflicts(t *testing.T) {
+	sentAt := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	now := sentAt
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	users.follow(viewer.ID(), target.ID())
+	users.follow(target.ID(), viewer.ID())
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "recall me"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+
+	now = sentAt.Add(MessageRecallWindow)
+	recalled, err := uc.RecallMessage(context.Background(), MessageActionInput{
+		ViewerID:  viewer.ID(),
+		MessageID: created.Message.ID,
+	})
+	if err != nil {
+		t.Fatalf("RecallMessage returned error: %v", err)
+	}
+	if recalled.Message == nil || recalled.Message.Status != "recalled" || recalled.Message.RecalledAt == nil {
+		t.Fatalf("expected recalled message, got %#v", recalled.Message)
+	}
+	eventCount := len(repo.events)
+
+	_, err = uc.RecallMessage(context.Background(), MessageActionInput{
+		ViewerID:  viewer.ID(),
+		MessageID: created.Message.ID,
+	})
+	if !apperr.IsCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict for repeated recall, got %v", err)
+	}
+	if len(repo.events) != eventCount {
+		t.Fatalf("expected repeated recall not to emit event, before=%d after=%d", eventCount, len(repo.events))
+	}
+}
+
+func TestRecallMessageExpiredDoesNotMutateMessage(t *testing.T) {
+	sentAt := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	now := sentAt
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	users.follow(viewer.ID(), target.ID())
+	users.follow(target.ID(), viewer.ID())
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "too late"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+	eventCount := len(repo.events)
+
+	now = sentAt.Add(MessageRecallWindow + time.Nanosecond)
+	_, err = uc.RecallMessage(context.Background(), MessageActionInput{
+		ViewerID:  viewer.ID(),
+		MessageID: created.Message.ID,
+	})
+	if !apperr.IsCode(err, apperr.CodeMessageRecallExpired) {
+		t.Fatalf("expected message_recall_expired, got %v", err)
+	}
+	message := repo.messages[created.Message.ID]
+	if message.Status != "visible" || message.RecalledAt != nil {
+		t.Fatalf("expected expired recall not to mutate message, got %#v", message)
+	}
+	if len(repo.events) != eventCount {
+		t.Fatalf("expected expired recall not to emit event, before=%d after=%d", eventCount, len(repo.events))
+	}
+}
+
+func TestRecallMessageRequiresSenderAndVisibleMessage(t *testing.T) {
+	now := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+	viewer := mustUser(t, "alice")
+	target := mustUser(t, "bob")
+	repo := newFakeRepo()
+	users := newFakeUsers(viewer, target)
+	users.follow(viewer.ID(), target.ID())
+	users.follow(target.ID(), viewer.ID())
+	uc := NewUseCase(repo, users, func() time.Time { return now })
+	created, err := uc.StartConversation(context.Background(), StartConversationInput{
+		ViewerID:       viewer.ID(),
+		TargetUsername: target.Username().String(),
+		Message:        MessageDraft{Type: MessageTypeText, Body: "private"},
+	})
+	if err != nil {
+		t.Fatalf("StartConversation returned error: %v", err)
+	}
+
+	_, err = uc.RecallMessage(context.Background(), MessageActionInput{
+		ViewerID:  target.ID(),
+		MessageID: created.Message.ID,
+	})
+	if !apperr.IsCode(err, apperr.CodeForbidden) {
+		t.Fatalf("expected forbidden for non-sender recall, got %v", err)
+	}
+	if err := uc.DeleteMessage(context.Background(), MessageActionInput{ViewerID: viewer.ID(), MessageID: created.Message.ID}); err != nil {
+		t.Fatalf("DeleteMessage returned error: %v", err)
+	}
+	eventCount := len(repo.events)
+
+	_, err = uc.RecallMessage(context.Background(), MessageActionInput{
+		ViewerID:  viewer.ID(),
+		MessageID: created.Message.ID,
+	})
+	if !apperr.IsCode(err, apperr.CodeConflict) {
+		t.Fatalf("expected conflict for viewer-deleted message recall, got %v", err)
+	}
+	if len(repo.events) != eventCount {
+		t.Fatalf("expected viewer-deleted recall not to emit event, before=%d after=%d", eventCount, len(repo.events))
 	}
 }
 
@@ -280,14 +552,23 @@ func (f *fakeRepo) UnblockUser(ctx context.Context, blockerID userdomain.UserID,
 }
 
 func (f *fakeRepo) FindDirectConversation(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID) (ConversationRecord, error) {
+	return f.findDirectConversation(ctx, userID, peerID, false)
+}
+
+func (f *fakeRepo) FindDirectConversationIncludingDeleted(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID) (ConversationRecord, error) {
+	return f.findDirectConversation(ctx, userID, peerID, true)
+}
+
+func (f *fakeRepo) findDirectConversation(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID, includeDeleted bool) (ConversationRecord, error) {
 	id, ok := f.pairIndex[pairKey(userID, peerID)]
 	if !ok {
 		return ConversationRecord{}, apperr.New(apperr.CodeNotFound, "message conversation not found")
 	}
-	record := f.conversations[id]
-	if record.Peer.ID() != peerID {
-		record.Peer = f.conversations[id].Peer
+	if !includeDeleted && f.deletedConversations[conversationKey(userID, id)] {
+		return ConversationRecord{}, apperr.New(apperr.CodeNotFound, "message conversation not found")
 	}
+	record := f.conversations[id]
+	record.Peer = fakeUserByID(peerID)
 	return record, nil
 }
 
@@ -336,9 +617,31 @@ func (f *fakeRepo) InsertMessage(ctx context.Context, input CreateMessageRecord)
 	return message, nil
 }
 
+func (f *fakeRepo) ReopenRejectedRequestWithMessage(ctx context.Context, input ReopenRejectedRequestRecord) (ConversationRecord, MessageRecord, error) {
+	conversation := f.conversations[input.ConversationID]
+	if conversation.RequestID == nil || conversation.Status != ConversationStatusRejected || conversation.RequestStatus != ConversationStatusRejected || conversation.CreatedBy != input.PeerID {
+		return ConversationRecord{}, MessageRecord{}, messageRequestRejectedError()
+	}
+	conversation.Status = ConversationStatusAccepted
+	conversation.RequestStatus = ConversationStatusAccepted
+	message := f.makeMessage(input.Message, fakeUserByID(input.ViewerID))
+	message.ConversationID = input.ConversationID
+	conversation.LastMessage = &message
+	conversation.UpdatedAt = input.Now
+	f.messages[message.ID] = message
+	f.conversations[input.ConversationID] = conversation
+	delete(f.deletedConversations, conversationKey(input.ViewerID, input.ConversationID))
+	updated, err := f.GetConversation(ctx, input.ConversationID, input.ViewerID)
+	return updated, message, err
+}
+
 func (f *fakeRepo) ListConversations(ctx context.Context, userID userdomain.UserID, box string, limit int, offset int) ([]ConversationRecord, error) {
 	result := make([]ConversationRecord, 0, len(f.conversations))
 	for _, conversation := range f.conversations {
+		if f.deletedConversations[conversationKey(userID, conversation.ID)] {
+			continue
+		}
+		conversation.Peer = f.peerForViewer(conversation, userID)
 		result = append(result, conversation)
 	}
 	return result, nil
@@ -349,6 +652,10 @@ func (f *fakeRepo) GetConversation(ctx context.Context, conversationID string, u
 	if !ok {
 		return ConversationRecord{}, apperr.New(apperr.CodeNotFound, "message conversation not found")
 	}
+	if f.deletedConversations[conversationKey(userID, conversationID)] {
+		return ConversationRecord{}, apperr.New(apperr.CodeNotFound, "message conversation not found")
+	}
+	record.Peer = f.peerForViewer(record, userID)
 	if f.blocked[key(userID, record.Peer.ID())] || f.blocked[key(record.Peer.ID(), userID)] {
 		record.Blocked = true
 	}
@@ -404,7 +711,7 @@ func (f *fakeRepo) AcceptMessageRequest(ctx context.Context, requestID string, u
 			conversation.Status = ConversationStatusAccepted
 			conversation.RequestStatus = "accepted"
 			f.conversations[id] = conversation
-			return conversation, nil
+			return f.GetConversation(ctx, id, userID)
 		}
 	}
 	return ConversationRecord{}, apperr.New(apperr.CodeNotFound, "message request not found")
@@ -416,7 +723,7 @@ func (f *fakeRepo) RejectMessageRequest(ctx context.Context, requestID string, u
 			conversation.Status = ConversationStatusRejected
 			conversation.RequestStatus = "rejected"
 			f.conversations[id] = conversation
-			return conversation, nil
+			return f.GetConversation(ctx, id, userID)
 		}
 	}
 	return ConversationRecord{}, apperr.New(apperr.CodeNotFound, "message request not found")
@@ -486,6 +793,13 @@ func (f *fakeRepo) ListRealtimeEventsAfter(ctx context.Context, userID userdomai
 
 func (f *fakeRepo) makeMessage(input CreateMessageRecord, sender userdomain.User) MessageRecord {
 	return MessageRecord{ID: input.ID, ConversationID: input.ConversationID, Sender: sender, Type: input.Type, Body: input.Body, ImageURL: input.ImageURL, Share: input.Share, Status: "visible", CreatedAt: input.Now, UpdatedAt: input.Now}
+}
+
+func (f *fakeRepo) peerForViewer(record ConversationRecord, viewerID userdomain.UserID) userdomain.User {
+	if record.CreatedBy != viewerID && record.Peer.ID() == viewerID {
+		return fakeUserByID(record.CreatedBy)
+	}
+	return record.Peer
 }
 
 type fakeUsers struct {

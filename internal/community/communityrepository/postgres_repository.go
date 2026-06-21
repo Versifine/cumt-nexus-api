@@ -1524,7 +1524,7 @@ func (repo *PostgresPlatformStaffRepository) FindPlatformAccess(ctx context.Cont
 
 func (repo *PostgresPlatformStaffRepository) IsPlatformOwner(ctx context.Context, userID userdomain.UserID) (bool, error) {
 	const query = `
-		SELECT platform_role = 'owner'
+		SELECT COALESCE(platform_role = 'owner', false)
 		FROM users
 		WHERE id = $1::uuid
 			AND status = 'active'

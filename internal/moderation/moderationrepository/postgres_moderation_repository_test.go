@@ -257,6 +257,7 @@ func TestPostgresModerationRepositoryGetModQueueItemAndSummary(t *testing.T) {
 		t.Fatalf("ApplyModerationAction returned error: %v", err)
 	}
 	cleanupActionByRawID(ctx, t, pool, action.ID)
+	cleanupCommunityModLogs(ctx, t, pool, communityID)
 
 	detail, err := repo.GetModQueueItem(ctx, moderationusecase.GetModQueueItemRecordInput{
 		TargetType: moderationdomain.TargetTypePost,

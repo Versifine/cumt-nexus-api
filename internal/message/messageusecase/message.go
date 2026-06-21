@@ -34,6 +34,7 @@ const (
 	DefaultMessagesLimit = 30
 	MaxMessagesLimit     = 50
 	RequestDailyLimit    = 10
+	MessageRecallWindow  = 2 * time.Minute
 	RealtimeTicketTTL    = 2 * time.Minute
 )
 
@@ -50,9 +51,11 @@ type Repository interface {
 	BlockUser(ctx context.Context, blockerID userdomain.UserID, blockedID userdomain.UserID, now time.Time) error
 	UnblockUser(ctx context.Context, blockerID userdomain.UserID, blockedID userdomain.UserID) error
 	FindDirectConversation(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID) (ConversationRecord, error)
+	FindDirectConversationIncludingDeleted(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID) (ConversationRecord, error)
 	CountRecentRequests(ctx context.Context, fromUserID userdomain.UserID, since time.Time) (int, error)
 	CreateConversationWithMessage(ctx context.Context, input CreateConversationRecord) (ConversationRecord, MessageRecord, error)
 	InsertMessage(ctx context.Context, input CreateMessageRecord) (MessageRecord, error)
+	ReopenRejectedRequestWithMessage(ctx context.Context, input ReopenRejectedRequestRecord) (ConversationRecord, MessageRecord, error)
 	ListConversations(ctx context.Context, userID userdomain.UserID, box string, limit int, offset int) ([]ConversationRecord, error)
 	GetConversation(ctx context.Context, conversationID string, userID userdomain.UserID) (ConversationRecord, error)
 	ListMessages(ctx context.Context, conversationID string, userID userdomain.UserID, beforeMessageID string, limit int) ([]MessageRecord, error)
@@ -224,6 +227,7 @@ type Conversation struct {
 	RequestDirection        string
 	ViewerCanAcceptRequest  bool
 	ViewerCanRejectRequest  bool
+	ViewerCanReopen         bool
 	RequestCreatedByMe      bool
 	RequestToMe             bool
 	ConversationState       string
@@ -338,6 +342,14 @@ type CreateMessageRecord struct {
 	Body           string
 	ImageURL       string
 	Share          *ShareSnapshot
+	Now            time.Time
+}
+
+type ReopenRejectedRequestRecord struct {
+	ConversationID string
+	ViewerID       userdomain.UserID
+	PeerID         userdomain.UserID
+	Message        CreateMessageRecord
 	Now            time.Time
 }
 
@@ -469,15 +481,17 @@ func (uc *UseCase) StartConversation(ctx context.Context, input StartConversatio
 	if target.ID() == input.ViewerID {
 		return ConversationResult{}, apperr.New(apperr.CodeInvalidArgument, "can't message yourself")
 	}
-	capability, err := uc.GetDMCapability(ctx, DMCapabilityInput{ViewerID: input.ViewerID, TargetID: target.ID()})
-	if err != nil {
-		return ConversationResult{}, err
-	}
-	if !capability.CanStart {
-		return ConversationResult{}, apperr.New(apperr.CodeForbidden, firstReason(capability.Reason, "message is not allowed"))
-	}
 	existing, err := uc.repo.FindDirectConversation(ctx, input.ViewerID, target.ID())
 	if err == nil {
+		if existing.Blocked {
+			return ConversationResult{}, apperr.New(apperr.CodeForbidden, "message is blocked")
+		}
+		if existing.Status == ConversationStatusRejected || existing.RequestStatus == ConversationStatusRejected {
+			if canReopenRejectedRequest(existing, input.ViewerID) {
+				return uc.reopenRejectedRequest(ctx, existing, input.ViewerID, input.Message)
+			}
+			return ConversationResult{}, messageRequestRejectedError()
+		}
 		if existing.Status == ConversationStatusPending && existing.CreatedBy == input.ViewerID && !input.Message.isZero() {
 			return ConversationResult{}, apperr.New(apperr.CodeConflict, "message request already pending")
 		}
@@ -485,6 +499,32 @@ func (uc *UseCase) StartConversation(ctx context.Context, input StartConversatio
 	}
 	if !apperr.IsCode(err, apperr.CodeNotFound) {
 		return ConversationResult{}, fmt.Errorf("find direct conversation: %w", err)
+	}
+	deletedExisting, err := uc.repo.FindDirectConversationIncludingDeleted(ctx, input.ViewerID, target.ID())
+	if err == nil {
+		if deletedExisting.Blocked {
+			return ConversationResult{}, apperr.New(apperr.CodeForbidden, "message is blocked")
+		}
+		if deletedExisting.Status == ConversationStatusRejected || deletedExisting.RequestStatus == ConversationStatusRejected {
+			if canReopenRejectedRequest(deletedExisting, input.ViewerID) {
+				return uc.reopenRejectedRequest(ctx, deletedExisting, input.ViewerID, input.Message)
+			}
+			return ConversationResult{}, messageRequestRejectedError()
+		}
+		if deletedExisting.Status == ConversationStatusPending && deletedExisting.CreatedBy == input.ViewerID && !input.Message.isZero() {
+			return ConversationResult{}, apperr.New(apperr.CodeConflict, "message request already pending")
+		}
+		return ConversationResult{}, apperr.New(apperr.CodeConflict, "message conversation already exists")
+	}
+	if !apperr.IsCode(err, apperr.CodeNotFound) {
+		return ConversationResult{}, fmt.Errorf("find deleted direct conversation: %w", err)
+	}
+	capability, err := uc.GetDMCapability(ctx, DMCapabilityInput{ViewerID: input.ViewerID, TargetID: target.ID()})
+	if err != nil {
+		return ConversationResult{}, err
+	}
+	if !capability.CanStart {
+		return ConversationResult{}, apperr.New(apperr.CodeForbidden, firstReason(capability.Reason, "message is not allowed"))
 	}
 	draft, err := normalizeDraft(input.Message)
 	if err != nil {
@@ -547,6 +587,12 @@ func (uc *UseCase) SendMessage(ctx context.Context, input SendMessageInput) (Con
 	if conversation.Status == ConversationStatusPending && conversation.CreatedBy == input.ViewerID {
 		return ConversationResult{}, apperr.New(apperr.CodeForbidden, "message request is pending")
 	}
+	if conversation.Status == ConversationStatusRejected || conversation.RequestStatus == ConversationStatusRejected {
+		if canReopenRejectedRequest(conversation, input.ViewerID) {
+			return uc.reopenRejectedRequest(ctx, conversation, input.ViewerID, input.Message)
+		}
+		return ConversationResult{}, messageRequestRejectedError()
+	}
 	if conversation.Status != ConversationStatusAccepted {
 		return ConversationResult{}, apperr.New(apperr.CodeForbidden, "conversation is not active")
 	}
@@ -574,6 +620,37 @@ func (uc *UseCase) SendMessage(ctx context.Context, input SendMessageInput) (Con
 	uc.emitConversationEvents(ctx, conversation.ID, []userdomain.UserID{input.ViewerID, conversation.Peer.ID()}, "message_created")
 	conversation, _ = uc.repo.GetConversation(ctx, conversation.ID, input.ViewerID)
 	return ConversationResult{Conversation: uc.toConversation(conversation, input.ViewerID), Message: ptrMessage(uc.toMessage(message))}, nil
+}
+
+func (uc *UseCase) reopenRejectedRequest(ctx context.Context, conversation ConversationRecord, viewerID userdomain.UserID, messageDraft MessageDraft) (ConversationResult, error) {
+	draft, err := normalizeDraft(messageDraft)
+	if err != nil {
+		return ConversationResult{}, err
+	}
+	if draft.isZero() {
+		return ConversationResult{}, apperr.New(apperr.CodeInvalidArgument, "message body is required")
+	}
+	now := uc.now().UTC()
+	updated, message, err := uc.repo.ReopenRejectedRequestWithMessage(ctx, ReopenRejectedRequestRecord{
+		ConversationID: conversation.ID,
+		ViewerID:       viewerID,
+		PeerID:         conversation.Peer.ID(),
+		Message: CreateMessageRecord{
+			ID:       uuid.NewString(),
+			SenderID: viewerID,
+			Type:     draft.Type,
+			Body:     draft.Body,
+			ImageURL: draft.ImageURL,
+			Share:    draft.Share,
+			Now:      now,
+		},
+		Now: now,
+	})
+	if err != nil {
+		return ConversationResult{}, err
+	}
+	uc.emitConversationEvents(ctx, updated.ID, []userdomain.UserID{viewerID, conversation.Peer.ID()}, "message_created")
+	return ConversationResult{Conversation: uc.toConversation(updated, viewerID), Message: ptrMessage(uc.toMessage(message))}, nil
 }
 
 func (uc *UseCase) ListMessages(ctx context.Context, input ListMessagesInput) (ListMessagesResult, error) {
@@ -698,11 +775,27 @@ func (uc *UseCase) RecallMessage(ctx context.Context, input MessageActionInput) 
 	if message.Sender.ID() != input.ViewerID {
 		return ConversationResult{}, apperr.New(apperr.CodeForbidden, "only sender can recall message")
 	}
-	message, err = uc.repo.UpdateMessageStatus(ctx, input.MessageID, "recalled", uc.now().UTC())
+	if message.ViewerDeleted {
+		return ConversationResult{}, apperr.New(apperr.CodeConflict, "message cannot be recalled")
+	}
+	if message.Status == "recalled" || message.RecalledAt != nil {
+		return ConversationResult{}, apperr.New(apperr.CodeConflict, "message already recalled")
+	}
+	if message.Status != "visible" {
+		return ConversationResult{}, apperr.New(apperr.CodeConflict, "message cannot be recalled")
+	}
+	now := uc.now().UTC()
+	if now.After(message.CreatedAt.Add(MessageRecallWindow)) {
+		return ConversationResult{}, apperr.New(apperr.CodeMessageRecallExpired, "message recall window expired")
+	}
+	conversation, err := uc.repo.GetConversation(ctx, message.ConversationID, input.ViewerID)
 	if err != nil {
 		return ConversationResult{}, err
 	}
-	conversation, _ := uc.repo.GetConversation(ctx, message.ConversationID, input.ViewerID)
+	message, err = uc.repo.UpdateMessageStatus(ctx, input.MessageID, "recalled", now)
+	if err != nil {
+		return ConversationResult{}, err
+	}
 	uc.emitConversationEvents(ctx, message.ConversationID, []userdomain.UserID{input.ViewerID, conversation.Peer.ID()}, "message_recalled")
 	return ConversationResult{Conversation: uc.toConversation(conversation, input.ViewerID), Message: ptrMessage(uc.toMessage(message))}, nil
 }
@@ -1000,6 +1093,7 @@ func (uc *UseCase) toConversation(record ConversationRecord, viewerID userdomain
 	requestToMe := false
 	viewerCanAcceptRequest := false
 	viewerCanRejectRequest := false
+	viewerCanReopen := canReopenRejectedRequest(record, viewerID)
 	conversationState := "normal"
 	if record.RequestID != nil && record.RequestStatus == ConversationStatusPending {
 		if record.CreatedBy == viewerID {
@@ -1027,6 +1121,7 @@ func (uc *UseCase) toConversation(record ConversationRecord, viewerID userdomain
 		RequestDirection:        requestDirection,
 		ViewerCanAcceptRequest:  viewerCanAcceptRequest,
 		ViewerCanRejectRequest:  viewerCanRejectRequest,
+		ViewerCanReopen:         viewerCanReopen,
 		RequestCreatedByMe:      requestCreatedByMe,
 		RequestToMe:             requestToMe,
 		ConversationState:       conversationState,
@@ -1046,6 +1141,20 @@ func (uc *UseCase) toConversation(record ConversationRecord, viewerID userdomain
 		conversation.LastMessage = toMessageSummary(*record.LastMessage)
 	}
 	return conversation
+}
+
+func canReopenRejectedRequest(record ConversationRecord, viewerID userdomain.UserID) bool {
+	if isBlankUserID(viewerID) || record.Blocked || record.RequestID == nil {
+		return false
+	}
+	if record.Status != ConversationStatusRejected && record.RequestStatus != ConversationStatusRejected {
+		return false
+	}
+	return record.CreatedBy != viewerID && record.Peer.ID() == record.CreatedBy
+}
+
+func messageRequestRejectedError() error {
+	return apperr.New(apperr.CodeMessageRequestRejected, "message request was ignored")
 }
 
 func (uc *UseCase) toMessage(record MessageRecord) Message {

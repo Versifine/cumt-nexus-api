@@ -151,7 +151,7 @@ func TestPostgresCommentRepositoryListCommentEffectsByCommentIDs(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected one comment effect, got %#v", got)
 	}
-	if got[0].EffectID != effectID || got[0].Name != "Sparkle" || got[0].AnimationKey != "sparkle" || got[0].AppliedByUser.DisplayName != "Alice" || got[0].PointsSpent != 10 {
+	if got[0].EffectID != effectID || got[0].Name != "Sparkle" || got[0].Emoji != "✨" || got[0].AnimationKey != "sparkle" || got[0].AppliedByUser.DisplayName != "Alice" || got[0].PointsSpent != 10 {
 		t.Fatalf("unexpected comment effect summary: %#v", got[0])
 	}
 }
@@ -569,11 +569,12 @@ func insertTestEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool) str
 			cost_points,
 			asset_url,
 			animation_key,
+			emoji,
 			is_active,
 			created_at,
 			updated_at
 		)
-		VALUES ($1, 'Sparkle', 'Test sparkle effect.', 10, 'https://example.com/sparkle.png', 'sparkle', false, $2, $2)
+		VALUES ($1, 'Sparkle', 'Test sparkle effect.', 10, 'https://example.com/sparkle.png', 'sparkle', '✨', false, $2, $2)
 	`, effectID, now)
 	if err != nil {
 		t.Fatalf("insert test effect: %v", err)

@@ -12,8 +12,8 @@ The goal is to produce a performance baseline that is honest enough for engineer
 
 ## One-Command Local Run
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\loadtest\run-local-loadtest.ps1
+```bash
+./scripts/loadtest/run-local-loadtest.sh
 ```
 
 Default dataset:
@@ -49,46 +49,46 @@ The seed tool refuses to reset a database whose name does not contain `loadtest`
 
 ## Custom Run
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\loadtest\run-local-loadtest.ps1 `
-  -Users 2000 `
-  -Communities 100 `
-  -Posts 50000 `
-  -Comments 200000 `
-  -VUs 100 `
-  -DurationSeconds 120
+```bash
+./scripts/loadtest/run-local-loadtest.sh \
+  --users 2000 \
+  --communities 100 \
+  --posts 50000 \
+  --comments 200000 \
+  --vus 100 \
+  --duration-seconds 120
 ```
 
 To isolate the core content path after a known slow endpoint is found:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\loadtest\run-local-loadtest.ps1 `
-  -SkipSeed `
-  -Exclude notifications_interactions
+```bash
+./scripts/loadtest/run-local-loadtest.sh \
+  --skip-seed \
+  --exclude notifications_interactions
 ```
 
 To run one endpoint at a fixed request issue rate:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\loadtest\run-local-loadtest.ps1 `
-  -SkipSeed `
-  -Include search_all `
-  -TargetRPS 20 `
-  -VUs 80 `
-  -DurationSeconds 60 `
-  -WarmupSeconds 10
+```bash
+./scripts/loadtest/run-local-loadtest.sh \
+  --skip-seed \
+  --include search_all \
+  --target-rps 20 \
+  --vus 80 \
+  --duration-seconds 60 \
+  --warmup-seconds 10
 ```
 
 To run a fixed-RPS ladder for one endpoint and summarize the knee point:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\loadtest\run-fixed-rps-ladder.ps1 `
-  -SkipSeed `
-  -Endpoint search_all `
-  -RpsSteps 5,10,15,20,25,30 `
-  -StepDurationSeconds 60 `
-  -WarmupSeconds 10 `
-  -VUs 80
+```bash
+./scripts/loadtest/run-fixed-rps-ladder.sh \
+  --skip-seed \
+  --endpoint search_all \
+  --rps-steps 5,10,15,20,25,30 \
+  --step-duration-seconds 60 \
+  --warmup-seconds 10 \
+  --vus 80
 ```
 
 ## Request Mix
@@ -111,7 +111,7 @@ The runner signs local JWTs with the same issuer and secret used by the API proc
 
 If you need to run pieces manually:
 
-```powershell
+```bash
 docker compose up -d postgres
 go run ./cmd/migrate up
 go run ./scripts/loadtest/cmd/seed -reset
@@ -119,7 +119,7 @@ go run ./cmd/api
 go run ./scripts/loadtest/cmd/runner -base-url http://127.0.0.1:18080 -vus 50 -duration 60s -out-json docs/reports/loadtest/manual.json -out-md docs/reports/loadtest/manual.md
 ```
 
-Set the same environment variables as `run-local-loadtest.ps1` before running manual commands.
+Set the same environment variables as `run-local-loadtest.sh` before running manual commands.
 
 ## Interpreting Results
 

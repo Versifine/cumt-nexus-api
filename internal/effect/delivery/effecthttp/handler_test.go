@@ -30,6 +30,7 @@ func TestListEffectsCatalogAllowsAnonymousViewer(t *testing.T) {
 				Description:  "Sparkle burst",
 				CostPoints:   10,
 				AnimationKey: "sparkle",
+				Emoji:        "✨",
 				IsActive:     true,
 				CreatedAt:    now,
 				UpdatedAt:    now,
@@ -53,7 +54,7 @@ func TestListEffectsCatalogAllowsAnonymousViewer(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if len(response.Effects) != 1 || response.Effects[0].ID != "sparkle" {
+	if len(response.Effects) != 1 || response.Effects[0].ID != "sparkle" || response.Effects[0].Emoji != "✨" {
 		t.Fatalf("unexpected catalog response: %#v", response.Effects)
 	}
 }
@@ -254,6 +255,55 @@ func TestApplyCommentEffectRejectsInvalidBody(t *testing.T) {
 	}
 }
 
+func TestApplyPostEffectReturnsResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	userID := userdomain.NewGeneratedUserID()
+	postID := "a1e08733-40a3-4956-adf1-94c3eab39fe4"
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	usecase := &fakeUseCase{
+		applyPostResult: effectusecase.ApplyPostEffectResult{
+			PostEffect: effectusecase.PostEffect{
+				ID:          "e673c232-d76e-46ea-8bc2-1f9aefac5868",
+				PostID:      postID,
+				EffectID:    "useful",
+				UserID:      userID.String(),
+				PointsSpent: 5,
+				CreatedAt:   now,
+			},
+			Points: effectusecase.PointAccount{
+				UserID:         userID.String(),
+				Balance:        95,
+				LifetimeEarned: 100,
+				LifetimeSpent:  5,
+				UpdatedAt:      now,
+			},
+		},
+	}
+	router := newEffectTestRouter(usecase, validParserWithUserID(userID))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+postID+"/effects", bytes.NewBufferString(`{"effect_id":"useful"}`))
+	request.Header.Set("Authorization", "Bearer valid-token")
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, recorder.Code, recorder.Body.String())
+	}
+	if !usecase.applyPostCalled || usecase.applyPostInput.ActorID != userID || usecase.applyPostInput.PostID != postID || usecase.applyPostInput.EffectID != "useful" {
+		t.Fatalf("unexpected apply post input: %#v", usecase.applyPostInput)
+	}
+	var response applyPostEffectResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.PostEffect.EffectID != "useful" || response.Points.Balance != 95 {
+		t.Fatalf("unexpected apply post response: %#v", response)
+	}
+}
+
 type fakeUseCase struct {
 	listCalled bool
 	listResult effectusecase.ListEffectsCatalogResult
@@ -273,6 +323,11 @@ type fakeUseCase struct {
 	applyInput  effectusecase.ApplyCommentEffectInput
 	applyResult effectusecase.ApplyCommentEffectResult
 	applyErr    error
+
+	applyPostCalled bool
+	applyPostInput  effectusecase.ApplyPostEffectInput
+	applyPostResult effectusecase.ApplyPostEffectResult
+	applyPostErr    error
 }
 
 func (f *fakeUseCase) ListEffectsCatalog(ctx context.Context) (effectusecase.ListEffectsCatalogResult, error) {
@@ -300,6 +355,13 @@ func (f *fakeUseCase) ApplyCommentEffect(ctx context.Context, input effectusecas
 	f.applyCalled = true
 	f.applyInput = input
 	return f.applyResult, f.applyErr
+}
+
+func (f *fakeUseCase) ApplyPostEffect(ctx context.Context, input effectusecase.ApplyPostEffectInput) (effectusecase.ApplyPostEffectResult, error) {
+	_ = ctx
+	f.applyPostCalled = true
+	f.applyPostInput = input
+	return f.applyPostResult, f.applyPostErr
 }
 
 type fakeAccessTokenParser struct {

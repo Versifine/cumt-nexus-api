@@ -4,8 +4,8 @@
 
 路由清单、Auth 边界和查询参数清单需要通过以下脚本与源码中的 `RegisterRoutes`、`cmd/api/main.go` 路由分组、handler query 读取保持同步：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contract-doc.ps1
+```bash
+./scripts/verify-api-contract-doc.sh
 ```
 
 ## 全局约定
@@ -86,8 +86,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | DELETE | /api/v1/admin/owner-transfer/:transfer_id | Bearer | 发起人或当前平台 owner 取消站点负责人交接 |
 | GET | /api/v1/admin/communities | Bearer | 平台 staff 社区管理列表 |
 | PATCH | /api/v1/admin/communities/:id | Bearer | 平台 staff 更新社区状态 |
-| GET | /api/v1/admin/effects | Bearer | 平台 staff 评论效果管理列表 |
-| PATCH | /api/v1/admin/effects/:id | Bearer | 平台 staff 启用或停用评论效果 |
+| GET | /api/v1/admin/effects | Bearer | 平台 staff 内容互动效果管理列表 |
+| PATCH | /api/v1/admin/effects/:id | Bearer | 平台 staff 启用或停用内容互动效果 |
 | GET | /api/v1/admin/settings | Bearer | 平台 staff 读取平台运行开关 |
 | PATCH | /api/v1/admin/settings/:key | Bearer | 平台 staff 更新平台运行开关 |
 | GET | /api/v1/admin/audit-logs | Bearer | 平台 staff 查看平台管理审计日志 |
@@ -113,13 +113,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | DELETE | /api/v1/posts/:id | Bearer | 作者软删除帖子 |
 | POST | /api/v1/posts/:id/save | Bearer | 保存帖子 |
 | DELETE | /api/v1/posts/:id/save | Bearer | 取消保存帖子 |
+| POST | /api/v1/posts/:id/effects | Bearer | 给帖子应用积分互动效果 |
 | POST | /api/v1/posts/:id/comments | Bearer | 发布评论 |
 | GET | /api/v1/posts/:id/comments | optional Bearer | 帖子评论列表或 tree view |
 | GET | /api/v1/users/:username/comments | optional Bearer | 用户公开评论列表 |
 | GET | /api/v1/search | optional Bearer | PostgreSQL 基础搜索 |
 | PATCH | /api/v1/comments/:id | Bearer | 作者编辑评论 |
 | DELETE | /api/v1/comments/:id | Bearer | 作者软删除评论 |
-| POST | /api/v1/comments/:id/effects | Bearer | 给评论应用积分效果 |
+| POST | /api/v1/comments/:id/effects | Bearer | 给评论应用积分互动效果 |
 | PUT | /api/v1/comments/:id/vote | Bearer | 设置评论投票 |
 | DELETE | /api/v1/comments/:id/vote | Bearer | 取消评论投票 |
 | PUT | /api/v1/posts/:id/vote | Bearer | 设置帖子投票 |
@@ -237,7 +238,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | POST | /api/v1/uploads/images | Bearer | 图片上传 |
 | POST | /api/v1/link-previews/resolve | Bearer | 解析公开链接预览 |
 | POST | /api/v1/embeds/resolve | Bearer | 解析白名单嵌入内容 |
-| GET | /api/v1/effects/catalog | optional Bearer | 公开评论效果目录 |
+| GET | /api/v1/effects/catalog | optional Bearer | 公开内容互动效果目录 |
 
 ## 查询参数约定
 
@@ -252,7 +253,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 | `GET /api/v1/me/point-transactions` | `limit`, `offset` | 当前用户积分流水，按 `created_at DESC, id DESC` 返回 |
 | `GET /api/v1/me/xp-events` | `limit`, `offset` | 当前用户经验事件流水，按 `created_at DESC, id DESC` 返回 |
 | `GET /api/v1/me/titles` | `limit`, `offset` | 当前用户未撤销、未过期且仍启用的头衔授予 |
-| `GET /api/v1/communities` | `limit`, `offset` | 公开社区索引，默认 20，最大 50，只返回 active public 社区 |
+| `GET /api/v1/communities` | `limit`, `offset` | 公开社区索引，默认 20，最大 50，只返回 active public 社区；匿名和有效 Bearer 均返回 200 |
 | `GET /api/v1/communities/:slug/manage/posts` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=all|visible|removed|deleted|locked|hidden`，默认 `all` |
 | `GET /api/v1/communities/:slug/manage/comments` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=all|visible|removed|deleted|locked|hidden`，默认 `all` |
 | `GET /api/v1/communities/:slug/manage/reports` | `status`, `limit`, `offset` | 社区 owner/moderator 视角；`status=pending|resolved|dismissed`，默认 `pending` |
@@ -320,11 +321,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 全站等级只按用户全站经验 `xp_total` 计算，不做社区等级；等级范围固定 `Lv.1-Lv.30`，后端按固定曲线返回 `level`、`level_name`、`current_level_xp`、`next_level_xp` 和 `level_progress`，前端不自行推导。经验不可消费，积分消费不影响等级。当前自动经验来源包括：每日首次登录 +5（每日最多 5）、发帖发布成功 +20（每日最多 100）、评论发布成功 +5（每日最多 80）、帖子被 upvote +3（每日最多 150）、评论被 upvote +2（每日最多 150）、帖子被收藏 +8（每日最多 120）。经验事件通过 `user_id + source_type + source_id` 去重；同一用户同一天重复登录不会重复获得登录经验；取消点赞、取消收藏、内容删除或审核移除不会撤销已产生的历史经验。
 
+自动积分获得由后端写入 `user_points` 和 `point_transactions`，前端不得自行计算或乐观加分。当前自动积分来源包括：每日首次登录或读取 `GET /api/v1/me/points` 写入 `source_type=daily_activity`、`reason=daily_login`、+5、每日最多 20；发帖发布成功 `post_publish` +5、每日最多 25；评论发布成功 `comment_publish` +1、每日最多 15；帖子被 upvote `post_upvote_received` +1、每日最多 50；评论被 upvote `comment_upvote_received` +1、每日最多 50；帖子被收藏 `post_saved_received` +3、每日最多 45；举报被采纳 `report_accepted` +5、每日最多 20。积分奖励通过 `point_reward_claims(user_id, source_type, source_id)` 去重，同一用户同一天的 daily activity 只会发放一次，同一用户对同一帖子 / 评论的一次 upvote 或保存只会给作者发放一次积分；同一 report 只会给 reporter 发放一次采纳积分。积分奖励写入失败不影响已成功的登录、发帖、评论、投票、收藏、积分账户读取或审核动作；取消点赞、取消收藏、内容删除或审核移除不会回滚已产生的历史积分流水，后续重复同一来源仍由 claim 表阻止再次发放。内容优质奖励 `quality_content` 的账本策略已保留为 +20、每日最多 80，但当前没有正式 HTTP 动作入口；活动奖励属于平台配置型来源，未开放自动合同。
+
 `PATCH /api/v1/me/profile` 需要 Bearer，允许当前用户更新公开资料字段 `display_name`、`avatar_url`、`banner_url`、`headline` 和 `bio`。五个字段都支持显式传空字符串清空；请求至少要包含一个字段；`display_name` 最多 40 字，`headline` 最多 80 字，`bio` 最多 300 字，`avatar_url` 和 `banner_url` 非空时必须是 `http/https` 绝对 URL。成功响应返回当前用户更新后的公开资料和实时公开计数。
 
 用户关注关系使用 `user_follows` 事实表，`POST /api/v1/users/:username/follow` 和 `DELETE /api/v1/users/:username/follow` 均需要 Bearer；关注和取消关注都是幂等操作，不能关注自己，目标用户必须是 active。`GET /api/v1/me/followed-users` 返回当前用户关注的 active 用户列表和 `limit/offset/next_offset/has_more`。公开用户响应中的 `stats` 包含 `follower_count` 和 `following_count`，顶层 `viewer_is_following` 表示当前 Bearer 用户是否关注该公开用户；匿名读取时为 `false`，无效 Bearer 仍返回 `unauthenticated`。
 
-私信系统独立于通知 Bell，所有 `/api/v1/messages/*` 写读接口都需要 Bearer。互关用户通过 `POST /api/v1/messages/conversations` 直接创建 `accepted` 会话并发送首条消息；非互关用户创建 `pending` 陌生人请求，pending 期间发起人不能连续追发，同一用户 24 小时内发起过多请求返回 `rate_limited`。会话响应显式返回当前 viewer 视角的 `request_direction=none|incoming|outgoing`、`viewer_can_accept_request`、`viewer_can_reject_request`、`request_created_by_me`、`request_to_me` 和 `conversation_state=normal|incoming_request|outgoing_request|blocked|disabled`，前端必须用这些字段判断是否展示接受 / 忽略。收件人通过 `/messages/requests/:id/accept|reject` 处理请求；接受后会话可正常发送，拒绝后不可继续发送。`POST/DELETE /api/v1/users/:username/block` 维护双向发送禁用边界：任一方拉黑后历史会话保留但 `can_send=false`。消息类型支持 `text`、`image`、`share_post`、`share_comment`、`share_user` 和 `share_community`；分享消息持久化 `share_type/share_id/title/summary/thumbnail_url/target_url/snapshot_created_at`，上游内容不可见时前端按快照降级展示。会话列表支持 `box=all|friends|requests|archived`，响应不暴露用户可见“已读”，只返回未读数；打开会话后调用 `/read` 更新 read cursor。归档、置顶和免打扰均为 per-viewer participant state，不影响对方；`DELETE /api/v1/messages/conversations/:id` 只隐藏当前 viewer 的会话，不删除对方历史。`DELETE /api/v1/messages/:id` 是当前用户本地隐藏，`POST /api/v1/messages/:id/recall` 仅允许发送者撤回。举报私信写入 `message_reports`，只保存被举报消息、参与者和前后有限上下文；会话举报会以当前 viewer 可见的最新对方消息作为举报锚点，不允许后台任意浏览未举报私信。`GET/PATCH /api/v1/me/privacy/messages` 管理 `allow_messages=everyone|mutuals|none` 和 `online_status_enabled`；在线状态默认关闭且只对 accepted 会话互关侧返回可见标记。实时通道先通过 Bearer 创建短期 ticket，再用 `GET /api/v1/realtime/messages?ticket=...` 建立 WebSocket；服务端发送持久化 `message_realtime_events` 的补发事件，HTTP 列表和详情仍是权威数据源。
+私信系统独立于通知 Bell，所有 `/api/v1/messages/*` 写读接口都需要 Bearer。互关用户通过 `POST /api/v1/messages/conversations` 直接创建 `accepted` 会话并发送首条消息；非互关用户创建 `pending` 陌生人请求，pending 期间发起人不能连续追发，同一用户 24 小时内发起过多请求返回 `rate_limited`。会话响应显式返回当前 viewer 视角的 `request_direction=none|incoming|outgoing`、`viewer_can_accept_request`、`viewer_can_reject_request`、`viewer_can_reopen`、`request_created_by_me`、`request_to_me` 和 `conversation_state=normal|incoming_request|outgoing_request|blocked|disabled`，前端必须用这些字段判断是否展示接受 / 忽略 / 主动重开。收件人通过 `/messages/requests/:id/accept|reject` 处理请求；接受后会话可正常发送，拒绝后原发起人再次 `POST /api/v1/messages/conversations` 或 `POST /api/v1/messages/conversations/:id/messages` 返回 `message_request_rejected`。拒绝不等于拉黑：当当前 viewer 是原请求收件人、目标用户是原请求发起人且双方没有拉黑关系时，`viewer_can_reopen=true`；该 viewer 通过 `POST /api/v1/messages/conversations` 或 `POST /api/v1/messages/conversations/:id/messages` 发送新消息会复用旧 conversation，把请求状态更新为 `accepted`，写入本次消息，并让会话回到 `normal`。`POST/DELETE /api/v1/users/:username/block` 维护双向发送禁用边界：任一方拉黑后历史会话保留但 `can_send=false`。消息类型支持 `text`、`image`、`share_post`、`share_comment`、`share_user` 和 `share_community`；分享消息持久化 `share_type/share_id/title/summary/thumbnail_url/target_url/snapshot_created_at`，上游内容不可见时前端按快照降级展示。会话列表支持 `box=all|friends|requests|archived`，响应不暴露用户可见“已读”，只返回未读数；打开会话后调用 `/read` 更新 read cursor。归档、置顶和免打扰均为 per-viewer participant state，不影响对方；`DELETE /api/v1/messages/conversations/:id` 只隐藏当前 viewer 的会话，不删除对方历史。`DELETE /api/v1/messages/:id` 是当前用户本地隐藏；`POST /api/v1/messages/:id/recall` 仅允许发送者在消息 `created_at` 后 2 分钟内撤回仍为 `visible` 且未被当前用户本地删除的消息，超过窗口返回 `message_recall_expired`，已撤回或不可撤回状态返回 `conflict` 且不会重复生成 realtime 撤回事件。举报私信写入 `message_reports`，只保存被举报消息、参与者和前后有限上下文；会话举报会以当前 viewer 可见的最新对方消息作为举报锚点，不允许后台任意浏览未举报私信。`GET/PATCH /api/v1/me/privacy/messages` 管理 `allow_messages=everyone|mutuals|none` 和 `online_status_enabled`；在线状态默认关闭且只对 accepted 会话互关侧返回可见标记。实时通道先通过 Bearer 创建短期 ticket，再用 `GET /api/v1/realtime/messages?ticket=...` 建立 WebSocket；服务端发送持久化 `message_realtime_events` 的补发事件，HTTP 列表和详情仍是权威数据源。
 
 账号安全接口支持校园邮箱验证码注册、邮箱验证码登录、找回密码、修改邮箱、修改密码和退出所有会话。邮箱会 trim 后小写存储和比较，只允许 `AUTH_EMAIL_ALLOWED_DOMAINS` 配置的域名；验证码只通过邮件或本地日志发送，不会出现在 HTTP 响应里。同一邮箱同一用途受重发间隔、24 小时发送次数和验证码错误次数限制，同一 IP 受小时级验证码发送次数限制；密码登录失败会写入 `auth_security_events`，并按账号标识和 IP 做 15 分钟滚动窗口限流，命中后返回 `login_rate_limited`。`POST /api/v1/auth/login` 兼容旧 `{ "username": "...", "password": "..." }`，也支持新 `{ "identifier": "...", "password": "..." }`，其中 `identifier` 可为用户名或邮箱；用户不存在和密码错误统一返回 `unauthenticated`，密码正确但账号已禁用/注销/封禁分别返回 `account_disabled`、`account_deleted`、`account_banned`。`POST /api/v1/auth/login`、`POST /api/v1/auth/register-with-email` 和 `POST /api/v1/auth/login-with-email-code` 成功响应里的 `user` 均返回 `is_platform_staff` 和 `platform_role`；`GET /api/v1/me.platform_role` 与 admin 用户列表同一账号保持一致。`POST /api/v1/auth/logout-all` 和密码变更会写入 `tokens_revoked_after`，旧 access token 后续访问会返回 `unauthenticated`。
 
@@ -332,7 +335,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 
 `GET /api/v1/search` 支持匿名读取公开可见结果，也支持可选 Bearer 的认证边界。`scope=users` 只返回 active 用户的公开资料摘要，不搜索也不返回 email、密码、权限或账号安全字段；`scope=all` 同时返回 `communities`、`posts` 和 `users` 三个数组，每个数组独立应用 `limit/offset`。搜索会优先按精确命中、前缀命中、子串命中和字段权重排序，并用 PostgreSQL full-text search 补充英文分词相关度；中文连续文本、slug、username 和短词会通过字面量子串匹配兜底。首版不返回 `highlights` 或 `match_reason`，前端可基于响应字段自行高亮。公开用户响应包含 `progression` 对象，字段为 `level`、`level_name`、`xp_total`、`current_level_xp`、`next_level_xp`、`level_progress`、`active_title` 和 `titles_count`；`active_title` 为用户选择且仍有效的头衔授予摘要。公开用户响应还包含 `stats.follower_count`、`stats.following_count` 和 `viewer_is_following`。
 
-评论响应包含 `effects` 数组，列表、树和用户评论列表都会返回历史评论效果摘要。摘要字段包括 `id`、`effect_id`、`name`、`asset_url`、`animation_key`、`applied_by_user`、`points_spent` 和 `created_at`；效果被管理员停用后，历史记录仍会展示，但 `GET /api/v1/effects/catalog` 不再返回该效果用于新购买。`GET /api/v1/me/point-transactions` 返回当前用户积分流水，`GET /api/v1/admin/point-transactions` 返回平台 staff 视角积分流水；字段均为 `id`、`user_id`、`delta`、`balance_after`、`reason`、`source_type`、`source_id` 和 `created_at`，同样带 `limit/offset/next_offset/has_more`。
+帖子和评论响应均包含 `effects` 数组。帖子列表、帖子详情、用户公开帖子列表、当前用户保存帖子列表、评论列表、评论树和用户评论列表都会返回历史内容互动摘要。摘要字段包括 `id`、`effect_id`、`name`、`emoji`、`asset_url`、`animation_key`、`applied_by_user`、`points_spent` 和 `created_at`；效果被管理员停用后，历史记录仍会展示，但 `GET /api/v1/effects/catalog` 不再返回该效果用于新购买。当前公开目录是中文内容互动：`useful` 有用 👍 5 分、`cant_hold` 难绷 😂 5 分、`classic` 经典 🏆 8 分、`following_up` 蹲后续 👀 5 分、`verified_true` 鉴定为真 ✅ 8 分、`abstract` 抽象 🌀 5 分、`godlike` 神 👑 12 分、`clown` 小丑 🤡 5 分、`fake_news` FakeNews 📰 8 分。`POST /api/v1/posts/:id/effects` 和 `POST /api/v1/comments/:id/effects` 请求体均为 `effect_id`，以后端事务成功为准扣减当前用户积分；帖子互动消费流水写入 `reason=post_effect`、`source_type=post_effect`、`source_id=<post_effect_id>`，评论互动继续写入 `comment_effect`。余额不足稳定返回业务错误，前端不得本地扣积分。`GET /api/v1/me/point-transactions` 返回当前用户积分流水，`GET /api/v1/admin/point-transactions` 返回平台 staff 视角积分流水；字段均为 `id`、`user_id`、`delta`、`balance_after`、`reason`、`source_type`、`source_id` 和 `created_at`，同样带 `limit/offset/next_offset/has_more`。
 
 `POST /api/v1/embeds/resolve` 需要 Bearer，接受单个公开 URL 或包含 URL 的分享文本。嵌入解析只支持白名单 provider：Bilibili 视频、抖音视频、网易云音乐单曲 / 歌单 / 专辑、QQ 音乐单曲；`b23.tv` 和 `v.douyin.com` 会在白名单重定向边界内展开，禁止内网、localhost、用户信息 URL 和非 `http/https` scheme。抖音支持 canonical `/video/:id`、`/user/...?...modal_id=:id`、`open.douyin.com/player/video?vid=:id` 以及常见 `aweme_id/video_id/item_id` 参数。成功响应会 upsert `embeds` 记录并返回 `embed.id`、`provider_ref`、`canonical_url`、受控 `embed_url`、`iframe_allowed`、标题、描述、封面、作者和 `status=ready|unavailable`；第三方元数据抓取失败不阻断解析成功。
 
@@ -385,6 +388,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-contrac
 - 所有携带格式错误、过期或签名错误 Bearer token 的请求：`unauthenticated`。
 - 无效 UUID、非法分页参数、非法枚举值或请求体格式错误：`invalid_argument`。
 - 非作者编辑/删除内容、非平台 staff 审核操作：`forbidden`。
+- 被忽略的陌生人私信请求由原发起人继续发送或重新发起：`message_request_rejected`。
+- 私信消息超过发送后 2 分钟撤回窗口：`message_recall_expired`。
 - 不存在或不可见的资源：`not_found`。
 - slug、用户名、待审批申请等唯一约束冲突：`conflict`。
 

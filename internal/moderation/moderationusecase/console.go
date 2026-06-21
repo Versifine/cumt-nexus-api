@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/effectusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/moderation/moderationdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
@@ -21,6 +22,7 @@ type ConsoleUseCase struct {
 	reviews          ContentReportReviewRepository
 	reportedRemovals ReportedTargetRemovalRepository
 	staff            PlatformStaffRepository
+	points           PointRecorder
 	now              func() time.Time
 }
 
@@ -41,6 +43,14 @@ func NewConsoleUseCase(
 		staff:            staff,
 		now:              now,
 	}
+}
+
+type PointRecorder interface {
+	GrantPoints(ctx context.Context, input effectusecase.GrantPointsInput) error
+}
+
+func (uc *ConsoleUseCase) SetPointRecorder(points PointRecorder) {
+	uc.points = points
 }
 
 type ListReportsInput struct {
@@ -200,9 +210,22 @@ func (uc *ConsoleUseCase) RemoveReportedTarget(ctx context.Context, input Remove
 	if err := uc.reportedRemovals.RemoveReportedTargetWithAction(ctx, reportID, *action); err != nil {
 		return RemoveReportedTargetResult{}, fmt.Errorf("remove reported target with moderation action: %w", err)
 	}
+	_ = uc.grantReportAcceptedPoints(ctx, report.ReporterID(), input.ActorID, report.ID().String())
 	return RemoveReportedTargetResult{
 		Action: toModerationActionDTO(*action),
 	}, nil
+}
+
+func (uc *ConsoleUseCase) grantReportAcceptedPoints(ctx context.Context, reporterID userdomain.UserID, actorID userdomain.UserID, reportID string) error {
+	if uc.points == nil || strings.TrimSpace(reporterID.String()) == "" {
+		return nil
+	}
+	return uc.points.GrantPoints(ctx, effectusecase.GrantPointsInput{
+		UserID:     reporterID,
+		ActorID:    actorID,
+		SourceType: effectusecase.PointSourceReportAccepted,
+		SourceID:   reportID,
+	})
 }
 
 func (uc *ConsoleUseCase) ensureActorCanUseConsole(ctx context.Context, actorID userdomain.UserID) error {

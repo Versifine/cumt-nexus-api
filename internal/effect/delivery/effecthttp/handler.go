@@ -22,6 +22,7 @@ type UseCase interface {
 	GetMyPoints(ctx context.Context, input effectusecase.GetMyPointsInput) (effectusecase.GetMyPointsResult, error)
 	ListMyPointTransactions(ctx context.Context, input effectusecase.ListMyPointTransactionsInput) (effectusecase.ListMyPointTransactionsResult, error)
 	ApplyCommentEffect(ctx context.Context, input effectusecase.ApplyCommentEffectInput) (effectusecase.ApplyCommentEffectResult, error)
+	ApplyPostEffect(ctx context.Context, input effectusecase.ApplyPostEffectInput) (effectusecase.ApplyPostEffectResult, error)
 }
 
 type effectResponse struct {
@@ -31,6 +32,7 @@ type effectResponse struct {
 	CostPoints   int       `json:"cost_points"`
 	AssetURL     string    `json:"asset_url"`
 	AnimationKey string    `json:"animation_key"`
+	Emoji        string    `json:"emoji"`
 	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -75,6 +77,10 @@ type applyCommentEffectRequest struct {
 	EffectID string `json:"effect_id" binding:"required"`
 }
 
+type applyPostEffectRequest struct {
+	EffectID string `json:"effect_id" binding:"required"`
+}
+
 type commentEffectResponse struct {
 	ID          string    `json:"id"`
 	CommentID   string    `json:"comment_id"`
@@ -84,9 +90,23 @@ type commentEffectResponse struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+type postEffectResponse struct {
+	ID          string    `json:"id"`
+	PostID      string    `json:"post_id"`
+	EffectID    string    `json:"effect_id"`
+	UserID      string    `json:"user_id"`
+	PointsSpent int       `json:"points_spent"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type applyCommentEffectResponse struct {
 	CommentEffect commentEffectResponse `json:"comment_effect"`
 	Points        pointAccountResponse  `json:"points"`
+}
+
+type applyPostEffectResponse struct {
+	PostEffect postEffectResponse   `json:"post_effect"`
+	Points     pointAccountResponse `json:"points"`
 }
 
 func NewHandler(effects UseCase) *Handler {
@@ -102,6 +122,7 @@ func RegisterPublicRoutes(group *gin.RouterGroup, handler *Handler) {
 func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.GET("/me/points", handler.GetMyPoints)
 	group.GET("/me/point-transactions", handler.ListMyPointTransactions)
+	group.POST("/posts/:id/effects", handler.ApplyPostEffect)
 	group.POST("/comments/:id/effects", handler.ApplyCommentEffect)
 }
 
@@ -221,6 +242,38 @@ func (h *Handler) ApplyCommentEffect(c *gin.Context) {
 	})
 }
 
+func (h *Handler) ApplyPostEffect(c *gin.Context) {
+	userID, ok := authcontext.CurrentUserID(c.Request.Context())
+	if !ok {
+		_ = c.Error(apperr.New(apperr.CodeUnauthenticated, "authentication required"))
+		c.Abort()
+		return
+	}
+
+	var req applyPostEffectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperr.New(apperr.CodeInvalidArgument, "invalid post effect request"))
+		c.Abort()
+		return
+	}
+
+	result, err := h.effects.ApplyPostEffect(c.Request.Context(), effectusecase.ApplyPostEffectInput{
+		ActorID:  userID,
+		PostID:   c.Param("id"),
+		EffectID: req.EffectID,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		c.Abort()
+		return
+	}
+
+	c.JSON(http.StatusCreated, applyPostEffectResponse{
+		PostEffect: toPostEffectResponse(result.PostEffect),
+		Points:     toPointAccountResponse(result.Points),
+	})
+}
+
 func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
 	raw := strings.TrimSpace(c.Query(key))
 	if raw == "" {
@@ -241,6 +294,7 @@ func toEffectResponse(effect effectusecase.Effect) effectResponse {
 		CostPoints:   effect.CostPoints,
 		AssetURL:     effect.AssetURL,
 		AnimationKey: effect.AnimationKey,
+		Emoji:        effect.Emoji,
 		IsActive:     effect.IsActive,
 		CreatedAt:    effect.CreatedAt,
 		UpdatedAt:    effect.UpdatedAt,
@@ -278,5 +332,16 @@ func toCommentEffectResponse(commentEffect effectusecase.CommentEffect) commentE
 		UserID:      commentEffect.UserID,
 		PointsSpent: commentEffect.PointsSpent,
 		CreatedAt:   commentEffect.CreatedAt,
+	}
+}
+
+func toPostEffectResponse(postEffect effectusecase.PostEffect) postEffectResponse {
+	return postEffectResponse{
+		ID:          postEffect.ID,
+		PostID:      postEffect.PostID,
+		EffectID:    postEffect.EffectID,
+		UserID:      postEffect.UserID,
+		PointsSpent: postEffect.PointsSpent,
+		CreatedAt:   postEffect.CreatedAt,
 	}
 }

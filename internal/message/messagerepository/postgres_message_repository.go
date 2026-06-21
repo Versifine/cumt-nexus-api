@@ -92,12 +92,22 @@ func (repo *PostgresMessageRepository) UnblockUser(ctx context.Context, blockerI
 }
 
 func (repo *PostgresMessageRepository) FindDirectConversation(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID) (messageusecase.ConversationRecord, error) {
-	const query = conversationSelect + `
+	return repo.findDirectConversation(ctx, userID, peerID, false)
+}
+
+func (repo *PostgresMessageRepository) FindDirectConversationIncludingDeleted(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID) (messageusecase.ConversationRecord, error) {
+	return repo.findDirectConversation(ctx, userID, peerID, true)
+}
+
+func (repo *PostgresMessageRepository) findDirectConversation(ctx context.Context, userID userdomain.UserID, peerID userdomain.UserID, includeDeleted bool) (messageusecase.ConversationRecord, error) {
+	query := conversationSelect + `
 		WHERE p.user_id = $1::uuid
 			AND p.peer_user_id = $2::uuid
-			AND p.deleted_at IS NULL
-		LIMIT 1
 	`
+	if !includeDeleted {
+		query += ` AND p.deleted_at IS NULL`
+	}
+	query += ` LIMIT 1`
 	return scanConversation(repo.pool.QueryRow(ctx, query, userID.String(), peerID.String()))
 }
 
@@ -179,6 +189,72 @@ func (repo *PostgresMessageRepository) InsertMessage(ctx context.Context, input 
 		return messageusecase.MessageRecord{}, fmt.Errorf("commit insert message tx: %w", err)
 	}
 	return message, nil
+}
+
+func (repo *PostgresMessageRepository) ReopenRejectedRequestWithMessage(ctx context.Context, input messageusecase.ReopenRejectedRequestRecord) (messageusecase.ConversationRecord, messageusecase.MessageRecord, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, fmt.Errorf("begin reopen message request tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var requestID string
+	err = tx.QueryRow(ctx, `
+		UPDATE message_requests AS req
+		SET status = 'accepted',
+			updated_at = $4,
+			responded_at = $4
+		FROM message_conversations AS c
+		WHERE req.conversation_id = $1::uuid
+			AND req.conversation_id = c.id
+			AND req.to_user_id = $2::uuid
+			AND req.from_user_id = $3::uuid
+			AND req.status = 'rejected'
+			AND c.status = 'rejected'
+		RETURNING req.id::text
+	`, input.ConversationID, input.ViewerID.String(), input.PeerID.String(), input.Now).Scan(&requestID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, apperr.New(apperr.CodeMessageRequestRejected, "message request was ignored")
+		}
+		return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, fmt.Errorf("reopen rejected message request: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE message_conversations
+		SET status = 'accepted',
+			updated_at = $2
+		WHERE id = $1::uuid
+	`, input.ConversationID, input.Now); err != nil {
+		return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, fmt.Errorf("activate reopened message conversation: %w", err)
+	}
+
+	input.Message.ConversationID = input.ConversationID
+	message, err := insertMessage(ctx, tx, input.Message)
+	if err != nil {
+		return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE message_conversation_participants
+		SET deleted_at = CASE WHEN user_id = $2::uuid THEN NULL ELSE deleted_at END,
+			archived_at = CASE WHEN user_id = $2::uuid THEN NULL ELSE archived_at END,
+			pinned = CASE WHEN user_id = $2::uuid THEN false ELSE pinned END,
+			muted = CASE WHEN user_id = $2::uuid THEN false ELSE muted END,
+			updated_at = $3
+		WHERE conversation_id = $1::uuid
+	`, input.ConversationID, input.ViewerID.String(), input.Now); err != nil {
+		return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, fmt.Errorf("touch reopened message participants: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, fmt.Errorf("commit reopen message request tx: %w", err)
+	}
+	conversation, err := repo.GetConversation(ctx, input.ConversationID, input.ViewerID)
+	if err != nil {
+		return messageusecase.ConversationRecord{}, messageusecase.MessageRecord{}, err
+	}
+	return conversation, message, nil
 }
 
 func (repo *PostgresMessageRepository) ListConversations(ctx context.Context, userID userdomain.UserID, box string, limit int, offset int) ([]messageusecase.ConversationRecord, error) {

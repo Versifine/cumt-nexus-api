@@ -44,7 +44,6 @@ docker engine
 docker compose plugin
 curl
 jq
-pwsh
 postgresql-client
 ```
 
@@ -76,10 +75,10 @@ go run ./cmd/api
 curl http://localhost:8080/healthz
 go test ./...
 go build -buildvcs=false ./...
-pwsh -NoProfile -File ./scripts/verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+./scripts/verify-current-baseline.sh --skip-http-smoke --r2-mode Skip
 ```
 
-`verify-current-baseline.ps1` 依赖 PostgreSQL 已启动。第一次迁移先使用 `-SkipHttpSmoke -R2Mode Skip`，确认代码、migration、合同文档和构建链路可跑通。
+`verify-current-baseline.sh` 依赖 PostgreSQL 已启动。第一次迁移先使用 `--skip-http-smoke --r2-mode Skip`，确认代码、migration、合同文档和构建链路可跑通。
 
 ## 生产形态模拟
 
@@ -141,26 +140,23 @@ docker compose --env-file .env.production -f docker-compose.prod.yml run --rm mi
 - 当前运行的容器镜像是否来自最新源码。
 - 当前数据库 migration 是否已经到目标版本。
 
-## Windows-first 脚本现状
+## 脚本现状
 
-当前仓库仍有一批 PowerShell 脚本。Linux 上需要安装 PowerShell 7 的 `pwsh` 才能直接复用：
+当前仓库脚本入口统一为 Bash/Python，不再依赖 PowerShell：
 
 ```bash
-pwsh -NoProfile -File ./scripts/verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+./scripts/verify-current-baseline.sh --skip-http-smoke --r2-mode Skip
+./scripts/smoke-stage-13-content-system.sh --skip-migration
+./scripts/smoke-stage-14-content-lifecycle.sh --skip-migration
+./scripts/smoke-stage-15-r2-upload.sh --skip-migration --skip-when-missing-credentials
 ```
 
-已知还带 Windows 假设的地方：
+压测入口也使用 Bash：
 
-- smoke 脚本里有 `curl.exe`。
-- 部分脚本输出二进制名使用 `.exe`。
-- 压测脚本用 `netstat -ano` 和 Windows 进程名判断端口占用。
-- `run-fixed-rps-ladder.ps1` 内部直接调用 `powershell`，Linux 下应改为优先 `pwsh`。
-
-因此迁移后的优先级是：
-
-1. 先保证 `go test ./...`、`go build -buildvcs=false ./...` 和快速 baseline 可跑。
-2. 再把 HTTP smoke 脚本改成跨平台。
-3. 最后再整理 loadtest 脚本，避免把迁移问题和压测问题混在一起。
+```bash
+./scripts/loadtest/run-local-loadtest.sh
+./scripts/loadtest/run-fixed-rps-ladder.sh --endpoint search_all --skip-seed
+```
 
 ## 旧数据迁移
 

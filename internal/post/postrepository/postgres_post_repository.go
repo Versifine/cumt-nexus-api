@@ -22,6 +22,7 @@ var _ postusecase.PostRepository = (*PostgresPostRepository)(nil)
 var _ postusecase.PostMetadataRepository = (*PostgresPostRepository)(nil)
 var _ postusecase.PostSaveRepository = (*PostgresPostRepository)(nil)
 var _ postusecase.ContentRefRepository = (*PostgresPostRepository)(nil)
+var _ postusecase.PostEffectRepository = (*PostgresPostRepository)(nil)
 
 type PostgresPostRepository struct {
 	pool *pgxpool.Pool
@@ -1028,6 +1029,88 @@ func (repo *PostgresPostRepository) ListPostContentRefsByPostIDs(ctx context.Con
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate post content refs: %w", err)
+	}
+
+	return result, nil
+}
+
+func (repo *PostgresPostRepository) ListPostEffectsByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]postusecase.PostEffectSummary, error) {
+	result := make(map[postdomain.PostID][]postusecase.PostEffectSummary, len(postIDs))
+	if len(postIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT
+			post_effects.post_id::text,
+			post_effects.id::text,
+			post_effects.effect_id,
+			effects.name,
+			effects.emoji,
+			effects.asset_url,
+			effects.animation_key,
+			users.id::text,
+			users.username,
+			users.display_name,
+			users.avatar_url,
+			users.headline,
+			post_effects.points_spent,
+			post_effects.created_at
+		FROM post_effects
+		INNER JOIN effects ON effects.id = post_effects.effect_id
+		INNER JOIN users ON users.id = post_effects.user_id
+		WHERE post_effects.post_id = ANY($1::uuid[])
+		ORDER BY post_effects.post_id ASC, post_effects.created_at DESC, post_effects.id DESC
+	`
+
+	rows, err := repo.pool.Query(ctx, query, postIDStrings(postIDs))
+	if err != nil {
+		return nil, fmt.Errorf("list post effects: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawPostID string
+		var effect postusecase.PostEffectSummary
+		var rawAppliedByUserID string
+		var rawUsername string
+		var rawDisplayName string
+		var rawAvatarURL string
+		var rawHeadline string
+		if err := rows.Scan(
+			&rawPostID,
+			&effect.ID,
+			&effect.EffectID,
+			&effect.Name,
+			&effect.Emoji,
+			&effect.AssetURL,
+			&effect.AnimationKey,
+			&rawAppliedByUserID,
+			&rawUsername,
+			&rawDisplayName,
+			&rawAvatarURL,
+			&rawHeadline,
+			&effect.PointsSpent,
+			&effect.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		postID, err := postdomain.NewPostID(rawPostID)
+		if err != nil {
+			return nil, fmt.Errorf("rehydrate post effect post id: %v", err)
+		}
+		effect.AppliedByUser = postusecase.UserSummary{
+			ID:          rawAppliedByUserID,
+			Username:    rawUsername,
+			DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
+			AvatarURL:   rawAvatarURL,
+			Headline:    rawHeadline,
+			Badges:      []string{},
+		}
+		result[postID] = append(result[postID], effect)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate post effects: %w", err)
 	}
 
 	return result, nil

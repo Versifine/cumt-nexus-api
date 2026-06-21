@@ -73,6 +73,7 @@ type conversationResponse struct {
 	RequestDirection        string                  `json:"request_direction"`
 	ViewerCanAcceptRequest  bool                    `json:"viewer_can_accept_request"`
 	ViewerCanRejectRequest  bool                    `json:"viewer_can_reject_request"`
+	ViewerCanReopen         bool                    `json:"viewer_can_reopen"`
 	RequestCreatedByMe      bool                    `json:"request_created_by_me"`
 	RequestToMe             bool                    `json:"request_to_me"`
 	ConversationState       string                  `json:"conversation_state"`
@@ -696,6 +697,7 @@ func toConversationResponse(conversation messageusecase.Conversation) conversati
 		RequestDirection:        conversation.RequestDirection,
 		ViewerCanAcceptRequest:  conversation.ViewerCanAcceptRequest,
 		ViewerCanRejectRequest:  conversation.ViewerCanRejectRequest,
+		ViewerCanReopen:         conversation.ViewerCanReopen,
 		RequestCreatedByMe:      conversation.RequestCreatedByMe,
 		RequestToMe:             conversation.RequestToMe,
 		ConversationState:       conversation.ConversationState,

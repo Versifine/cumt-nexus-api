@@ -81,8 +81,8 @@ jobs:
         run: go mod download
 
       - name: Verify current baseline
-        shell: pwsh
-        run: ./scripts/verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+        shell: bash
+        run: ./scripts/verify-current-baseline.sh --skip-http-smoke --r2-mode Skip
 
       - name: Build Docker image
         run: docker build -t cumt-nexus-api:ci .

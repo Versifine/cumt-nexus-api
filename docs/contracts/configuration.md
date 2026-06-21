@@ -13,19 +13,19 @@
 
 配置项清单需要通过以下脚本与 `internal/platform/config/load.go` 和 `.env.example` 保持同步：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-config-contract-doc.ps1
+```bash
+./scripts/verify-config-contract-doc.sh
 ```
 
 配置项必需性、默认值和枚举说明需要通过以下脚本与 `internal/platform/config/load.go` 和 `internal/platform/config/validate.go` 保持同步：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-config-semantics-doc.ps1
+```bash
+./scripts/verify-config-semantics-doc.sh
 ```
 
 配置加载运行时契约由以下测试覆盖：
 
-```powershell
+```bash
 go test ./internal/platform/config -run TestLoad -v
 ```
 
@@ -145,8 +145,8 @@ go run ./cmd/api
 
 ## 当前校验边界
 
-- `scripts/verify-config-contract-doc.ps1` 只校验环境变量名是否在配置加载代码、`.env.example` 和本文档之间保持一致。
-- `scripts/verify-config-semantics-doc.ps1` 校验本文档中的必需性、默认值和枚举说明是否与 `load.go` / `validate.go` 同步。
+- `scripts/verify-config-contract-doc.sh` 只校验环境变量名是否在配置加载代码、`.env.example` 和本文档之间保持一致。
+- `scripts/verify-config-semantics-doc.sh` 校验本文档中的必需性、默认值和枚举说明是否与 `load.go` / `validate.go` 同步。
 - `go test ./internal/platform/config -run TestLoad -v` 覆盖 `Load()` 的 local 默认值、R2 配置加载、R2 缺凭据失败和基础解析失败路径。
 - 具体数值范围、跨字段约束和错误消息文本仍由 `internal/platform/config` 的测试维护。
 - R2 真实凭据不写入 `.env.example`，只保留变量名和空占位。

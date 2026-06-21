@@ -479,6 +479,13 @@ func TestPostgresPlatformStaffRepository(t *testing.T) {
 	if isStaff {
 		t.Fatal("expected normal user not to be platform staff")
 	}
+	isOwner, err := repo.IsPlatformOwner(ctx, normalID)
+	if err != nil {
+		t.Fatalf("IsPlatformOwner normal user returned error: %v", err)
+	}
+	if isOwner {
+		t.Fatal("expected normal user not to be platform owner")
+	}
 
 	access, err := repo.FindPlatformAccess(ctx, staffID)
 	if err != nil {

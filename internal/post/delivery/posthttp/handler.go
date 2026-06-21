@@ -73,6 +73,7 @@ type postResponse struct {
 	CreatedAt         time.Time                 `json:"created_at"`
 	UpdatedAt         time.Time                 `json:"updated_at"`
 	Attachments       []attachmentResponse      `json:"attachments"`
+	Effects           []postEffectResponse      `json:"effects"`
 }
 
 type contentRefResponse struct {
@@ -150,6 +151,18 @@ type attachmentResponse struct {
 	AltText      string    `json:"alt_text"`
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type postEffectResponse struct {
+	ID            string              `json:"id"`
+	EffectID      string              `json:"effect_id"`
+	Name          string              `json:"name"`
+	Emoji         string              `json:"emoji"`
+	AssetURL      string              `json:"asset_url"`
+	AnimationKey  string              `json:"animation_key"`
+	AppliedByUser userSummaryResponse `json:"applied_by_user"`
+	PointsSpent   int                 `json:"points_spent"`
+	CreatedAt     time.Time           `json:"created_at"`
 }
 
 type publishPostResponse struct {
@@ -560,6 +573,7 @@ func toPostResponse(post postusecase.Post) postResponse {
 		CreatedAt:         post.CreatedAt,
 		UpdatedAt:         post.UpdatedAt,
 		Attachments:       toAttachmentResponses(post.Attachments),
+		Effects:           toPostEffectResponses(post.Effects),
 	}
 }
 
@@ -676,6 +690,24 @@ func toAttachmentResponses(attachments []postusecase.Attachment) []attachmentRes
 			AltText:      attachment.AltText,
 			Status:       attachment.Status,
 			CreatedAt:    attachment.CreatedAt,
+		})
+	}
+	return response
+}
+
+func toPostEffectResponses(effects []postusecase.PostEffectSummary) []postEffectResponse {
+	response := make([]postEffectResponse, 0, len(effects))
+	for _, effect := range effects {
+		response = append(response, postEffectResponse{
+			ID:            effect.ID,
+			EffectID:      effect.EffectID,
+			Name:          effect.Name,
+			Emoji:         effect.Emoji,
+			AssetURL:      effect.AssetURL,
+			AnimationKey:  effect.AnimationKey,
+			AppliedByUser: toUserSummaryResponse(effect.AppliedByUser),
+			PointsSpent:   effect.PointsSpent,
+			CreatedAt:     effect.CreatedAt,
 		})
 	}
 	return response

@@ -151,38 +151,38 @@ Raw report: `docs/reports/loadtest/loadtest-20260619-155154.md`
 
 首次完整压测：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\loadtest\run-local-loadtest.ps1 `
-  -Users 1000 `
-  -Communities 50 `
-  -Posts 20000 `
-  -Comments 80000 `
-  -PostVotes 120000 `
-  -PostSaves 30000 `
-  -Notifications 12000 `
-  -Reports 3000 `
-  -VUs 50 `
-  -DurationSeconds 60 `
-  -WarmupSeconds 5
+```bash
+./scripts/loadtest/run-local-loadtest.sh \
+  --users 1000 \
+  --communities 50 \
+  --posts 20000 \
+  --comments 80000 \
+  --post-votes 120000 \
+  --post-saves 30000 \
+  --notifications 12000 \
+  --reports 3000 \
+  --vus 50 \
+  --duration-seconds 60 \
+  --warmup-seconds 5
 ```
 
 内容核心场景：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\loadtest\run-local-loadtest.ps1 `
-  -SkipSeed `
-  -Users 1000 `
-  -Communities 50 `
-  -Posts 20000 `
-  -Comments 80000 `
-  -PostVotes 120000 `
-  -PostSaves 30000 `
-  -Notifications 12000 `
-  -Reports 3000 `
-  -VUs 50 `
-  -DurationSeconds 60 `
-  -WarmupSeconds 5 `
-  -Exclude notifications_interactions,search_all
+```bash
+./scripts/loadtest/run-local-loadtest.sh \
+  --skip-seed \
+  --users 1000 \
+  --communities 50 \
+  --posts 20000 \
+  --comments 80000 \
+  --post-votes 120000 \
+  --post-saves 30000 \
+  --notifications 12000 \
+  --reports 3000 \
+  --vus 50 \
+  --duration-seconds 60 \
+  --warmup-seconds 5 \
+  --exclude notifications_interactions,search_all
 ```
 
 ## 简历可用表述

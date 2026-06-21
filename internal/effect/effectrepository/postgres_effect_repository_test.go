@@ -48,8 +48,8 @@ func TestPostgresEffectRepositoryCatalogPointsAndCommentEffect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindActiveEffectByID returned error: %v", err)
 	}
-	if effect.CostPoints != 10 {
-		t.Fatalf("expected effect cost 10, got %d", effect.CostPoints)
+	if effect.CostPoints != 10 || effect.Emoji != "👍" {
+		t.Fatalf("expected effect cost 10 and emoji, got %#v", effect)
 	}
 
 	result, err := repo.ApplyCommentEffect(ctx, effectusecase.ApplyCommentEffectRecordInput{
@@ -71,6 +71,26 @@ func TestPostgresEffectRepositoryCatalogPointsAndCommentEffect(t *testing.T) {
 		t.Fatalf("unexpected comment effect: %#v", result.CommentEffect)
 	}
 
+	postID := insertTestPost(ctx, t, pool, userID)
+	postResult, err := repo.ApplyPostEffect(ctx, effectusecase.ApplyPostEffectRecordInput{
+		ID:           uuid.NewString(),
+		PostID:       postID,
+		EffectID:     effectID,
+		UserID:       userID,
+		PointsSpent:  10,
+		InitialGrant: effectusecase.InitialPointBalance,
+		Now:          now.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("ApplyPostEffect returned error: %v", err)
+	}
+	if postResult.Points.Balance != 80 || postResult.Points.LifetimeSpent != 20 {
+		t.Fatalf("unexpected points after post effect: %#v", postResult.Points)
+	}
+	if postResult.PostEffect.PostID != postID.String() || postResult.PostEffect.EffectID != effectID || postResult.PostEffect.PointsSpent != 10 {
+		t.Fatalf("unexpected post effect: %#v", postResult.PostEffect)
+	}
+
 	var transactionCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT COUNT(*)::int
@@ -79,22 +99,25 @@ func TestPostgresEffectRepositoryCatalogPointsAndCommentEffect(t *testing.T) {
 	`, userID.String()).Scan(&transactionCount); err != nil {
 		t.Fatalf("count point transactions: %v", err)
 	}
-	if transactionCount != 2 {
-		t.Fatalf("expected initial grant and comment effect transactions, got %d", transactionCount)
+	if transactionCount != 3 {
+		t.Fatalf("expected initial grant, comment effect and post effect transactions, got %d", transactionCount)
 	}
 
 	transactions, err := repo.ListPointTransactions(ctx, userID, 20, 0)
 	if err != nil {
 		t.Fatalf("ListPointTransactions returned error: %v", err)
 	}
-	if len(transactions) < 2 {
+	if len(transactions) < 3 {
 		t.Fatalf("expected at least two point transactions, got %#v", transactions)
 	}
-	if transactions[0].Reason != "comment_effect" || transactions[0].Delta != -10 || transactions[0].BalanceAfter != 90 {
+	if transactions[0].Reason != "post_effect" || transactions[0].SourceType != "post_effect" || transactions[0].Delta != -10 || transactions[0].BalanceAfter != 80 {
+		t.Fatalf("expected newest post effect transaction first, got %#v", transactions[0])
+	}
+	if transactions[1].Reason != "comment_effect" || transactions[1].Delta != -10 || transactions[1].BalanceAfter != 90 {
 		t.Fatalf("expected newest comment effect transaction first, got %#v", transactions[0])
 	}
-	if transactions[1].Reason != "initial_grant" || transactions[1].Delta != 100 || transactions[1].BalanceAfter != 100 {
-		t.Fatalf("expected initial grant transaction second, got %#v", transactions[1])
+	if transactions[2].Reason != "initial_grant" || transactions[2].Delta != 100 || transactions[2].BalanceAfter != 100 {
+		t.Fatalf("expected initial grant transaction third, got %#v", transactions[2])
 	}
 }
 
@@ -118,6 +141,65 @@ func TestPostgresEffectRepositoryRejectsInsufficientPoints(t *testing.T) {
 	})
 	if !apperr.IsCode(err, apperr.CodeForbidden) {
 		t.Fatalf("expected forbidden for insufficient points, got %v", err)
+	}
+}
+
+func TestPostgresEffectRepositoryGrantPointsIsIdempotentAndCapped(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresEffectRepository(pool)
+	now := testNow()
+
+	userID := insertTestUser(ctx, t, pool)
+	for _, sourceID := range []string{"post-1", "post-1", "post-2", "post-3", "post-4", "post-5", "post-6"} {
+		_, err := repo.GrantPoints(ctx, effectusecase.GrantPointsRecordInput{
+			TransactionID: uuid.NewString(),
+			UserID:        userID,
+			ActorID:       userID,
+			Delta:         5,
+			DailyCap:      25,
+			Reason:        effectusecase.PointReasonPostPublish,
+			SourceType:    effectusecase.PointSourcePostPublish,
+			SourceID:      sourceID,
+			InitialGrant:  effectusecase.InitialPointBalance,
+			CreatedAt:     now,
+		})
+		if err != nil {
+			t.Fatalf("GrantPoints(%q) returned error: %v", sourceID, err)
+		}
+	}
+
+	account, err := repo.GetOrCreatePointAccount(ctx, userID, effectusecase.InitialPointBalance, now)
+	if err != nil {
+		t.Fatalf("GetOrCreatePointAccount returned error: %v", err)
+	}
+	if account.Balance != 125 || account.LifetimeEarned != 125 {
+		t.Fatalf("expected balance/lifetime earned capped at 125, got %#v", account)
+	}
+
+	var rewardTransactions int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM point_transactions
+		WHERE user_id = $1::uuid
+			AND source_type = $2
+	`, userID.String(), effectusecase.PointSourcePostPublish).Scan(&rewardTransactions); err != nil {
+		t.Fatalf("count reward transactions: %v", err)
+	}
+	if rewardTransactions != 5 {
+		t.Fatalf("expected five post publish reward transactions, got %d", rewardTransactions)
+	}
+
+	var claims int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM point_reward_claims
+		WHERE user_id = $1::uuid
+			AND source_type = $2
+	`, userID.String(), effectusecase.PointSourcePostPublish).Scan(&claims); err != nil {
+		t.Fatalf("count point reward claims: %v", err)
+	}
+	if claims != 6 {
+		t.Fatalf("expected duplicate source to claim once and capped source to be consumed, got %d claims", claims)
 	}
 }
 
@@ -145,7 +227,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireEffectSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "effects", "user_points", "comment_effects", "point_transactions"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "effects", "user_points", "comment_effects", "post_effects", "point_transactions", "point_reward_claims"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -219,11 +301,17 @@ func insertTestUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool) userd
 	}
 
 	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM point_reward_claims WHERE user_id = $1::uuid`, id.String()); err != nil {
+			t.Fatalf("cleanup point reward claims for user %q: %v", id.String(), err)
+		}
 		if _, err := pool.Exec(context.Background(), `DELETE FROM point_transactions WHERE user_id = $1::uuid`, id.String()); err != nil {
 			t.Fatalf("cleanup point transactions for user %q: %v", id.String(), err)
 		}
 		if _, err := pool.Exec(context.Background(), `DELETE FROM comment_effects WHERE user_id = $1::uuid`, id.String()); err != nil {
 			t.Fatalf("cleanup comment effects for user %q: %v", id.String(), err)
+		}
+		if _, err := pool.Exec(context.Background(), `DELETE FROM post_effects WHERE user_id = $1::uuid`, id.String()); err != nil {
+			t.Fatalf("cleanup post effects for user %q: %v", id.String(), err)
 		}
 		if _, err := pool.Exec(context.Background(), `DELETE FROM user_points WHERE user_id = $1::uuid`, id.String()); err != nil {
 			t.Fatalf("cleanup user points for user %q: %v", id.String(), err)
@@ -308,6 +396,52 @@ func insertTestComment(ctx context.Context, t *testing.T, pool *pgxpool.Pool, au
 	return commentID
 }
 
+func insertTestPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, authorID userdomain.UserID) postdomain.PostID {
+	t.Helper()
+
+	communityID := uuid.NewString()
+	postID := postdomain.NewGeneratedPostID()
+	now := testNow()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO communities (
+			id,
+			slug,
+			name,
+			description,
+			kind,
+			status,
+			visibility,
+			created_by,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2, $3, '', 'user_created', 'active', 'public', $4::uuid, $5, $5)
+	`, communityID, "effect-post-"+randomSuffix(), "Effect Post Repo", authorID.String(), now)
+	if err != nil {
+		t.Fatalf("insert test post community: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO posts (
+			id,
+			community_id,
+			author_id,
+			title,
+			body,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'Effect Post Target', 'Effect post body', 'visible', $4, $4)
+	`, postID.String(), communityID, authorID.String(), now)
+	if err != nil {
+		t.Fatalf("insert test post: %v", err)
+	}
+
+	return postID
+}
+
 func insertTestEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool, costPoints int) string {
 	t.Helper()
 
@@ -321,11 +455,12 @@ func insertTestEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool, cos
 			cost_points,
 			asset_url,
 			animation_key,
+			emoji,
 			is_active,
 			created_at,
 			updated_at
 		)
-		VALUES ($1, 'Effect Repo Test', 'Effect repository test effect.', $2, '', $1, true, $3, $3)
+		VALUES ($1, 'Effect Repo Test', 'Effect repository test effect.', $2, '', $1, '👍', true, $3, $3)
 	`, effectID, costPoints, now)
 	if err != nil {
 		t.Fatalf("insert test effect: %v", err)
@@ -334,6 +469,9 @@ func insertTestEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool, cos
 	t.Cleanup(func() {
 		if _, err := pool.Exec(context.Background(), `DELETE FROM comment_effects WHERE effect_id = $1`, effectID); err != nil {
 			t.Fatalf("cleanup comment effects for effect %q: %v", effectID, err)
+		}
+		if _, err := pool.Exec(context.Background(), `DELETE FROM post_effects WHERE effect_id = $1`, effectID); err != nil {
+			t.Fatalf("cleanup post effects for effect %q: %v", effectID, err)
 		}
 		if _, err := pool.Exec(context.Background(), `DELETE FROM effects WHERE id = $1`, effectID); err != nil {
 			t.Fatalf("cleanup test effect %q: %v", effectID, err)

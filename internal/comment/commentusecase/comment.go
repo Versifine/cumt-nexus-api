@@ -10,6 +10,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/effectusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediadomain"
 	"github.com/Versifine/cumt-nexus-api/internal/mention"
 	platformsettings "github.com/Versifine/cumt-nexus-api/internal/platform/settings"
@@ -55,6 +56,7 @@ type CommentUseCase struct {
 	effects              CommentEffectRepository
 	notifications        NotificationPublisher
 	progression          XPRecorder
+	points               PointRecorder
 	contentRefs          ContentRefRepository
 	settingsReader       platformsettings.Reader
 	commentImageMaxCount int
@@ -181,6 +183,7 @@ type CommentEffectSummary struct {
 	ID            string
 	EffectID      string
 	Name          string
+	Emoji         string
 	AssetURL      string
 	AnimationKey  string
 	AppliedByUser postusecase.UserSummary
@@ -258,6 +261,14 @@ type XPRecorder interface {
 
 func (uc *CommentUseCase) SetXPRecorder(progression XPRecorder) {
 	uc.progression = progression
+}
+
+type PointRecorder interface {
+	GrantPoints(ctx context.Context, input effectusecase.GrantPointsInput) error
+}
+
+func (uc *CommentUseCase) SetPointRecorder(points PointRecorder) {
+	uc.points = points
 }
 
 func (uc *CommentUseCase) SetSettingsReader(settingsReader platformsettings.Reader) {
@@ -348,6 +359,7 @@ func (uc *CommentUseCase) PublishComment(ctx context.Context, input PublishComme
 	if err := uc.grantXP(ctx, input.AuthorID, input.AuthorID, progressionusecase.XPSourceCommentPublish, comment.ID().String()); err != nil {
 		return PublishCommentResult{}, err
 	}
+	_ = uc.grantPoints(ctx, input.AuthorID, input.AuthorID, effectusecase.PointSourceCommentPublish, comment.ID().String())
 
 	return PublishCommentResult{
 		Comment: toCommentDTO(*comment, attachments, contentRefs, metadataViews[comment.ID()], input.AuthorID),
@@ -715,6 +727,7 @@ func (uc *CommentUseCase) SetCommentVote(ctx context.Context, input SetCommentVo
 	}
 	if comment.AuthorID() != input.UserID && value == votedomain.VoteValueUp && previousVotes[comment.ID()] != votedomain.VoteValueUp {
 		_ = uc.grantXP(ctx, comment.AuthorID(), input.UserID, progressionusecase.XPSourceCommentUpvote, comment.ID().String()+":"+input.UserID.String())
+		_ = uc.grantPoints(ctx, comment.AuthorID(), input.UserID, effectusecase.PointSourceCommentUpvote, comment.ID().String()+":"+input.UserID.String())
 	}
 
 	return SetCommentVoteResult{
@@ -794,6 +807,18 @@ func (uc *CommentUseCase) grantXP(ctx context.Context, userID userdomain.UserID,
 		return nil
 	}
 	return uc.progression.GrantXP(ctx, progressionusecase.GrantXPInput{
+		UserID:     userID,
+		ActorID:    actorID,
+		SourceType: sourceType,
+		SourceID:   sourceID,
+	})
+}
+
+func (uc *CommentUseCase) grantPoints(ctx context.Context, userID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if uc.points == nil || strings.TrimSpace(userID.String()) == "" {
+		return nil
+	}
+	return uc.points.GrantPoints(ctx, effectusecase.GrantPointsInput{
 		UserID:     userID,
 		ActorID:    actorID,
 		SourceType: sourceType,

@@ -14,8 +14,8 @@
 
 校验入口：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+```bash
+./scripts/verify-current-baseline.sh --skip-http-smoke --r2-mode Skip
 ```
 
 `docs/internal/` 只放内部架构推演、工作流和本地协作记录；不能作为 CI 或前端协作依赖的唯一合同源。

@@ -122,12 +122,6 @@ Docker Compose plugin 可用
 
 先从示例文件生成本地生产模拟配置：
 
-```powershell
-Copy-Item .env.production.example .env.production
-```
-
-macOS/Linux:
-
 ```bash
 cp .env.production.example .env.production
 ```
@@ -190,8 +184,8 @@ go build -buildvcs=false ./...
 
 还应跑快速基线：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+```bash
+./scripts/verify-current-baseline.sh --skip-http-smoke --r2-mode Skip
 ```
 
 当前 CI 文件是：
@@ -206,7 +200,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-current-bas
 1. 启动 PostgreSQL service
 2. 安装 Go
 3. go mod download
-4. verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+4. verify-current-baseline.sh --skip-http-smoke --r2-mode Skip
 5. docker build -t cumt-nexus-api:ci .
 ```
 

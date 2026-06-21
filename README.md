@@ -33,12 +33,6 @@
 
 ### 1. 准备配置
 
-```powershell
-Copy-Item .env.example .env
-```
-
-macOS/Linux:
-
 ```bash
 cp .env.example .env
 ```
@@ -439,8 +433,8 @@ go build -buildvcs=false ./...
 
 快速基线检查：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-current-baseline.ps1 -SkipHttpSmoke -R2Mode Skip
+```bash
+./scripts/verify-current-baseline.sh --skip-http-smoke --r2-mode Skip
 ```
 
 更细的本地 smoke 和契约校验脚本放在 `scripts/` 目录；README 只保留常用入口。

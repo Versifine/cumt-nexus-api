@@ -9,6 +9,7 @@ import (
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/community/communityusecase"
+	"github.com/Versifine/cumt-nexus-api/internal/effect/effectusecase"
 	"github.com/Versifine/cumt-nexus-api/internal/media/mediadomain"
 	"github.com/Versifine/cumt-nexus-api/internal/mention"
 	platformsettings "github.com/Versifine/cumt-nexus-api/internal/platform/settings"
@@ -74,8 +75,10 @@ type PostUseCase struct {
 	users             PublicUserFinder
 	notifications     NotificationPublisher
 	progression       XPRecorder
+	points            PointRecorder
 	metadata          PostMetadataRepository
 	contentRefs       ContentRefRepository
+	effects           PostEffectRepository
 	settingsReader    platformsettings.Reader
 	postImageMaxCount int
 	now               func() time.Time
@@ -231,6 +234,7 @@ type Post struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	Attachments       []Attachment
+	Effects           []PostEffectSummary
 }
 
 type ContentRefInput struct {
@@ -302,6 +306,18 @@ type PostMetadata struct {
 	CommentCount int
 }
 
+type PostEffectSummary struct {
+	ID            string
+	EffectID      string
+	Name          string
+	Emoji         string
+	AssetURL      string
+	AnimationKey  string
+	AppliedByUser UserSummary
+	PointsSpent   int
+	CreatedAt     time.Time
+}
+
 type Attachment struct {
 	ID           string
 	Kind         string
@@ -333,6 +349,10 @@ func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func(
 	if repo, ok := posts.(ContentRefRepository); ok {
 		contentRefRepo = repo
 	}
+	var effectRepo PostEffectRepository
+	if repo, ok := posts.(PostEffectRepository); ok {
+		effectRepo = repo
+	}
 	var saveRepo PostSaveRepository
 	if repo, ok := posts.(PostSaveRepository); ok {
 		saveRepo = repo
@@ -345,6 +365,7 @@ func NewPostUseCase(posts PostRepository, communities CommunityPolicy, now func(
 		saves:             saveRepo,
 		metadata:          metadataRepo,
 		contentRefs:       contentRefRepo,
+		effects:           effectRepo,
 		postImageMaxCount: 9,
 		now:               now,
 	}
@@ -373,6 +394,14 @@ type XPRecorder interface {
 
 func (uc *PostUseCase) SetXPRecorder(progression XPRecorder) {
 	uc.progression = progression
+}
+
+type PointRecorder interface {
+	GrantPoints(ctx context.Context, input effectusecase.GrantPointsInput) error
+}
+
+func (uc *PostUseCase) SetPointRecorder(points PointRecorder) {
+	uc.points = points
 }
 
 func (uc *PostUseCase) SetSettingsReader(settingsReader platformsettings.Reader) {
@@ -455,9 +484,10 @@ func (uc *PostUseCase) PublishPost(ctx context.Context, input PublishPostInput) 
 	if err := uc.grantXP(ctx, input.AuthorID, input.AuthorID, progressionusecase.XPSourcePostPublish, post.ID().String()); err != nil {
 		return PublishPostResult{}, err
 	}
+	_ = uc.grantPoints(ctx, input.AuthorID, input.AuthorID, effectusecase.PointSourcePostPublish, post.ID().String())
 
 	return PublishPostResult{
-		Post: toPostDTO(*post, postVoteView{}, postSaveView{}, attachments, contentRefs, metadataViews[post.ID()], input.AuthorID),
+		Post: toPostDTO(*post, postVoteView{}, postSaveView{}, attachments, contentRefs, metadataViews[post.ID()], nil, input.AuthorID),
 	}, nil
 }
 
@@ -520,8 +550,12 @@ func (uc *PostUseCase) ListCommunityPosts(ctx context.Context, input ListCommuni
 	if err != nil {
 		return ListCommunityPostsResult{}, err
 	}
+	effectViews, err := uc.loadPostEffectViews(ctx, posts)
+	if err != nil {
+		return ListCommunityPostsResult{}, err
+	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], effectViews[post.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -595,8 +629,12 @@ func (uc *PostUseCase) ListLatestPosts(ctx context.Context, input ListLatestPost
 	if err != nil {
 		return ListLatestPostsResult{}, err
 	}
+	effectViews, err := uc.loadPostEffectViews(ctx, posts)
+	if err != nil {
+		return ListLatestPostsResult{}, err
+	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], effectViews[post.ID()], input.ViewerID))
 	}
 
 	return result, nil
@@ -647,6 +685,10 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 	if err != nil {
 		return ListUserPostsResult{}, err
 	}
+	effectViews, err := uc.loadPostEffectViews(ctx, posts)
+	if err != nil {
+		return ListUserPostsResult{}, err
+	}
 
 	result := ListUserPostsResult{
 		Posts:      make([]Post, 0, len(posts)),
@@ -656,7 +698,7 @@ func (uc *PostUseCase) ListUserPosts(ctx context.Context, input ListUserPostsInp
 		HasMore:    hasMore,
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], effectViews[post.ID()], input.ViewerID))
 	}
 	return result, nil
 }
@@ -692,9 +734,13 @@ func (uc *PostUseCase) GetPost(ctx context.Context, input GetPostInput) (GetPost
 	if err != nil {
 		return GetPostResult{}, err
 	}
+	effectViews, err := uc.loadPostEffectViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return GetPostResult{}, err
+	}
 
 	return GetPostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.ViewerID),
+		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], effectViews[post.ID()], input.ViewerID),
 	}, nil
 }
 
@@ -721,6 +767,7 @@ func (uc *PostUseCase) SavePost(ctx context.Context, input SavePostInput) (SaveP
 		if err := uc.grantXP(ctx, post.AuthorID(), input.UserID, progressionusecase.XPSourcePostSave, post.ID().String()+":"+input.UserID.String()); err != nil {
 			return SavePostResult{}, err
 		}
+		_ = uc.grantPoints(ctx, post.AuthorID(), input.UserID, effectusecase.PointSourcePostSave, post.ID().String()+":"+input.UserID.String())
 	}
 
 	return SavePostResult{}, nil
@@ -786,6 +833,10 @@ func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsI
 	if err != nil {
 		return ListSavedPostsResult{}, err
 	}
+	effectViews, err := uc.loadPostEffectViews(ctx, posts)
+	if err != nil {
+		return ListSavedPostsResult{}, err
+	}
 
 	result := ListSavedPostsResult{
 		Posts:      make([]Post, 0, len(posts)),
@@ -795,7 +846,7 @@ func (uc *PostUseCase) ListSavedPosts(ctx context.Context, input ListSavedPostsI
 		HasMore:    hasMore,
 	}
 	for _, post := range posts {
-		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], input.UserID))
+		result.Posts = append(result.Posts, toPostDTO(post, voteViews[post.ID()], saveViews[post.ID()], attachmentViews[post.ID()], contentRefViews[post.ID()], metadataViews[post.ID()], effectViews[post.ID()], input.UserID))
 	}
 
 	return result, nil
@@ -903,12 +954,16 @@ func (uc *PostUseCase) UpdatePost(ctx context.Context, input UpdatePostInput) (U
 	if err != nil {
 		return UpdatePostResult{}, err
 	}
+	effectViews, err := uc.loadPostEffectViews(ctx, []postdomain.Post{*post})
+	if err != nil {
+		return UpdatePostResult{}, err
+	}
 	if err := uc.notifyMentions(ctx, mention.AddedUsernames(oldBody, input.Body), input.ActorID, "post", post.ID().String()); err != nil {
 		return UpdatePostResult{}, err
 	}
 
 	return UpdatePostResult{
-		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachments, contentRefs, metadataViews[post.ID()], input.ActorID),
+		Post: toPostDTO(*post, voteViews[post.ID()], saveViews[post.ID()], attachments, contentRefs, metadataViews[post.ID()], effectViews[post.ID()], input.ActorID),
 	}, nil
 }
 
@@ -1278,6 +1333,22 @@ func (uc *PostUseCase) loadContentRefViews(ctx context.Context, posts []postdoma
 	return views, nil
 }
 
+func (uc *PostUseCase) loadPostEffectViews(ctx context.Context, posts []postdomain.Post) (map[postdomain.PostID][]PostEffectSummary, error) {
+	views := make(map[postdomain.PostID][]PostEffectSummary, len(posts))
+	if len(posts) == 0 || uc.effects == nil {
+		return views, nil
+	}
+	postIDs := make([]postdomain.PostID, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID())
+	}
+	views, err := uc.effects.ListPostEffectsByPostIDs(ctx, postIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list post effects: %w", err)
+	}
+	return views, nil
+}
+
 func ValidateImageContentRefs(refs []ContentRef, attachments []mediadomain.Attachment) error {
 	imageAttachmentIDs := make(map[string]bool, len(attachments))
 	for _, attachment := range attachments {
@@ -1387,7 +1458,19 @@ func (uc *PostUseCase) grantXP(ctx context.Context, userID userdomain.UserID, ac
 	})
 }
 
-func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveView, attachments []mediadomain.Attachment, contentRefs []ContentRef, metadata PostMetadata, viewerID userdomain.UserID) Post {
+func (uc *PostUseCase) grantPoints(ctx context.Context, userID userdomain.UserID, actorID userdomain.UserID, sourceType string, sourceID string) error {
+	if uc.points == nil || strings.TrimSpace(userID.String()) == "" {
+		return nil
+	}
+	return uc.points.GrantPoints(ctx, effectusecase.GrantPointsInput{
+		UserID:     userID,
+		ActorID:    actorID,
+		SourceType: sourceType,
+		SourceID:   sourceID,
+	})
+}
+
+func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveView, attachments []mediadomain.Attachment, contentRefs []ContentRef, metadata PostMetadata, effects []PostEffectSummary, viewerID userdomain.UserID) Post {
 	score := voteView.upvoteCount - voteView.downvoteCount
 	metadata = normalizePostMetadata(metadata)
 	attachmentDTOs := toAttachmentDTOs(attachments)
@@ -1420,6 +1503,7 @@ func toPostDTO(post postdomain.Post, voteView postVoteView, saveView postSaveVie
 		CreatedAt:         post.CreatedAt(),
 		UpdatedAt:         post.UpdatedAt(),
 		Attachments:       attachmentDTOs,
+		Effects:           ClonePostEffects(effects),
 	}
 }
 
@@ -1429,6 +1513,27 @@ func CloneContentRefs(refs []ContentRef) []ContentRef {
 	}
 	result := make([]ContentRef, len(refs))
 	copy(result, refs)
+	return result
+}
+
+func ClonePostEffects(effects []PostEffectSummary) []PostEffectSummary {
+	if len(effects) == 0 {
+		return []PostEffectSummary{}
+	}
+	result := make([]PostEffectSummary, len(effects))
+	copy(result, effects)
+	for index := range result {
+		result[index].AppliedByUser.Badges = cloneStringSlice(result[index].AppliedByUser.Badges)
+	}
+	return result
+}
+
+func cloneStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	result := make([]string, len(values))
+	copy(result, values)
 	return result
 }
 

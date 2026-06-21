@@ -7,17 +7,19 @@ import (
 type Code string
 
 const (
-	CodeInvalidArgument  Code = "invalid_argument"
-	CodeUnauthenticated  Code = "unauthenticated"
-	CodeForbidden        Code = "forbidden"
-	CodeAccountBanned    Code = "account_banned"
-	CodeAccountDisabled  Code = "account_disabled"
-	CodeAccountDeleted   Code = "account_deleted"
-	CodeLoginRateLimited Code = "login_rate_limited"
-	CodeNotFound         Code = "not_found"
-	CodeConflict         Code = "conflict"
-	CodeRateLimited      Code = "rate_limited"
-	CodeInternal         Code = "internal"
+	CodeInvalidArgument        Code = "invalid_argument"
+	CodeUnauthenticated        Code = "unauthenticated"
+	CodeForbidden              Code = "forbidden"
+	CodeAccountBanned          Code = "account_banned"
+	CodeAccountDisabled        Code = "account_disabled"
+	CodeAccountDeleted         Code = "account_deleted"
+	CodeLoginRateLimited       Code = "login_rate_limited"
+	CodeNotFound               Code = "not_found"
+	CodeConflict               Code = "conflict"
+	CodeRateLimited            Code = "rate_limited"
+	CodeInternal               Code = "internal"
+	CodeMessageRequestRejected Code = "message_request_rejected"
+	CodeMessageRecallExpired   Code = "message_recall_expired"
 )
 
 type Error struct {

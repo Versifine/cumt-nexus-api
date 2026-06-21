@@ -51,6 +51,7 @@ type LoginUserCase struct {
 	passwordComparer PasswordComparer
 	tokenIssuer      LoginTokenIssuer
 	xpRecorder       XPRecorder
+	pointRecorder    PointRecorder
 	now              func() time.Time
 }
 
@@ -77,6 +78,10 @@ func NewLoginUserCase(userFinder UserFinder, passwordComparer PasswordComparer, 
 
 func (uc *LoginUserCase) SetXPRecorder(recorder XPRecorder) {
 	uc.xpRecorder = recorder
+}
+
+func (uc *LoginUserCase) SetPointRecorder(recorder PointRecorder) {
+	uc.pointRecorder = recorder
 }
 
 func (uc *LoginUserCase) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
@@ -146,6 +151,7 @@ func (uc *LoginUserCase) Login(ctx context.Context, input LoginInput) (LoginResu
 	if err := grantDailyLoginXP(ctx, uc.xpRecorder, user.ID(), now); err != nil {
 		return LoginResult{}, err
 	}
+	_ = grantDailyLoginPoints(ctx, uc.pointRecorder, user.ID(), now)
 
 	return LoginResult{
 		AccessToken: tokenValue,

@@ -4,8 +4,8 @@
 
 错误码、HTTP 状态码和错误响应形状需要通过以下脚本与 `internal/apperr`、`internal/platform/httpserver` 保持同步：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-http-error-contract-doc.ps1
+```bash
+./scripts/verify-http-error-contract-doc.sh
 ```
 
 该脚本校验错误码集合、HTTP 状态码映射和 `{"error":{"code":"...","message":"..."}}` 形状；它不校验每个业务场景的错误消息全文。
@@ -52,11 +52,13 @@ domain/usecase 可以返回 `apperr`，但不能决定 HTTP 状态码。
 | `invalid_argument` | 400 | 请求格式或输入不合法 |
 | `unauthenticated` | 401 | 未登录或认证信息无效 |
 | `forbidden` | 403 | 已认证但当前状态不允许 |
+| `message_request_rejected` | 403 | 陌生人私信请求已被忽略，原发起人不能继续发送或重新发起 |
 | `account_banned` | 403 | 账号存在有效封禁，禁止登录或访问受保护资源 |
 | `account_disabled` | 403 | 账号已被禁用，禁止登录 |
 | `account_deleted` | 403 | 账号已注销，禁止登录 |
 | `not_found` | 404 | 资源不存在 |
 | `conflict` | 409 | 唯一约束、状态冲突或重复操作 |
+| `message_recall_expired` | 409 | 私信消息撤回窗口已过期，不能再撤回双方可见消息 |
 | `rate_limited` | 429 | 当前用户短时间内触发频率限制 |
 | `login_rate_limited` | 429 | 密码登录按账号或 IP 命中滚动窗口限流 |
 | `internal` | 500 | 未预期系统错误 |
@@ -108,6 +110,8 @@ ErrorMiddleware
 - disabled 用户登录应返回 `account_disabled`，deleted 用户登录应返回 `account_deleted`，有效账号封禁登录应返回 `account_banned`。
 - 密码登录按账号或 IP 触发失败次数限制时应返回 `login_rate_limited`。
 - token 缺失、格式错误、过期或签名错误应返回 `unauthenticated`。
+- 私信请求被收件人忽略后，原发起人继续发送或重新发起应返回 `message_request_rejected`。
+- 私信消息超过发送后 2 分钟撤回窗口时应返回 `message_recall_expired`。
 
 ## 测试要求
 
@@ -117,4 +121,4 @@ ErrorMiddleware
 - 未知错误不会泄露原始错误文本。
 - panic 返回统一 `internal`。
 - 业务 handler 错误路径走中间件。
-- `scripts/verify-http-error-contract-doc.ps1` 校验文档表格与代码映射同步。
+- `scripts/verify-http-error-contract-doc.sh` 校验文档表格与代码映射同步。

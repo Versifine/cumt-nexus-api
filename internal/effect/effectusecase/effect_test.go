@@ -7,6 +7,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/comment/commentdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/community/communitydomain"
 	"github.com/Versifine/cumt-nexus-api/internal/post/postdomain"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
 )
@@ -59,6 +60,9 @@ func TestGetMyPointsEnsuresAccount(t *testing.T) {
 	if !repository.getPointsCalled || repository.getPointsUserID != userID || repository.initialBalance != InitialPointBalance {
 		t.Fatalf("unexpected get points call: %#v", repository)
 	}
+	if repository.grantPointsInput.SourceType != PointSourceDailyActivity || repository.grantPointsInput.SourceID != "2026-06-09" {
+		t.Fatalf("expected get points to attempt daily activity grant, got %#v", repository.grantPointsInput)
+	}
 	if result.Points.Balance != 100 || result.Points.LifetimeEarned != 100 {
 		t.Fatalf("unexpected points result: %#v", result.Points)
 	}
@@ -106,6 +110,46 @@ func TestListMyPointTransactionsRequiresAuth(t *testing.T) {
 	_, err := uc.ListMyPointTransactions(context.Background(), ListMyPointTransactionsInput{})
 	if !apperr.IsCode(err, apperr.CodeUnauthenticated) {
 		t.Fatalf("expected unauthenticated, got %v", err)
+	}
+}
+
+func TestGrantPointsUsesPointPolicy(t *testing.T) {
+	userID := userdomain.NewGeneratedUserID()
+	actorID := userdomain.NewGeneratedUserID()
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{}
+	uc := NewUseCase(repository, &fakeCommentReader{}, func() time.Time { return now })
+
+	err := uc.GrantPoints(context.Background(), GrantPointsInput{
+		UserID:     userID,
+		ActorID:    actorID,
+		SourceType: PointSourcePostPublish,
+		SourceID:   "post-1",
+	})
+	if err != nil {
+		t.Fatalf("GrantPoints returned error: %v", err)
+	}
+	if repository.grantPointsInput.UserID != userID || repository.grantPointsInput.ActorID != actorID {
+		t.Fatalf("unexpected grant points user fields: %#v", repository.grantPointsInput)
+	}
+	if repository.grantPointsInput.Delta != 5 || repository.grantPointsInput.DailyCap != 25 || repository.grantPointsInput.Reason != PointReasonPostPublish {
+		t.Fatalf("unexpected post publish point policy: %#v", repository.grantPointsInput)
+	}
+	if repository.grantPointsInput.InitialGrant != InitialPointBalance || !repository.grantPointsInput.CreatedAt.Equal(now) {
+		t.Fatalf("unexpected point account metadata: %#v", repository.grantPointsInput)
+	}
+}
+
+func TestGrantPointsRejectsInvalidSource(t *testing.T) {
+	uc := NewUseCase(&fakeRepository{}, &fakeCommentReader{}, time.Now)
+
+	err := uc.GrantPoints(context.Background(), GrantPointsInput{
+		UserID:     userdomain.NewGeneratedUserID(),
+		SourceType: "unknown",
+		SourceID:   "source-1",
+	})
+	if !apperr.IsCode(err, apperr.CodeInvalidArgument) {
+		t.Fatalf("expected invalid_argument, got %v", err)
 	}
 }
 
@@ -212,6 +256,87 @@ func TestApplyCommentEffectPropagatesInsufficientPoints(t *testing.T) {
 	}
 }
 
+func TestApplyPostEffectValidatesPostAndDeductsPoints(t *testing.T) {
+	userID := userdomain.NewGeneratedUserID()
+	postID := postdomain.NewGeneratedPostID()
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{
+		effect: Effect{
+			ID:           "useful",
+			Name:         "有用",
+			CostPoints:   5,
+			AnimationKey: "useful",
+			Emoji:        "👍",
+			IsActive:     true,
+		},
+		applyPostResult: ApplyPostEffectRecordResult{
+			PostEffect: PostEffect{
+				ID:          "e673c232-d76e-46ea-8bc2-1f9aefac5868",
+				PostID:      postID.String(),
+				EffectID:    "useful",
+				UserID:      userID.String(),
+				PointsSpent: 5,
+				CreatedAt:   now,
+			},
+			Points: PointAccount{
+				UserID:         userID.String(),
+				Balance:        95,
+				LifetimeEarned: 100,
+				LifetimeSpent:  5,
+				UpdatedAt:      now,
+			},
+		},
+	}
+	posts := &fakePostReader{
+		post: mustPost(t, postID, userID, now),
+	}
+	uc := NewUseCase(repository, &fakeCommentReader{}, func() time.Time { return now })
+	uc.SetPostReader(posts)
+
+	result, err := uc.ApplyPostEffect(context.Background(), ApplyPostEffectInput{
+		ActorID:  userID,
+		PostID:   postID.String(),
+		EffectID: "Useful",
+	})
+	if err != nil {
+		t.Fatalf("ApplyPostEffect returned error: %v", err)
+	}
+	if !posts.findCalled || posts.postID != postID {
+		t.Fatalf("expected post lookup for %q, got %#v", postID.String(), posts)
+	}
+	if repository.findEffectID != "useful" {
+		t.Fatalf("expected normalized effect id useful, got %q", repository.findEffectID)
+	}
+	if repository.applyPostInput.PostID != postID || repository.applyPostInput.EffectID != "useful" || repository.applyPostInput.PointsSpent != 5 {
+		t.Fatalf("unexpected apply post input: %#v", repository.applyPostInput)
+	}
+	if result.Points.Balance != 95 || result.PostEffect.PointsSpent != 5 {
+		t.Fatalf("unexpected apply post result: %#v", result)
+	}
+}
+
+func TestApplyPostEffectRejectsInvalidInput(t *testing.T) {
+	uc := NewUseCase(&fakeRepository{}, &fakeCommentReader{}, time.Now)
+
+	tests := []struct {
+		name  string
+		input ApplyPostEffectInput
+		code  apperr.Code
+	}{
+		{name: "missing actor", input: ApplyPostEffectInput{}, code: apperr.CodeUnauthenticated},
+		{name: "invalid post", input: ApplyPostEffectInput{ActorID: userdomain.NewGeneratedUserID(), PostID: "bad", EffectID: "useful"}, code: apperr.CodeInvalidArgument},
+		{name: "invalid effect", input: ApplyPostEffectInput{ActorID: userdomain.NewGeneratedUserID(), PostID: postdomain.NewGeneratedPostID().String(), EffectID: "../x"}, code: apperr.CodeInvalidArgument},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := uc.ApplyPostEffect(context.Background(), tt.input)
+			if !apperr.IsCode(err, tt.code) {
+				t.Fatalf("expected %s, got %v", tt.code, err)
+			}
+		})
+	}
+}
+
 type fakeRepository struct {
 	listCalled bool
 	effects    []Effect
@@ -237,6 +362,14 @@ type fakeRepository struct {
 	applyInput  ApplyCommentEffectRecordInput
 	applyResult ApplyCommentEffectRecordResult
 	applyErr    error
+
+	applyPostInput  ApplyPostEffectRecordInput
+	applyPostResult ApplyPostEffectRecordResult
+	applyPostErr    error
+
+	grantPointsInput  GrantPointsRecordInput
+	grantPointsResult GrantPointsRecordResult
+	grantPointsErr    error
 }
 
 func (f *fakeRepository) ListActiveEffects(ctx context.Context) ([]Effect, error) {
@@ -275,6 +408,18 @@ func (f *fakeRepository) ApplyCommentEffect(ctx context.Context, input ApplyComm
 	return f.applyResult, f.applyErr
 }
 
+func (f *fakeRepository) ApplyPostEffect(ctx context.Context, input ApplyPostEffectRecordInput) (ApplyPostEffectRecordResult, error) {
+	_ = ctx
+	f.applyPostInput = input
+	return f.applyPostResult, f.applyPostErr
+}
+
+func (f *fakeRepository) GrantPoints(ctx context.Context, input GrantPointsRecordInput) (GrantPointsRecordResult, error) {
+	_ = ctx
+	f.grantPointsInput = input
+	return f.grantPointsResult, f.grantPointsErr
+}
+
 type fakeCommentReader struct {
 	findCalled bool
 	commentID  commentdomain.CommentID
@@ -289,6 +434,20 @@ func (f *fakeCommentReader) FindVisibleByID(ctx context.Context, id commentdomai
 	return f.comment, f.err
 }
 
+type fakePostReader struct {
+	findCalled bool
+	postID     postdomain.PostID
+	post       *postdomain.Post
+	err        error
+}
+
+func (f *fakePostReader) FindVisibleByID(ctx context.Context, id postdomain.PostID) (*postdomain.Post, error) {
+	_ = ctx
+	f.findCalled = true
+	f.postID = id
+	return f.post, f.err
+}
+
 func mustComment(t *testing.T, commentID commentdomain.CommentID, userID userdomain.UserID, now time.Time) *commentdomain.Comment {
 	t.Helper()
 
@@ -301,4 +460,22 @@ func mustComment(t *testing.T, commentID commentdomain.CommentID, userID userdom
 		t.Fatalf("new comment: %v", err)
 	}
 	return comment
+}
+
+func mustPost(t *testing.T, postID postdomain.PostID, userID userdomain.UserID, now time.Time) *postdomain.Post {
+	t.Helper()
+
+	title, err := postdomain.NewPostTitle("hello")
+	if err != nil {
+		t.Fatalf("new post title: %v", err)
+	}
+	body, err := postdomain.NewPostBody("post body")
+	if err != nil {
+		t.Fatalf("new post body: %v", err)
+	}
+	post, err := postdomain.NewPost(postID, communitydomain.NewGeneratedCommunityID(), userID, title, body, now)
+	if err != nil {
+		t.Fatalf("new post: %v", err)
+	}
+	return post
 }

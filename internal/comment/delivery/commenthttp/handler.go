@@ -116,6 +116,7 @@ type commentEffectResponse struct {
 	ID            string              `json:"id"`
 	EffectID      string              `json:"effect_id"`
 	Name          string              `json:"name"`
+	Emoji         string              `json:"emoji"`
 	AssetURL      string              `json:"asset_url"`
 	AnimationKey  string              `json:"animation_key"`
 	AppliedByUser userSummaryResponse `json:"applied_by_user"`
@@ -560,6 +561,7 @@ func toCommentEffectResponses(effects []commentusecase.CommentEffectSummary) []c
 			ID:            effect.ID,
 			EffectID:      effect.EffectID,
 			Name:          effect.Name,
+			Emoji:         effect.Emoji,
 			AssetURL:      effect.AssetURL,
 			AnimationKey:  effect.AnimationKey,
 			AppliedByUser: toUserSummaryResponse(effect.AppliedByUser),

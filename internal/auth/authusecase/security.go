@@ -125,6 +125,7 @@ type SecurityUseCase struct {
 	emailSender      EmailCodeSender
 	settingsReader   platformsettings.Reader
 	xpRecorder       XPRecorder
+	pointRecorder    PointRecorder
 	policy           EmailCodePolicy
 	now              func() time.Time
 }
@@ -292,6 +293,10 @@ func (uc *SecurityUseCase) SetXPRecorder(recorder XPRecorder) {
 	uc.xpRecorder = recorder
 }
 
+func (uc *SecurityUseCase) SetPointRecorder(recorder PointRecorder) {
+	uc.pointRecorder = recorder
+}
+
 func (uc *SecurityUseCase) SendRegisterEmailCode(ctx context.Context, input EmailCodeDispatchInput) (EmailCodeDispatchResult, error) {
 	if err := uc.ensureRegistrationEnabled(ctx); err != nil {
 		return EmailCodeDispatchResult{}, err
@@ -400,6 +405,7 @@ func (uc *SecurityUseCase) LoginWithEmailCode(ctx context.Context, input LoginWi
 	if err := grantDailyLoginXP(ctx, uc.xpRecorder, record.User.ID(), now); err != nil {
 		return SecurityAuthResult{}, err
 	}
+	_ = grantDailyLoginPoints(ctx, uc.pointRecorder, record.User.ID(), now)
 	return uc.issueSecurityAuthResult(record.User, email, true, record.IsPlatformStaff, record.PlatformRole, now)
 }
 

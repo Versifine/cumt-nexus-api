@@ -48,6 +48,10 @@ type ContentRefRepository interface {
 	ListPostContentRefsByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]ContentRef, error)
 }
 
+type PostEffectRepository interface {
+	ListPostEffectsByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID][]PostEffectSummary, error)
+}
+
 type VoteRepository interface {
 	FindByPostIDsAndUser(ctx context.Context, postIDs []postdomain.PostID, userID userdomain.UserID) (map[postdomain.PostID]votedomain.VoteValue, error)
 	SummarizeByPostIDs(ctx context.Context, postIDs []postdomain.PostID) (map[postdomain.PostID]votedomain.PostVoteSummary, error)

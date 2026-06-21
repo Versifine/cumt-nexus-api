@@ -34,6 +34,10 @@ func mapAppError(err *apperr.Error) (int, ErrorResponse) {
 		return http.StatusUnauthorized, errorResponse(err)
 	case apperr.CodeForbidden:
 		return http.StatusForbidden, errorResponse(err)
+	case apperr.CodeMessageRequestRejected:
+		return http.StatusForbidden, errorResponse(err)
+	case apperr.CodeMessageRecallExpired:
+		return http.StatusConflict, errorResponse(err)
 	case apperr.CodeAccountBanned:
 		return http.StatusForbidden, errorResponse(err)
 	case apperr.CodeAccountDisabled:

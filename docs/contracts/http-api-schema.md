@@ -4,8 +4,8 @@
 
 schema 字段清单、接口 schema 映射和请求必填字段清单需要通过以下脚本与 delivery 层 handler 结构、HTTP 路由契约保持同步：
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-doc.ps1
+```bash
+./scripts/verify-api-schema-doc.sh
 ```
 
 该脚本扫描 `internal/*/delivery/*http` 下非测试 Go 文件中的 JSON struct，并与本文的“Handler JSON 结构清单”比对 package、Go type 和 JSON 字段顺序；同时读取 `docs/contracts/http-api-contract.md` 的路由表，校验本文“接口 Schema 映射”覆盖所有当前路由、没有过期路由、request/success 中引用的 schema 真实存在，且成功状态码保持在 `200/201/204` 范围内。请求 struct 上的 `binding:"required"` 也必须同步记录在“请求必填字段清单”。它不生成 OpenAPI，不校验业务枚举、数值范围、嵌套类型语义、完整示例或错误响应全文。
@@ -109,6 +109,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | DELETE | /api/v1/posts/:id | none | none | 204 |
 | POST | /api/v1/posts/:id/save | none | none | 204 |
 | DELETE | /api/v1/posts/:id/save | none | none | 204 |
+| POST | /api/v1/posts/:id/effects | `effecthttp.applyPostEffectRequest` | `effecthttp.applyPostEffectResponse` | 201 |
 | POST | /api/v1/posts/:id/comments | `commenthttp.publishCommentRequest` | `commenthttp.publishCommentResponse` | 201 |
 | GET | /api/v1/posts/:id/comments | query | `commenthttp.listPostCommentsResponse` | 200 |
 | GET | /api/v1/users/:username/comments | query | `commenthttp.listUserCommentsResponse` | 200 |
@@ -257,6 +258,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `contentrefhttp.resolveEmbedRequest` | `url` |
 | `contentrefhttp.resolveLinkPreviewRequest` | `url` |
 | `effecthttp.applyCommentEffectRequest` | `effect_id` |
+| `effecthttp.applyPostEffectRequest` | `effect_id` |
 | `communityhttp.submitCommunityApplicationRequest` | `requested_slug`, `requested_name`, `reason` |
 | `messagehttp.startConversationRequest` | `target_username`, `message` |
 | `messagehttp.sendMessageRequest` | `message` |
@@ -379,7 +381,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `adminhttp` | `revokeAdminUserSanctionResponse` | `sanction` |
 | `posthttp` | `publishPostRequest` | `title`, `body`, `attachment_ids`, `content_refs` |
 | `posthttp` | `updatePostRequest` | `title`, `body`, `attachment_ids`, `content_refs` |
-| `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `is_locked`, `is_pinned`, `is_nsfw`, `is_spoiler`, `flair_text`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments` |
+| `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `is_locked`, `is_pinned`, `is_nsfw`, `is_spoiler`, `flair_text`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments`, `effects` |
 | `posthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `posthttp` | `contentRefRequest` | `kind`, `ref_id` |
 | `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
@@ -389,6 +391,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `posthttp` | `postPreviewImageResponse` | `url`, `width`, `height`, `mime_type`, `alt_text`, `size_bytes` |
 | `posthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
 | `posthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
+| `posthttp` | `postEffectResponse` | `id`, `effect_id`, `name`, `emoji`, `asset_url`, `animation_key`, `applied_by_user`, `points_spent`, `created_at` |
 | `posthttp` | `publishPostResponse` | `post` |
 | `posthttp` | `listCommunityPostsResponse` | `posts`, `limit`, `offset`, `next_offset`, `has_more` |
 | `posthttp` | `getPostResponse` | `post` |
@@ -400,7 +403,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `commenthttp` | `contentRefRequest` | `kind`, `ref_id` |
 | `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
 | `commenthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
-| `commenthttp` | `commentEffectResponse` | `id`, `effect_id`, `name`, `asset_url`, `animation_key`, `applied_by_user`, `points_spent`, `created_at` |
+| `commenthttp` | `commentEffectResponse` | `id`, `effect_id`, `name`, `emoji`, `asset_url`, `animation_key`, `applied_by_user`, `points_spent`, `created_at` |
 | `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |
 | `commenthttp` | `publishCommentResponse` | `comment` |
 | `commenthttp` | `commentVoteResponse` | `comment_id`, `user_id`, `value`, `created_at`, `updated_at` |
@@ -497,7 +500,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `messagehttp` | `summaryResponse` | `unread_total`, `request_count`, `unread_conversations`, `online_status_enabled` |
 | `messagehttp` | `listConversationsResponse` | `conversations`, `box`, `limit`, `offset`, `next_offset`, `has_more` |
 | `messagehttp` | `conversationMutationResponse` | `conversation`, `message` |
-| `messagehttp` | `conversationResponse` | `id`, `box`, `request_id`, `request_status`, `request_direction`, `viewer_can_accept_request`, `viewer_can_reject_request`, `request_created_by_me`, `request_to_me`, `conversation_state`, `participant`, `last_message`, `unread_count`, `updated_at`, `pinned`, `muted`, `archived`, `blocked`, `can_send`, `disable_reason`, `peer_online_status_visible`, `peer_online` |
+| `messagehttp` | `conversationResponse` | `id`, `box`, `request_id`, `request_status`, `request_direction`, `viewer_can_accept_request`, `viewer_can_reject_request`, `viewer_can_reopen`, `request_created_by_me`, `request_to_me`, `conversation_state`, `participant`, `last_message`, `unread_count`, `updated_at`, `pinned`, `muted`, `archived`, `blocked`, `can_send`, `disable_reason`, `peer_online_status_visible`, `peer_online` |
 | `messagehttp` | `messageSummaryResponse` | `id`, `type`, `text`, `status`, `created_at` |
 | `messagehttp` | `listMessagesResponse` | `messages`, `limit`, `has_more`, `next_before` |
 | `messagehttp` | `messageResponse` | `id`, `conversation_id`, `sender`, `type`, `body`, `image_url`, `share`, `status`, `created_at`, `updated_at`, `recalled_at`, `viewer_deleted` |
@@ -524,15 +527,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-api-schema-
 | `contentrefhttp` | `resolveLinkPreviewResponse` | `preview` |
 | `contentrefhttp` | `embedResponse` | `id`, `provider`, `provider_ref`, `url`, `canonical_url`, `embed_url`, `iframe_allowed`, `title`, `description`, `image_url`, `author_name`, `status` |
 | `contentrefhttp` | `resolveEmbedResponse` | `embed` |
-| `effecthttp` | `effectResponse` | `id`, `name`, `description`, `cost_points`, `asset_url`, `animation_key`, `is_active`, `created_at`, `updated_at` |
+| `effecthttp` | `effectResponse` | `id`, `name`, `description`, `cost_points`, `asset_url`, `animation_key`, `emoji`, `is_active`, `created_at`, `updated_at` |
 | `effecthttp` | `listEffectsCatalogResponse` | `effects` |
 | `effecthttp` | `pointAccountResponse` | `user_id`, `balance`, `lifetime_earned`, `lifetime_spent`, `updated_at` |
 | `effecthttp` | `getMyPointsResponse` | `points` |
 | `effecthttp` | `pointTransactionResponse` | `id`, `user_id`, `delta`, `balance_after`, `reason`, `source_type`, `source_id`, `created_at` |
 | `effecthttp` | `listMyPointTransactionsResponse` | `transactions`, `limit`, `offset`, `next_offset`, `has_more` |
 | `effecthttp` | `applyCommentEffectRequest` | `effect_id` |
+| `effecthttp` | `applyPostEffectRequest` | `effect_id` |
 | `effecthttp` | `commentEffectResponse` | `id`, `comment_id`, `effect_id`, `user_id`, `points_spent`, `created_at` |
 | `effecthttp` | `applyCommentEffectResponse` | `comment_effect`, `points` |
+| `effecthttp` | `postEffectResponse` | `id`, `post_id`, `effect_id`, `user_id`, `points_spent`, `created_at` |
+| `effecthttp` | `applyPostEffectResponse` | `post_effect`, `points` |
 | `progressionhttp` | `progressionResponse` | `user_id`, `xp_total`, `level`, `level_name`, `current_level_xp`, `next_level_xp`, `level_progress`, `active_title`, `titles_count`, `updated_at` |
 | `progressionhttp` | `getMyProgressionResponse` | `progression` |
 | `progressionhttp` | `xpEventResponse` | `id`, `user_id`, `delta`, `xp_total_after`, `reason`, `source_type`, `source_id`, `actor_id`, `created_at` |
