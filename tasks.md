@@ -2,6 +2,34 @@
 
 ## 当前阶段
 
+- 阶段：`Stage 62 Backend API Gap Closure`
+- 状态：`DONE`
+- 分支：`main`
+- 目标：关闭前端 `backend-api-needs.md` 中 2.0P 幽默 / 笑了内容互动目录缺口。
+
+阶段退出标准：
+
+- `GET /api/v1/effects/catalog` 返回 active `humor` 和 `laughed`。
+- `humor` 字段为 `name=幽默`、`emoji=🎭`、`cost_points=5`。
+- `laughed` 字段为 `name=笑了`、`emoji=😆`、`cost_points=5`。
+- `POST /api/v1/posts/:id/effects` 和 `POST /api/v1/comments/:id/effects` 可使用 `effect_id=humor|laughed`，扣分和流水沿用现有内容互动。
+- 合同文档、migration 清单、前端缺口账本、基线验证和 Docker compose 重建通过。
+
+### T62-001：幽默 / 笑了内容互动目录
+
+- 状态：`DONE`
+- 优先级：`P0`
+- 前置依赖：`Stage 61 已完成`
+- 当前结论：
+  - 新增 `migrations/000042_add_humor_and_laughed_effects.*.sql`，upsert active `humor` 和 `laughed` 到 `effects` 目录。
+  - `humor` 使用 `name=幽默`、`emoji=🎭`、`cost_points=5`、空 `description` 和 `animation_key=humor`。
+  - `laughed` 使用 `name=笑了`、`emoji=😆`、`cost_points=5`、空 `description` 和 `animation_key=laughed`。
+  - 下行迁移只停用 `humor` 和 `laughed`，不删除行，避免已有历史帖子 / 评论互动被外键阻断。
+  - 帖子 / 评论购买与历史摘要复用 2.0N 已有通用内容互动链路。
+  - 帖子 `hot`、`rising` 和 `recommended` 排序已把 `post_effects.points_spent` 作为付费内容互动信号纳入计算，`best` / `top` 仍保持投票语义为主并用效果积分做同分兜底。
+
+## 上一阶段
+
 - 阶段：`Stage 61 Backend API Gap Closure`
 - 状态：`DONE`
 - 分支：`main`

@@ -481,15 +481,25 @@ func postListStatsJoin(sort postusecase.PostListSort) string {
 			WHERE status = 'visible'
 			GROUP BY post_id
 		) AS post_comment_stats ON post_comment_stats.post_id = posts.id
-		LEFT JOIN (
-			SELECT
-				post_id,
-				COUNT(*)::int AS save_count,
-				COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '6 hours')::int AS recent_save_count
-			FROM post_saves
-			GROUP BY post_id
-		) AS post_save_stats ON post_save_stats.post_id = posts.id
-	`
+			LEFT JOIN (
+				SELECT
+					post_id,
+					COUNT(*)::int AS save_count,
+					COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '6 hours')::int AS recent_save_count
+				FROM post_saves
+				GROUP BY post_id
+			) AS post_save_stats ON post_save_stats.post_id = posts.id
+			LEFT JOIN (
+				SELECT
+					post_id,
+					COUNT(*)::int AS effect_count,
+					COALESCE(SUM(points_spent), 0)::int AS effect_points,
+					COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '6 hours')::int AS recent_effect_count,
+					COALESCE(SUM(points_spent) FILTER (WHERE created_at >= NOW() - INTERVAL '6 hours'), 0)::int AS recent_effect_points
+				FROM post_effects
+				GROUP BY post_id
+			) AS post_effect_stats ON post_effect_stats.post_id = posts.id
+		`
 }
 
 func postRecommendationScore(sort postusecase.PostListSort) string {
@@ -512,12 +522,13 @@ func postHotScore() string {
 	return fmt.Sprintf(`
 		(
 			(
-				COALESCE(post_vote_stats.net_score, 0)::double precision * 3.0
-				+ COALESCE(post_comment_stats.comment_count, 0)::double precision * 2.0
-				+ COALESCE(post_save_stats.save_count, 0)::double precision * 4.0
-			) / POWER(%s + 2.0, 1.3)
-		)
-	`, postAgeHours())
+					COALESCE(post_vote_stats.net_score, 0)::double precision * 3.0
+					+ COALESCE(post_comment_stats.comment_count, 0)::double precision * 2.0
+					+ COALESCE(post_save_stats.save_count, 0)::double precision * 4.0
+					+ COALESCE(post_effect_stats.effect_points, 0)::double precision
+				) / POWER(%s + 2.0, 1.3)
+			)
+		`, postAgeHours())
 }
 
 func postFreshnessScore() string {
@@ -528,12 +539,13 @@ func postRisingScore() string {
 	return fmt.Sprintf(`
 		(
 			(
-				COALESCE(post_vote_stats.recent_vote_count, 0)::double precision * 3.0
-				+ COALESCE(post_comment_stats.recent_comment_count, 0)::double precision * 2.0
-				+ COALESCE(post_save_stats.recent_save_count, 0)::double precision * 4.0
-			) / POWER(%s + 0.5, 1.2)
-		)
-	`, postAgeHours())
+					COALESCE(post_vote_stats.recent_vote_count, 0)::double precision * 3.0
+					+ COALESCE(post_comment_stats.recent_comment_count, 0)::double precision * 2.0
+					+ COALESCE(post_save_stats.recent_save_count, 0)::double precision * 4.0
+					+ COALESCE(post_effect_stats.recent_effect_points, 0)::double precision
+				) / POWER(%s + 0.5, 1.2)
+			)
+		`, postAgeHours())
 }
 
 func postWilsonScore() string {
@@ -588,39 +600,45 @@ func postListOrderBy(sort postusecase.PostListSort) string {
 						)
 					) / (1 + (3.8416 / COALESCE(post_vote_stats.vote_count, 0)::double precision))
 				)
-			END DESC,
-			COALESCE(post_vote_stats.net_score, 0) DESC,
-			posts.created_at DESC,
-			posts.id DESC
-		`
+				END DESC,
+				COALESCE(post_vote_stats.net_score, 0) DESC,
+				COALESCE(post_effect_stats.effect_points, 0) DESC,
+				posts.created_at DESC,
+				posts.id DESC
+			`
 	case postusecase.PostListSortHot:
 		return `
 			(
-				COALESCE(post_vote_stats.net_score, 0) * 3
-				+ COALESCE(post_comment_stats.comment_count, 0) * 2
-				+ COALESCE(post_save_stats.save_count, 0) * 4
-			) / POWER(GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)) / 3600.0, 0) + 2, 1.3) DESC,
-			COALESCE(post_vote_stats.upvote_count, 0) DESC,
-			posts.created_at DESC,
-			posts.id DESC
-		`
+					COALESCE(post_vote_stats.net_score, 0) * 3
+					+ COALESCE(post_comment_stats.comment_count, 0) * 2
+					+ COALESCE(post_save_stats.save_count, 0) * 4
+					+ COALESCE(post_effect_stats.effect_points, 0)
+				) / POWER(GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)) / 3600.0, 0) + 2, 1.3) DESC,
+				COALESCE(post_vote_stats.upvote_count, 0) DESC,
+				COALESCE(post_effect_stats.effect_points, 0) DESC,
+				posts.created_at DESC,
+				posts.id DESC
+			`
 	case postusecase.PostListSortTop:
 		return `
-			COALESCE(post_vote_stats.net_score, 0) DESC,
-			COALESCE(post_vote_stats.upvote_count, 0) DESC,
-			posts.created_at DESC,
-			posts.id DESC
-		`
+				COALESCE(post_vote_stats.net_score, 0) DESC,
+				COALESCE(post_vote_stats.upvote_count, 0) DESC,
+				COALESCE(post_effect_stats.effect_points, 0) DESC,
+				posts.created_at DESC,
+				posts.id DESC
+			`
 	case postusecase.PostListSortRising:
 		return `
 			(
-				COALESCE(post_vote_stats.recent_vote_count, 0) * 3
-				+ COALESCE(post_comment_stats.recent_comment_count, 0) * 2
-				+ COALESCE(post_save_stats.recent_save_count, 0) * 4
-			) / POWER(GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)) / 3600.0, 0) + 0.5, 1.2) DESC,
-			posts.created_at DESC,
-			posts.id DESC
-		`
+					COALESCE(post_vote_stats.recent_vote_count, 0) * 3
+					+ COALESCE(post_comment_stats.recent_comment_count, 0) * 2
+					+ COALESCE(post_save_stats.recent_save_count, 0) * 4
+					+ COALESCE(post_effect_stats.recent_effect_points, 0)
+				) / POWER(GREATEST(EXTRACT(EPOCH FROM (NOW() - posts.created_at)) / 3600.0, 0) + 0.5, 1.2) DESC,
+				COALESCE(post_effect_stats.effect_points, 0) DESC,
+				posts.created_at DESC,
+				posts.id DESC
+			`
 	default:
 		return "posts.created_at DESC, posts.id DESC"
 	}

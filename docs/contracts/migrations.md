@@ -78,3 +78,4 @@
 | 000039 | create_point_reward_claims | Creates point reward claim records for idempotent automatic point grants |
 | 000040 | create_post_effects_and_emoji_catalog | Adds post effect records and resets active effect catalog to Chinese emoji content interactions |
 | 000041 | add_fake_news_effect | Adds active FakeNews content interaction to the effect catalog |
+| 000042 | add_humor_and_laughed_effects | Adds active humor and laughed content interactions to the effect catalog |

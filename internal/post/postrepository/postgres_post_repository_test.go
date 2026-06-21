@@ -365,6 +365,46 @@ func TestPostgresPostRepositoryListVisibleByCommunityHotSort(t *testing.T) {
 	}
 }
 
+func TestPostgresPostRepositoryListVisibleByCommunitySortsByPostEffects(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "effect-sort-"+randomSuffix())
+	effectID := insertTestEffect(ctx, t, pool, 8)
+
+	votedPost := mustPost(t, communityID, authorID, "Voted post", now)
+	effectPost := mustPost(t, communityID, authorID, "Effect post", now)
+	quietPost := mustPost(t, communityID, authorID, "Quiet post", now)
+
+	for _, post := range []*postdomain.Post{votedPost, effectPost, quietPost} {
+		if err := repo.Create(ctx, *post); err != nil {
+			t.Fatalf("Create post %q returned error: %v", post.Title().String(), err)
+		}
+		cleanupPost(ctx, t, pool, post.ID())
+	}
+
+	insertTestPostVote(ctx, t, pool, votedPost.ID(), insertTestUser(ctx, t, pool), 1)
+	insertTestPostEffect(ctx, t, pool, effectPost.ID(), effectID, insertTestUser(ctx, t, pool), 8, now)
+
+	hotPosts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortHot, nil, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByCommunity hot returned error: %v", err)
+	}
+	if len(hotPosts) != 3 || hotPosts[0].ID() != effectPost.ID() {
+		t.Fatalf("expected effect-backed post first in hot sort, got %#v", postIDs(hotPosts))
+	}
+
+	risingPosts, err := repo.ListVisibleByCommunity(ctx, communityID, postusecase.PostListSortRising, nil, 20, 0)
+	if err != nil {
+		t.Fatalf("ListVisibleByCommunity rising returned error: %v", err)
+	}
+	if len(risingPosts) != 3 || risingPosts[0].ID() != effectPost.ID() {
+		t.Fatalf("expected effect-backed post first in rising sort, got %#v", postIDs(risingPosts))
+	}
+}
+
 func TestPostgresPostRepositoryListVisibleByCommunityRankingSorts(t *testing.T) {
 	ctx, pool := newTestPool(t)
 	repo := NewPostgresPostRepository(pool)
@@ -606,7 +646,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requirePostSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "community_follows", "user_follows", "post_content_refs"} {
+	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "effects", "post_effects", "community_follows", "user_follows", "post_content_refs"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -773,6 +813,64 @@ func insertTestPostVote(ctx context.Context, t *testing.T, pool *pgxpool.Pool, p
 				AND user_id = $2::uuid
 		`, postID.String(), userID.String()); err != nil {
 			t.Fatalf("cleanup test post vote post=%q user=%q: %v", postID.String(), userID.String(), err)
+		}
+	})
+}
+
+func insertTestEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool, costPoints int) string {
+	t.Helper()
+
+	id := "post_repo_effect_" + randomSuffix()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO effects (
+			id,
+			name,
+			description,
+			cost_points,
+			asset_url,
+			animation_key,
+			emoji,
+			is_active,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, '', $3, '', $1, '✨', true, $4, $4)
+	`, id, "Post Repo Effect "+id, costPoints, testNow())
+	if err != nil {
+		t.Fatalf("insert test effect: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM effects WHERE id = $1`, id); err != nil {
+			t.Fatalf("cleanup test effect %q: %v", id, err)
+		}
+	})
+
+	return id
+}
+
+func insertTestPostEffect(ctx context.Context, t *testing.T, pool *pgxpool.Pool, postID postdomain.PostID, effectID string, userID userdomain.UserID, pointsSpent int, createdAt time.Time) {
+	t.Helper()
+
+	id := uuid.NewString()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO post_effects (
+			id,
+			post_id,
+			effect_id,
+			user_id,
+			points_spent,
+			created_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6)
+	`, id, postID.String(), effectID, userID.String(), pointsSpent, createdAt)
+	if err != nil {
+		t.Fatalf("insert test post effect: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM post_effects WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup test post effect %q: %v", id, err)
 		}
 	})
 }
