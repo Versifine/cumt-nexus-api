@@ -659,12 +659,22 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 			posts.id::text,
 			users.id::text,
 			users.username,
-			users.display_name,
-			users.avatar_url,
-			users.headline,
-			communities.id::text,
-			communities.slug,
-			communities.name,
+				users.display_name,
+				users.avatar_url,
+				users.headline,
+				users.is_platform_staff,
+				COALESCE(users.platform_role, ''),
+				(
+					SELECT community_memberships.role
+					FROM community_memberships
+					WHERE community_memberships.community_id = posts.community_id
+						AND community_memberships.user_id = posts.author_id
+						AND community_memberships.status = 'active'
+					LIMIT 1
+				) AS author_community_role,
+				communities.id::text,
+				communities.slug,
+				communities.name,
 			communities.description,
 			communities.status,
 			communities.visibility,
@@ -722,6 +732,9 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 		var rawDisplayName string
 		var rawAvatarURL string
 		var rawHeadline string
+		var authorIsPlatformStaff bool
+		var rawAuthorPlatformRole string
+		var rawAuthorCommunityRole pgtype.Text
 		var rawCommunityID string
 		var rawCommunitySlug string
 		var rawCommunityName string
@@ -741,6 +754,9 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 			&rawDisplayName,
 			&rawAvatarURL,
 			&rawHeadline,
+			&authorIsPlatformStaff,
+			&rawAuthorPlatformRole,
+			&rawAuthorCommunityRole,
 			&rawCommunityID,
 			&rawCommunitySlug,
 			&rawCommunityName,
@@ -762,12 +778,15 @@ func (repo *PostgresPostRepository) LoadMetadataByPostIDs(ctx context.Context, p
 		}
 		result[postID] = postusecase.PostMetadata{
 			Author: postusecase.UserSummary{
-				ID:          rawAuthorID,
-				Username:    rawUsername,
-				DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
-				AvatarURL:   rawAvatarURL,
-				Headline:    rawHeadline,
-				Badges:      []string{},
+				ID:              rawAuthorID,
+				Username:        rawUsername,
+				DisplayName:     fallbackDisplayName(rawDisplayName, rawUsername),
+				AvatarURL:       rawAvatarURL,
+				Headline:        rawHeadline,
+				CommunityRole:   rawAuthorCommunityRole.String,
+				PlatformRole:    rawAuthorPlatformRole,
+				IsPlatformStaff: authorIsPlatformStaff,
+				Badges:          []string{},
 			},
 			Community: postusecase.CommunitySummary{
 				ID:                rawCommunityID,
@@ -1069,15 +1088,26 @@ func (repo *PostgresPostRepository) ListPostEffectsByPostIDs(ctx context.Context
 			effects.animation_key,
 			users.id::text,
 			users.username,
-			users.display_name,
-			users.avatar_url,
-			users.headline,
-			post_effects.points_spent,
-			post_effects.created_at
-		FROM post_effects
-		INNER JOIN effects ON effects.id = post_effects.effect_id
-		INNER JOIN users ON users.id = post_effects.user_id
-		WHERE post_effects.post_id = ANY($1::uuid[])
+				users.display_name,
+				users.avatar_url,
+				users.headline,
+				users.is_platform_staff,
+				COALESCE(users.platform_role, ''),
+				(
+					SELECT community_memberships.role
+					FROM community_memberships
+					WHERE community_memberships.community_id = posts.community_id
+						AND community_memberships.user_id = post_effects.user_id
+						AND community_memberships.status = 'active'
+					LIMIT 1
+				) AS applied_user_community_role,
+				post_effects.points_spent,
+				post_effects.created_at
+			FROM post_effects
+			INNER JOIN effects ON effects.id = post_effects.effect_id
+			INNER JOIN posts ON posts.id = post_effects.post_id
+			INNER JOIN users ON users.id = post_effects.user_id
+			WHERE post_effects.post_id = ANY($1::uuid[])
 		ORDER BY post_effects.post_id ASC, post_effects.created_at DESC, post_effects.id DESC
 	`
 
@@ -1095,6 +1125,9 @@ func (repo *PostgresPostRepository) ListPostEffectsByPostIDs(ctx context.Context
 		var rawDisplayName string
 		var rawAvatarURL string
 		var rawHeadline string
+		var appliedByUserIsPlatformStaff bool
+		var rawAppliedByUserPlatformRole string
+		var rawAppliedByUserCommunityRole pgtype.Text
 		if err := rows.Scan(
 			&rawPostID,
 			&effect.ID,
@@ -1108,6 +1141,9 @@ func (repo *PostgresPostRepository) ListPostEffectsByPostIDs(ctx context.Context
 			&rawDisplayName,
 			&rawAvatarURL,
 			&rawHeadline,
+			&appliedByUserIsPlatformStaff,
+			&rawAppliedByUserPlatformRole,
+			&rawAppliedByUserCommunityRole,
 			&effect.PointsSpent,
 			&effect.CreatedAt,
 		); err != nil {
@@ -1118,12 +1154,15 @@ func (repo *PostgresPostRepository) ListPostEffectsByPostIDs(ctx context.Context
 			return nil, fmt.Errorf("rehydrate post effect post id: %v", err)
 		}
 		effect.AppliedByUser = postusecase.UserSummary{
-			ID:          rawAppliedByUserID,
-			Username:    rawUsername,
-			DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
-			AvatarURL:   rawAvatarURL,
-			Headline:    rawHeadline,
-			Badges:      []string{},
+			ID:              rawAppliedByUserID,
+			Username:        rawUsername,
+			DisplayName:     fallbackDisplayName(rawDisplayName, rawUsername),
+			AvatarURL:       rawAvatarURL,
+			Headline:        rawHeadline,
+			CommunityRole:   rawAppliedByUserCommunityRole.String,
+			PlatformRole:    rawAppliedByUserPlatformRole,
+			IsPlatformStaff: appliedByUserIsPlatformStaff,
+			Badges:          []string{},
 		}
 		result[postID] = append(result[postID], effect)
 	}

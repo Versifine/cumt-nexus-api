@@ -56,6 +56,8 @@ type publicUserResponse struct {
 	Badges            []string                       `json:"badges"`
 	Roles             []string                       `json:"roles"`
 	Status            string                         `json:"status"`
+	IsPlatformStaff   bool                           `json:"is_platform_staff"`
+	PlatformRole      string                         `json:"platform_role"`
 	Stats             publicUserStatsResponse        `json:"stats"`
 	Progression       publicUserProgressionResponse  `json:"progression"`
 	DMCapability      publicUserDMCapabilityResponse `json:"dm_capability"`
@@ -326,16 +328,18 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 
 func toPublicUserResponse(user userusecase.PublicUser) publicUserResponse {
 	return publicUserResponse{
-		ID:          user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		AvatarURL:   user.AvatarURL,
-		BannerURL:   user.BannerURL,
-		Headline:    user.Headline,
-		Bio:         user.Bio,
-		Badges:      user.Badges,
-		Roles:       user.Roles,
-		Status:      user.Status,
+		ID:              user.ID,
+		Username:        user.Username,
+		DisplayName:     user.DisplayName,
+		AvatarURL:       user.AvatarURL,
+		BannerURL:       user.BannerURL,
+		Headline:        user.Headline,
+		Bio:             user.Bio,
+		Badges:          user.Badges,
+		Roles:           user.Roles,
+		Status:          user.Status,
+		IsPlatformStaff: user.IsPlatformStaff,
+		PlatformRole:    user.PlatformRole,
 		Stats: publicUserStatsResponse{
 			PostCount:      user.Stats.PostCount,
 			CommentCount:   user.Stats.CommentCount,

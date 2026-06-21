@@ -248,12 +248,15 @@ type ContentRef struct {
 }
 
 type UserSummary struct {
-	ID          string
-	Username    string
-	DisplayName string
-	AvatarURL   string
-	Headline    string
-	Badges      []string
+	ID              string
+	Username        string
+	DisplayName     string
+	AvatarURL       string
+	Headline        string
+	CommunityRole   string
+	PlatformRole    string
+	IsPlatformStaff bool
+	Badges          []string
 }
 
 type CommunitySummary struct {

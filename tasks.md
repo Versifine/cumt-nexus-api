@@ -2,6 +2,32 @@
 
 ## 当前阶段
 
+- 阶段：`Stage 63 Backend API Gap Closure`
+- 状态：`DONE`
+- 分支：`main`
+- 目标：关闭前端 `backend-api-needs.md` 中 2.0Q 内容作者身份标识字段缺口。
+
+阶段退出标准：
+
+- 帖子列表、帖子详情、用户帖子、保存帖子和帖子效果摘要的用户摘要返回 `community_role`、`platform_role` 和 `is_platform_staff`。
+- 评论列表、评论树、评论发布 / 更新响应、用户评论和评论效果摘要的用户摘要返回同样字段。
+- 公开用户响应返回 `platform_role` 与 `is_platform_staff`。
+- `community_role` 基于内容所属社区内的作者 / 互动用户 active membership，不使用当前查看者的 `viewer_role`。
+- 合同文档、前端缺口账本、基线验证和 Docker compose 重建通过。
+
+### T63-001：内容作者身份标识字段
+
+- 状态：`DONE`
+- 优先级：`P0`
+- 前置依赖：`Stage 62 已完成`
+- 当前结论：
+  - `postusecase.UserSummary` 增加 `community_role`、`platform_role` 和 `is_platform_staff`，帖子作者和帖子效果 `applied_by_user` 共用该摘要。
+  - 评论作者和评论效果 `applied_by_user` 复用同一身份摘要字段。
+  - 帖子 / 评论仓储按内容所属社区查询 active `community_memberships.role`，平台身份来自 `users.platform_role` 和 `users.is_platform_staff`。
+  - 公开用户与资料更新响应返回 `platform_role` 和 `is_platform_staff`。
+
+## 上一阶段
+
 - 阶段：`Stage 62 Backend API Gap Closure`
 - 状态：`DONE`
 - 分支：`main`

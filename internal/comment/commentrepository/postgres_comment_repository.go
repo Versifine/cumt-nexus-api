@@ -408,14 +408,25 @@ func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Cont
 		SELECT
 			comments.id::text,
 			users.id::text,
-			users.username,
-			users.display_name,
-			users.avatar_url,
-			users.headline
-		FROM comments
-		INNER JOIN users ON users.id = comments.author_id
-		WHERE comments.id = ANY($1::uuid[])
-	`
+				users.username,
+				users.display_name,
+				users.avatar_url,
+				users.headline,
+				users.is_platform_staff,
+				COALESCE(users.platform_role, ''),
+				(
+					SELECT community_memberships.role
+					FROM community_memberships
+					WHERE community_memberships.community_id = posts.community_id
+						AND community_memberships.user_id = comments.author_id
+						AND community_memberships.status = 'active'
+					LIMIT 1
+				) AS author_community_role
+			FROM comments
+			INNER JOIN users ON users.id = comments.author_id
+			INNER JOIN posts ON posts.id = comments.post_id
+			WHERE comments.id = ANY($1::uuid[])
+		`
 
 	rows, err := repo.pool.Query(ctx, query, commentIDStrings(commentIDs))
 	if err != nil {
@@ -430,7 +441,20 @@ func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Cont
 		var rawDisplayName string
 		var rawAvatarURL string
 		var rawHeadline string
-		if err := rows.Scan(&rawCommentID, &rawAuthorID, &rawUsername, &rawDisplayName, &rawAvatarURL, &rawHeadline); err != nil {
+		var authorIsPlatformStaff bool
+		var rawAuthorPlatformRole string
+		var rawAuthorCommunityRole pgtype.Text
+		if err := rows.Scan(
+			&rawCommentID,
+			&rawAuthorID,
+			&rawUsername,
+			&rawDisplayName,
+			&rawAvatarURL,
+			&rawHeadline,
+			&authorIsPlatformStaff,
+			&rawAuthorPlatformRole,
+			&rawAuthorCommunityRole,
+		); err != nil {
 			return nil, err
 		}
 		commentID, err := commentdomain.NewCommentID(rawCommentID)
@@ -439,12 +463,15 @@ func (repo *PostgresCommentRepository) LoadMetadataByCommentIDs(ctx context.Cont
 		}
 		result[commentID] = commentusecase.CommentMetadata{
 			Author: postusecase.UserSummary{
-				ID:          rawAuthorID,
-				Username:    rawUsername,
-				DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
-				AvatarURL:   rawAvatarURL,
-				Headline:    rawHeadline,
-				Badges:      []string{},
+				ID:              rawAuthorID,
+				Username:        rawUsername,
+				DisplayName:     fallbackDisplayName(rawDisplayName, rawUsername),
+				AvatarURL:       rawAvatarURL,
+				Headline:        rawHeadline,
+				CommunityRole:   rawAuthorCommunityRole.String,
+				PlatformRole:    rawAuthorPlatformRole,
+				IsPlatformStaff: authorIsPlatformStaff,
+				Badges:          []string{},
 			},
 		}
 	}
@@ -472,15 +499,27 @@ func (repo *PostgresCommentRepository) ListCommentEffectsByCommentIDs(ctx contex
 			effects.animation_key,
 			users.id::text,
 			users.username,
-			users.display_name,
-			users.avatar_url,
-			users.headline,
-			comment_effects.points_spent,
-			comment_effects.created_at
-		FROM comment_effects
-		INNER JOIN effects ON effects.id = comment_effects.effect_id
-		INNER JOIN users ON users.id = comment_effects.user_id
-		WHERE comment_effects.comment_id = ANY($1::uuid[])
+				users.display_name,
+				users.avatar_url,
+				users.headline,
+				users.is_platform_staff,
+				COALESCE(users.platform_role, ''),
+				(
+					SELECT community_memberships.role
+					FROM community_memberships
+					WHERE community_memberships.community_id = posts.community_id
+						AND community_memberships.user_id = comment_effects.user_id
+						AND community_memberships.status = 'active'
+					LIMIT 1
+				) AS applied_user_community_role,
+				comment_effects.points_spent,
+				comment_effects.created_at
+			FROM comment_effects
+			INNER JOIN effects ON effects.id = comment_effects.effect_id
+			INNER JOIN comments ON comments.id = comment_effects.comment_id
+			INNER JOIN posts ON posts.id = comments.post_id
+			INNER JOIN users ON users.id = comment_effects.user_id
+			WHERE comment_effects.comment_id = ANY($1::uuid[])
 		ORDER BY comment_effects.comment_id ASC, comment_effects.created_at DESC, comment_effects.id DESC
 	`
 
@@ -498,6 +537,9 @@ func (repo *PostgresCommentRepository) ListCommentEffectsByCommentIDs(ctx contex
 		var rawDisplayName string
 		var rawAvatarURL string
 		var rawHeadline string
+		var appliedByUserIsPlatformStaff bool
+		var rawAppliedByUserPlatformRole string
+		var rawAppliedByUserCommunityRole pgtype.Text
 		if err := rows.Scan(
 			&rawCommentID,
 			&effect.ID,
@@ -511,6 +553,9 @@ func (repo *PostgresCommentRepository) ListCommentEffectsByCommentIDs(ctx contex
 			&rawDisplayName,
 			&rawAvatarURL,
 			&rawHeadline,
+			&appliedByUserIsPlatformStaff,
+			&rawAppliedByUserPlatformRole,
+			&rawAppliedByUserCommunityRole,
 			&effect.PointsSpent,
 			&effect.CreatedAt,
 		); err != nil {
@@ -521,12 +566,15 @@ func (repo *PostgresCommentRepository) ListCommentEffectsByCommentIDs(ctx contex
 			return nil, fmt.Errorf("rehydrate comment effect comment id: %v", err)
 		}
 		effect.AppliedByUser = postusecase.UserSummary{
-			ID:          rawAppliedByUserID,
-			Username:    rawUsername,
-			DisplayName: fallbackDisplayName(rawDisplayName, rawUsername),
-			AvatarURL:   rawAvatarURL,
-			Headline:    rawHeadline,
-			Badges:      []string{},
+			ID:              rawAppliedByUserID,
+			Username:        rawUsername,
+			DisplayName:     fallbackDisplayName(rawDisplayName, rawUsername),
+			AvatarURL:       rawAvatarURL,
+			Headline:        rawHeadline,
+			CommunityRole:   rawAppliedByUserCommunityRole.String,
+			PlatformRole:    rawAppliedByUserPlatformRole,
+			IsPlatformStaff: appliedByUserIsPlatformStaff,
+			Badges:          []string{},
 		}
 		result[commentID] = append(result[commentID], effect)
 	}

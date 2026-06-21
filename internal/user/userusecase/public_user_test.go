@@ -21,6 +21,10 @@ func TestGetPublicUserReturnsStoredProfileFields(t *testing.T) {
 		commentCount:   4,
 		followerCount:  5,
 		followingCount: 6,
+		platformAccess: PlatformAccess{
+			IsPlatformStaff: true,
+			PlatformRole:    "staff",
+		},
 	}
 	uc := NewPublicUserUseCase(repo)
 
@@ -45,6 +49,9 @@ func TestGetPublicUserReturnsStoredProfileFields(t *testing.T) {
 	}
 	if result.User.Stats.PostCount != 3 || result.User.Stats.CommentCount != 4 || result.User.Stats.FollowerCount != 5 || result.User.Stats.FollowingCount != 6 {
 		t.Fatalf("unexpected stats: %#v", result.User.Stats)
+	}
+	if !result.User.IsPlatformStaff || result.User.PlatformRole != "staff" {
+		t.Fatalf("unexpected platform access: staff=%v role=%q", result.User.IsPlatformStaff, result.User.PlatformRole)
 	}
 }
 
@@ -122,6 +129,7 @@ type fakePublicUserRepository struct {
 	followingCount int
 	isFollowing    bool
 	followedUsers  []userdomain.User
+	platformAccess PlatformAccess
 }
 
 func (f *fakePublicUserRepository) FindByUsername(ctx context.Context, username userdomain.Username) (*userdomain.User, error) {
@@ -142,6 +150,10 @@ func (f *fakePublicUserRepository) CountFollowers(ctx context.Context, userID us
 
 func (f *fakePublicUserRepository) CountFollowing(ctx context.Context, userID userdomain.UserID) (int, error) {
 	return f.followingCount, nil
+}
+
+func (f *fakePublicUserRepository) FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (PlatformAccess, error) {
+	return f.platformAccess, nil
 }
 
 func (f *fakePublicUserRepository) IsFollowing(ctx context.Context, followerID userdomain.UserID, followingID userdomain.UserID) (bool, error) {

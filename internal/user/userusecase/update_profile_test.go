@@ -17,6 +17,10 @@ func TestUpdateProfileSuccess(t *testing.T) {
 		user:         user,
 		postCount:    7,
 		commentCount: 9,
+		platformAccess: PlatformAccess{
+			IsPlatformStaff: true,
+			PlatformRole:    "admin",
+		},
 	}
 	uc := NewUpdateProfileUseCase(repo, func() time.Time { return now })
 
@@ -57,6 +61,9 @@ func TestUpdateProfileSuccess(t *testing.T) {
 	}
 	if result.User.Stats.PostCount != 7 || result.User.Stats.CommentCount != 9 {
 		t.Fatalf("unexpected stats: %#v", result.User.Stats)
+	}
+	if !result.User.IsPlatformStaff || result.User.PlatformRole != "admin" {
+		t.Fatalf("unexpected platform access: staff=%v role=%q", result.User.IsPlatformStaff, result.User.PlatformRole)
 	}
 	if repo.updatedUser.DisplayName().String() != "Alice" {
 		t.Fatalf("expected updated user display name, got %q", repo.updatedUser.DisplayName().String())
@@ -184,6 +191,7 @@ type fakeProfileRepository struct {
 	followingCount int
 	findErr        error
 	updateErr      error
+	platformAccess PlatformAccess
 }
 
 func (f *fakeProfileRepository) FindByID(ctx context.Context, id userdomain.UserID) (*userdomain.User, error) {
@@ -214,4 +222,8 @@ func (f *fakeProfileRepository) CountFollowers(ctx context.Context, userID userd
 
 func (f *fakeProfileRepository) CountFollowing(ctx context.Context, userID userdomain.UserID) (int, error) {
 	return f.followingCount, nil
+}
+
+func (f *fakeProfileRepository) FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (PlatformAccess, error) {
+	return f.platformAccess, nil
 }

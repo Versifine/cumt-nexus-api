@@ -8,6 +8,7 @@ import (
 
 	"github.com/Versifine/cumt-nexus-api/internal/apperr"
 	"github.com/Versifine/cumt-nexus-api/internal/user/userdomain"
+	"github.com/Versifine/cumt-nexus-api/internal/user/userusecase"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -108,6 +109,25 @@ func (ur *PostgresUserRepository) FindByUsername(ctx context.Context, username u
 	row := ur.pool.QueryRow(ctx, query, username.String())
 
 	return scanUser(row)
+}
+
+func (ur *PostgresUserRepository) FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (userusecase.PlatformAccess, error) {
+	const query = `
+		SELECT
+			is_platform_staff,
+			COALESCE(platform_role, '')
+		FROM users
+		WHERE id = $1::uuid
+		LIMIT 1
+	`
+	var access userusecase.PlatformAccess
+	if err := ur.pool.QueryRow(ctx, query, userID.String()).Scan(&access.IsPlatformStaff, &access.PlatformRole); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return userusecase.PlatformAccess{}, apperr.New(apperr.CodeNotFound, "user not found")
+		}
+		return userusecase.PlatformAccess{}, fmt.Errorf("find user platform access: %w", err)
+	}
+	return access, nil
 }
 
 func (ur *PostgresUserRepository) CountVisiblePostsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error) {

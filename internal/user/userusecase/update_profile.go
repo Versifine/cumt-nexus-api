@@ -23,6 +23,7 @@ type ProfileRepository interface {
 	CountVisibleCommentsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error)
 	CountFollowers(ctx context.Context, userID userdomain.UserID) (int, error)
 	CountFollowing(ctx context.Context, userID userdomain.UserID) (int, error)
+	FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (PlatformAccess, error)
 }
 
 type UpdateProfileInput struct {
@@ -127,6 +128,10 @@ func (uc *UpdateProfileUseCase) UpdateProfile(ctx context.Context, input UpdateP
 	if err != nil {
 		return UpdateProfileResult{}, fmt.Errorf("count followed users: %w", err)
 	}
+	access, err := uc.users.FindPlatformAccess(ctx, user.ID())
+	if err != nil {
+		return UpdateProfileResult{}, fmt.Errorf("find profile user platform access: %w", err)
+	}
 
 	return UpdateProfileResult{
 		User: buildPublicUser(
@@ -136,6 +141,7 @@ func (uc *UpdateProfileUseCase) UpdateProfile(ctx context.Context, input UpdateP
 			followerCount,
 			followingCount,
 			false,
+			access,
 			progressionusecase.BuildProgression(progressionusecase.ProgressionRecord{UserID: user.ID().String()}),
 			selfDMCapability(),
 		),

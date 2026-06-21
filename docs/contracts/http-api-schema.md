@@ -302,7 +302,7 @@ schema 字段清单、接口 schema 映射和请求必填字段清单需要通�
 | `authhttp` | `deleteAccountCodeRequest` | `email` |
 | `authhttp` | `deleteAccountRequest` | `code`, `current_password`, `confirmation` |
 | `userhttp` | `currentUserResponse` | `id`, `username`, `status`, `is_platform_staff`, `platform_role`, `created_at` |
-| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `stats`, `progression`, `dm_capability`, `viewer_is_following`, `created_at` |
+| `userhttp` | `publicUserResponse` | `id`, `username`, `display_name`, `avatar_url`, `banner_url`, `headline`, `bio`, `badges`, `roles`, `status`, `is_platform_staff`, `platform_role`, `stats`, `progression`, `dm_capability`, `viewer_is_following`, `created_at` |
 | `userhttp` | `publicUserDMCapabilityResponse` | `can_start`, `requires_request`, `reason`, `direct_conversation_id`, `viewer_relation` |
 | `userhttp` | `publicUserProgressionResponse` | `level`, `level_name`, `xp_total`, `current_level_xp`, `next_level_xp`, `level_progress`, `active_title`, `titles_count` |
 | `userhttp` | `publicUserTitleResponse` | `grant_id`, `title_id`, `name`, `scope_type`, `scope_id` |
@@ -384,7 +384,7 @@ schema 字段清单、接口 schema 映射和请求必填字段清单需要通�
 | `posthttp` | `postResponse` | `id`, `community_id`, `author_id`, `title`, `body`, `body_excerpt`, `format`, `content_refs`, `status`, `is_locked`, `is_pinned`, `is_nsfw`, `is_spoiler`, `flair_text`, `community`, `author`, `upvote_count`, `downvote_count`, `comment_count`, `save_count`, `score`, `my_vote`, `is_saved`, `preview`, `viewer_permissions`, `created_at`, `updated_at`, `attachments`, `effects` |
 | `posthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `posthttp` | `contentRefRequest` | `kind`, `ref_id` |
-| `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
+| `posthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `community_role`, `platform_role`, `is_platform_staff`, `badges` |
 | `posthttp` | `communitySummaryResponse` | `id`, `slug`, `name`, `description`, `avatar_url`, `banner_url`, `member_count`, `post_count`, `viewer_is_following`, `viewer_role`, `viewer_permissions` |
 | `posthttp` | `communityViewerPermissionsResponse` | `can_post`, `can_manage`, `can_moderate`, `platform_owner_override` |
 | `posthttp` | `postPreviewResponse` | `kind`, `image` |
@@ -401,7 +401,7 @@ schema 字段清单、接口 schema 映射和请求必填字段清单需要通�
 | `commenthttp` | `commentResponse` | `id`, `post_id`, `author_id`, `parent_id`, `body`, `format`, `content_refs`, `author`, `status`, `depth`, `reply_count`, `has_more_replies`, `upvote_count`, `downvote_count`, `score`, `my_vote`, `viewer_permissions`, `children`, `created_at`, `updated_at`, `attachments`, `effects` |
 | `commenthttp` | `contentRefResponse` | `kind`, `ref_id` |
 | `commenthttp` | `contentRefRequest` | `kind`, `ref_id` |
-| `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `badges` |
+| `commenthttp` | `userSummaryResponse` | `id`, `username`, `display_name`, `avatar_url`, `headline`, `community_role`, `platform_role`, `is_platform_staff`, `badges` |
 | `commenthttp` | `viewerPermissionsResponse` | `can_comment`, `can_vote`, `can_report`, `can_edit`, `can_delete`, `can_moderate` |
 | `commenthttp` | `commentEffectResponse` | `id`, `effect_id`, `name`, `emoji`, `asset_url`, `animation_key`, `applied_by_user`, `points_spent`, `created_at` |
 | `commenthttp` | `attachmentResponse` | `id`, `kind`, `url`, `thumbnail_url`, `width`, `height`, `size_bytes`, `mime_type`, `alt_text`, `status`, `created_at` |

@@ -114,8 +114,10 @@ func TestPostgresPostRepositoryLoadMetadataByPostIDsReturnsViewerCommunityContex
 
 	authorID := insertTestUser(ctx, t, pool)
 	updateTestUserProfile(ctx, t, pool, authorID, "Alice", "https://example.com/avatar.jpg", "Backend builder")
+	updateTestUserPlatformAccess(ctx, t, pool, authorID, true, "staff")
 	viewerID := insertTestUser(ctx, t, pool)
 	communityID := insertTestCommunity(ctx, t, pool, authorID, "metadata-"+randomSuffix())
+	insertTestCommunityMembership(ctx, t, pool, communityID, authorID, communitydomain.MembershipRoleOwner)
 	insertTestCommunityFollow(ctx, t, pool, communityID, viewerID)
 	insertTestCommunityMembership(ctx, t, pool, communityID, viewerID, communitydomain.MembershipRoleModerator)
 	post := mustPost(t, communityID, authorID, "Metadata viewer context", now)
@@ -140,6 +142,41 @@ func TestPostgresPostRepositoryLoadMetadataByPostIDsReturnsViewerCommunityContex
 	}
 	if got.Author.DisplayName != "Alice" || got.Author.AvatarURL != "https://example.com/avatar.jpg" || got.Author.Headline != "Backend builder" {
 		t.Fatalf("expected author profile fields, got %#v", got.Author)
+	}
+	if got.Author.CommunityRole != communitydomain.MembershipRoleOwner.String() || got.Author.PlatformRole != "staff" || !got.Author.IsPlatformStaff {
+		t.Fatalf("expected author identity fields, got %#v", got.Author)
+	}
+}
+
+func TestPostgresPostRepositoryListPostEffectsByPostIDsReturnsAppliedUserIdentity(t *testing.T) {
+	ctx, pool := newTestPool(t)
+	repo := NewPostgresPostRepository(pool)
+	now := testNow()
+
+	authorID := insertTestUser(ctx, t, pool)
+	applierID := insertTestUser(ctx, t, pool)
+	updateTestUserProfile(ctx, t, pool, applierID, "Bob", "https://example.com/bob.png", "Effect sender")
+	updateTestUserPlatformAccess(ctx, t, pool, applierID, true, "admin")
+	communityID := insertTestCommunity(ctx, t, pool, authorID, "post-effect-"+randomSuffix())
+	insertTestCommunityMembership(ctx, t, pool, communityID, applierID, communitydomain.MembershipRoleModerator)
+	post := mustPost(t, communityID, authorID, "Effect summary identity", now)
+	if err := repo.Create(ctx, *post); err != nil {
+		t.Fatalf("Create post returned error: %v", err)
+	}
+	cleanupPost(ctx, t, pool, post.ID())
+	effectID := insertTestEffect(ctx, t, pool, 8)
+	insertTestPostEffect(ctx, t, pool, post.ID(), effectID, applierID, 8, now.Add(time.Minute))
+
+	effects, err := repo.ListPostEffectsByPostIDs(ctx, []postdomain.PostID{post.ID()})
+	if err != nil {
+		t.Fatalf("ListPostEffectsByPostIDs returned error: %v", err)
+	}
+	got := effects[post.ID()]
+	if len(got) != 1 {
+		t.Fatalf("expected one post effect, got %#v", got)
+	}
+	if got[0].AppliedByUser.DisplayName != "Bob" || got[0].AppliedByUser.CommunityRole != communitydomain.MembershipRoleModerator.String() || got[0].AppliedByUser.PlatformRole != "admin" || !got[0].AppliedByUser.IsPlatformStaff {
+		t.Fatalf("unexpected post effect applied user: %#v", got[0].AppliedByUser)
 	}
 }
 
@@ -646,7 +683,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requirePostSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "post_votes", "post_saves", "effects", "post_effects", "community_follows", "user_follows", "post_content_refs"} {
+	for _, table := range []string{"users", "communities", "community_memberships", "posts", "comments", "post_votes", "post_saves", "effects", "post_effects", "community_follows", "user_follows", "post_content_refs"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -738,6 +775,18 @@ func updateTestUserProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool
 		WHERE id = $1::uuid
 	`, userID.String(), displayName, avatarURL, headline); err != nil {
 		t.Fatalf("update test user profile: %v", err)
+	}
+}
+
+func updateTestUserPlatformAccess(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID userdomain.UserID, isPlatformStaff bool, platformRole string) {
+	t.Helper()
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE users
+		SET is_platform_staff = $2, platform_role = $3, updated_at = $4
+		WHERE id = $1::uuid
+	`, userID.String(), isPlatformStaff, platformRole, testNow()); err != nil {
+		t.Fatalf("update test user platform access: %v", err)
 	}
 }
 

@@ -23,6 +23,7 @@ type PublicUserRepository interface {
 	CountVisibleCommentsByAuthorInPublicCommunities(ctx context.Context, authorID userdomain.UserID) (int, error)
 	CountFollowers(ctx context.Context, userID userdomain.UserID) (int, error)
 	CountFollowing(ctx context.Context, userID userdomain.UserID) (int, error)
+	FindPlatformAccess(ctx context.Context, userID userdomain.UserID) (PlatformAccess, error)
 	IsFollowing(ctx context.Context, followerID userdomain.UserID, followingID userdomain.UserID) (bool, error)
 	FollowUser(ctx context.Context, followerID userdomain.UserID, followingID userdomain.UserID, now time.Time) error
 	DeleteUserFollow(ctx context.Context, followerID userdomain.UserID, followingID userdomain.UserID) error
@@ -85,6 +86,8 @@ type PublicUser struct {
 	Badges            []string
 	Roles             []string
 	Status            string
+	IsPlatformStaff   bool
+	PlatformRole      string
 	Stats             PublicUserStats
 	Progression       PublicUserProgression
 	DMCapability      PublicUserDMCapability
@@ -249,6 +252,10 @@ func (uc *PublicUserUseCase) buildPublicUser(ctx context.Context, user userdomai
 	if err != nil {
 		return PublicUser{}, fmt.Errorf("count followed users: %w", err)
 	}
+	access, err := uc.users.FindPlatformAccess(ctx, user.ID())
+	if err != nil {
+		return PublicUser{}, fmt.Errorf("find public user platform access: %w", err)
+	}
 	viewerIsFollowing := false
 	if !isBlankUserID(viewerID) && viewerID != user.ID() {
 		viewerIsFollowing, err = uc.users.IsFollowing(ctx, viewerID, user.ID())
@@ -267,21 +274,23 @@ func (uc *PublicUserUseCase) buildPublicUser(ctx context.Context, user userdomai
 	if err != nil {
 		return PublicUser{}, err
 	}
-	return buildPublicUser(&user, postCount, commentCount, followerCount, followingCount, viewerIsFollowing, progression, dmCapability), nil
+	return buildPublicUser(&user, postCount, commentCount, followerCount, followingCount, viewerIsFollowing, access, progression, dmCapability), nil
 }
 
-func buildPublicUser(user *userdomain.User, postCount int, commentCount int, followerCount int, followingCount int, viewerIsFollowing bool, progression progressionusecase.Progression, dmCapability PublicUserDMCapability) PublicUser {
+func buildPublicUser(user *userdomain.User, postCount int, commentCount int, followerCount int, followingCount int, viewerIsFollowing bool, access PlatformAccess, progression progressionusecase.Progression, dmCapability PublicUserDMCapability) PublicUser {
 	return PublicUser{
-		ID:          user.ID().String(),
-		Username:    user.Username().String(),
-		DisplayName: publicDisplayName(user),
-		AvatarURL:   user.AvatarURL().String(),
-		BannerURL:   user.BannerURL().String(),
-		Headline:    user.Headline().String(),
-		Bio:         user.Bio().String(),
-		Badges:      []string{},
-		Roles:       []string{},
-		Status:      user.Status().String(),
+		ID:              user.ID().String(),
+		Username:        user.Username().String(),
+		DisplayName:     publicDisplayName(user),
+		AvatarURL:       user.AvatarURL().String(),
+		BannerURL:       user.BannerURL().String(),
+		Headline:        user.Headline().String(),
+		Bio:             user.Bio().String(),
+		Badges:          []string{},
+		Roles:           []string{},
+		Status:          user.Status().String(),
+		IsPlatformStaff: access.IsPlatformStaff,
+		PlatformRole:    access.PlatformRole,
 		Stats: PublicUserStats{
 			PostCount:      postCount,
 			CommentCount:   commentCount,

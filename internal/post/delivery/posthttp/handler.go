@@ -87,12 +87,15 @@ type contentRefRequest struct {
 }
 
 type userSummaryResponse struct {
-	ID          string   `json:"id"`
-	Username    string   `json:"username"`
-	DisplayName string   `json:"display_name"`
-	AvatarURL   string   `json:"avatar_url"`
-	Headline    string   `json:"headline"`
-	Badges      []string `json:"badges"`
+	ID              string   `json:"id"`
+	Username        string   `json:"username"`
+	DisplayName     string   `json:"display_name"`
+	AvatarURL       string   `json:"avatar_url"`
+	Headline        string   `json:"headline"`
+	CommunityRole   string   `json:"community_role"`
+	PlatformRole    string   `json:"platform_role"`
+	IsPlatformStaff bool     `json:"is_platform_staff"`
+	Badges          []string `json:"badges"`
 }
 
 type communitySummaryResponse struct {
@@ -613,12 +616,15 @@ func toUserSummaryResponse(user postusecase.UserSummary) userSummaryResponse {
 		badges = []string{}
 	}
 	return userSummaryResponse{
-		ID:          user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		AvatarURL:   user.AvatarURL,
-		Headline:    user.Headline,
-		Badges:      badges,
+		ID:              user.ID,
+		Username:        user.Username,
+		DisplayName:     user.DisplayName,
+		AvatarURL:       user.AvatarURL,
+		Headline:        user.Headline,
+		CommunityRole:   user.CommunityRole,
+		PlatformRole:    user.PlatformRole,
+		IsPlatformStaff: user.IsPlatformStaff,
+		Badges:          badges,
 	}
 }
 

@@ -107,7 +107,9 @@ func TestPostgresCommentRepositoryLoadMetadataByCommentIDsReturnsAuthorProfile(t
 
 	authorID := insertTestUser(ctx, t, pool)
 	updateTestUserProfile(ctx, t, pool, authorID, "Alice", "https://example.com/avatar.jpg", "Backend builder")
+	updateTestUserPlatformAccess(ctx, t, pool, authorID, true, "staff")
 	communityID := insertTestCommunity(ctx, t, pool, authorID, "comment-meta-"+randomSuffix())
+	insertTestCommunityMembership(ctx, t, pool, communityID, authorID, communitydomain.MembershipRoleModerator)
 	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Comment metadata post")
 	comment := mustComment(t, postID, authorID, nil, "Metadata comment", now)
 	if err := repo.Create(ctx, *comment); err != nil {
@@ -123,6 +125,9 @@ func TestPostgresCommentRepositoryLoadMetadataByCommentIDsReturnsAuthorProfile(t
 	if got.Author.DisplayName != "Alice" || got.Author.AvatarURL != "https://example.com/avatar.jpg" || got.Author.Headline != "Backend builder" {
 		t.Fatalf("expected author profile fields, got %#v", got.Author)
 	}
+	if got.Author.CommunityRole != communitydomain.MembershipRoleModerator.String() || got.Author.PlatformRole != "staff" || !got.Author.IsPlatformStaff {
+		t.Fatalf("expected author identity fields, got %#v", got.Author)
+	}
 }
 
 func TestPostgresCommentRepositoryListCommentEffectsByCommentIDs(t *testing.T) {
@@ -133,7 +138,9 @@ func TestPostgresCommentRepositoryListCommentEffectsByCommentIDs(t *testing.T) {
 	authorID := insertTestUser(ctx, t, pool)
 	applierID := insertTestUser(ctx, t, pool)
 	updateTestUserProfile(ctx, t, pool, applierID, "Alice", "https://example.com/alice.png", "Thanks")
+	updateTestUserPlatformAccess(ctx, t, pool, applierID, true, "admin")
 	communityID := insertTestCommunity(ctx, t, pool, authorID, "comment-effect-"+randomSuffix())
+	insertTestCommunityMembership(ctx, t, pool, communityID, applierID, communitydomain.MembershipRoleOwner)
 	postID := insertTestPost(ctx, t, pool, communityID, authorID, "Comment effect post")
 	comment := mustComment(t, postID, authorID, nil, "Effect target", now)
 	if err := repo.Create(ctx, *comment); err != nil {
@@ -153,6 +160,9 @@ func TestPostgresCommentRepositoryListCommentEffectsByCommentIDs(t *testing.T) {
 	}
 	if got[0].EffectID != effectID || got[0].Name != "Sparkle" || got[0].Emoji != "✨" || got[0].AnimationKey != "sparkle" || got[0].AppliedByUser.DisplayName != "Alice" || got[0].PointsSpent != 10 {
 		t.Fatalf("unexpected comment effect summary: %#v", got[0])
+	}
+	if got[0].AppliedByUser.CommunityRole != communitydomain.MembershipRoleOwner.String() || got[0].AppliedByUser.PlatformRole != "admin" || !got[0].AppliedByUser.IsPlatformStaff {
+		t.Fatalf("unexpected comment effect applied user identity: %#v", got[0].AppliedByUser)
 	}
 }
 
@@ -372,7 +382,7 @@ func newTestPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 func requireCommentSchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	for _, table := range []string{"users", "communities", "posts", "comments", "comment_votes", "comment_content_refs", "effects", "comment_effects"} {
+	for _, table := range []string{"users", "communities", "community_memberships", "posts", "comments", "comment_votes", "comment_content_refs", "effects", "comment_effects"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `
 			SELECT EXISTS (
@@ -466,6 +476,18 @@ func updateTestUserProfile(ctx context.Context, t *testing.T, pool *pgxpool.Pool
 	}
 }
 
+func updateTestUserPlatformAccess(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID userdomain.UserID, isPlatformStaff bool, platformRole string) {
+	t.Helper()
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE users
+		SET is_platform_staff = $2, platform_role = $3, updated_at = $4
+		WHERE id = $1::uuid
+	`, userID.String(), isPlatformStaff, platformRole, testNow()); err != nil {
+		t.Fatalf("update test user platform access: %v", err)
+	}
+}
+
 func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, createdBy userdomain.UserID, rawSlug string) communitydomain.CommunityID {
 	t.Helper()
 
@@ -496,6 +518,35 @@ func insertTestCommunity(ctx context.Context, t *testing.T, pool *pgxpool.Pool, 
 	})
 
 	return id
+}
+
+func insertTestCommunityMembership(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, userID userdomain.UserID, role communitydomain.MembershipRole) {
+	t.Helper()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO community_memberships (
+			community_id,
+			user_id,
+			role,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, 'active', $4, $4)
+	`, communityID.String(), userID.String(), role.String(), testNow())
+	if err != nil {
+		t.Fatalf("insert test community membership: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `
+			DELETE FROM community_memberships
+			WHERE community_id = $1::uuid
+				AND user_id = $2::uuid
+		`, communityID.String(), userID.String()); err != nil {
+			t.Fatalf("cleanup test community membership community=%q user=%q: %v", communityID.String(), userID.String(), err)
+		}
+	})
 }
 
 func insertTestPost(ctx context.Context, t *testing.T, pool *pgxpool.Pool, communityID communitydomain.CommunityID, authorID userdomain.UserID, title string) postdomain.PostID {
